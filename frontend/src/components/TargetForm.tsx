@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { IpVersion, Protocol, Target, TargetInput } from "../api";
 import { Modal } from "./Modal";
+import { NumberInput } from "./NumberInput";
 import { classNames } from "../utils";
 
 const DEFAULTS: TargetInput = {
@@ -135,13 +136,13 @@ export function TargetForm({
               ))}
               <option value="custom">Custom…</option>
             </select>
-            <input className="input w-28 num" type="number" min={10} max={86400} value={form.interval_sec} onChange={(e) => set("interval_sec", Number(e.target.value))} aria-label="Interval in seconds" />
+            <NumberInput className="input w-28 num" min={10} max={86400} value={form.interval_sec} onChange={(v) => set("interval_sec", v ?? form.interval_sec)} aria-label="Interval in seconds" />
           </div>
           <div className="help">Seconds between MTR runs (10 – 86400).</div>
         </div>
         <div>
           <label className="label">Probes per hop</label>
-          <input className="input num" type="number" min={1} max={200} value={form.count} onChange={(e) => set("count", Number(e.target.value))} />
+          <NumberInput className="input num" min={1} max={200} value={form.count} onChange={(v) => set("count", v ?? form.count)} />
           <div className={classNames("help", durationWarn && "!text-degraded")}>
             Each run sends {form.count} probes per hop and takes about {runDuration}s.
           </div>
@@ -149,12 +150,12 @@ export function TargetForm({
 
         <div>
           <label className="label">Alert when packet loss ≥ (%)</label>
-          <input className="input num" type="number" min={0} max={100} step={0.5} value={form.alert_loss_pct} onChange={(e) => set("alert_loss_pct", Number(e.target.value))} />
+          <NumberInput className="input num" min={0} max={100} step={0.5} value={form.alert_loss_pct} onChange={(v) => set("alert_loss_pct", v ?? form.alert_loss_pct)} />
           <div className="help">0 disables the loss alert.</div>
         </div>
         <div>
           <label className="label">Alert when avg latency ≥ (ms)</label>
-          <input className="input num" type="number" min={0} step={1} value={form.alert_latency_ms} onChange={(e) => set("alert_latency_ms", Number(e.target.value))} />
+          <NumberInput className="input num" min={0} step={1} value={form.alert_latency_ms} onChange={(v) => set("alert_latency_ms", v ?? form.alert_latency_ms)} />
           <div className="help">0 disables the latency alert.</div>
         </div>
 
@@ -175,7 +176,7 @@ export function TargetForm({
             </div>
             <div>
               <label className="label">Port {form.protocol === "icmp" && "(UDP/TCP only)"}</label>
-              <input className="input num" type="number" min={1} max={65535} disabled={form.protocol === "icmp"} value={form.port ?? ""} onChange={(e) => set("port", e.target.value ? Number(e.target.value) : null)} placeholder={form.protocol === "tcp" ? "443" : "33434"} />
+              <NumberInput className="input num" min={1} max={65535} nullable disabled={form.protocol === "icmp"} value={form.port} onChange={(v) => set("port", v)} placeholder={form.protocol === "tcp" ? "443" : "33434"} />
             </div>
             <div>
               <label className="label">IP version</label>
@@ -187,16 +188,16 @@ export function TargetForm({
             </div>
             <div>
               <label className="label">Probe interval (s)</label>
-              <input className="input num" type="number" min={0.1} max={10} step={0.1} value={form.probe_interval} onChange={(e) => set("probe_interval", Number(e.target.value))} />
+              <NumberInput className="input num" min={0.1} max={10} step={0.1} value={form.probe_interval} onChange={(v) => set("probe_interval", v ?? form.probe_interval)} />
               <div className="help">Delay between probes, mtr -i.</div>
             </div>
             <div>
               <label className="label">Packet size (bytes)</label>
-              <input className="input num" type="number" min={28} max={1500} value={form.packet_size} onChange={(e) => set("packet_size", Number(e.target.value))} />
+              <NumberInput className="input num" min={28} max={1500} value={form.packet_size} onChange={(v) => set("packet_size", v ?? form.packet_size)} />
             </div>
             <div>
               <label className="label">Max hops</label>
-              <input className="input num" type="number" min={1} max={64} value={form.max_hops} onChange={(e) => set("max_hops", Number(e.target.value))} />
+              <NumberInput className="input num" min={1} max={64} value={form.max_hops} onChange={(v) => set("max_hops", v ?? form.max_hops)} />
             </div>
           </>
         )}

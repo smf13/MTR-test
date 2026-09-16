@@ -4,6 +4,7 @@ import { api, type Settings as SettingsT } from "../api";
 import { usePoll } from "../hooks";
 import { useToast } from "../components/Toast";
 import { ErrorBanner } from "../components/EmptyState";
+import { NumberInput } from "../components/NumberInput";
 import { fmtBytes, fmtDuration } from "../utils";
 
 const EVENT_OPTIONS = [
@@ -57,7 +58,7 @@ export function Settings() {
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="label">Retention (days)</label>
-                    <input className="input num" type="number" min={1} max={3650} value={form.retention_days} onChange={(e) => setForm({ ...form, retention_days: Number(e.target.value) })} />
+                    <NumberInput className="input num" min={1} max={3650} value={form.retention_days} onChange={(v) => setForm({ ...form, retention_days: v ?? form.retention_days })} />
                     <div className="help">Runs, hops and events older than this are purged hourly.</div>
                   </div>
                   <div>

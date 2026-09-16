@@ -3,6 +3,7 @@ import { Radar, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, type IpVersion, type ProbeResult, type Protocol } from "../api";
 import { HopTable } from "../components/HopTable";
+import { NumberInput } from "../components/NumberInput";
 import { ErrorBanner } from "../components/EmptyState";
 
 export function QuickTrace() {
@@ -42,7 +43,7 @@ export function QuickTrace() {
         </div>
         <div>
           <label className="label">Probes</label>
-          <input className="input num" type="number" min={1} max={50} value={count} onChange={(e) => setCount(Number(e.target.value))} />
+          <NumberInput className="input num" min={1} max={50} value={count} onChange={(v) => setCount(v ?? count)} />
         </div>
         <div>
           <label className="label">Protocol</label>
@@ -54,7 +55,7 @@ export function QuickTrace() {
         </div>
         <div>
           <label className="label">Port</label>
-          <input className="input num" type="number" disabled={protocol === "icmp"} value={port ?? ""} onChange={(e) => setPort(e.target.value ? Number(e.target.value) : null)} placeholder={protocol === "tcp" ? "443" : "33434"} />
+          <NumberInput className="input num" min={1} max={65535} nullable disabled={protocol === "icmp"} value={port} onChange={setPort} placeholder={protocol === "tcp" ? "443" : "33434"} />
         </div>
         <div>
           <label className="label">IP</label>
