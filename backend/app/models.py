@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 Protocol = Literal["icmp", "udp", "tcp"]
 IpVersion = Literal["auto", "4", "6"]
@@ -86,17 +86,56 @@ class SettingsUpdate(BaseModel):
     reverse_dns: bool | None = None
     webhook_url: str | None = Field(default=None, max_length=2048)
     webhook_events: list[str] | None = None
+    pushover_enabled: bool | None = None
+    pushover_user_key: str | None = Field(default=None, max_length=64)
+    pushover_api_token: str | None = Field(default=None, max_length=64)
+    pushover_device: str | None = Field(default=None, max_length=64)
+    pushover_sound: str | None = Field(default=None, max_length=32)
+    pushover_priority: str | None = Field(default=None, max_length=8)
+    pushover_events: list[str] | None = None
+    base_url: str | None = Field(default=None, max_length=2048)
     site_name: str | None = Field(default=None, max_length=60)
 
-    @field_validator("webhook_url")
+    @field_validator("webhook_url", "base_url")
     @classmethod
-    def _check_url(cls, v: str | None) -> str | None:
+    def _check_url(cls, v: str | None, info: ValidationInfo) -> str | None:
         if v is None:
             return None
         v = v.strip()
         if v and not (v.startswith("http://") or v.startswith("https://")):
-            raise ValueError("webhook_url must start with http:// or https://")
+            raise ValueError(f"{info.field_name} must start with http:// or https://")
+        return v.rstrip("/") if info.field_name == "base_url" else v
+
+    @field_validator("pushover_user_key", "pushover_api_token", "pushover_device", "pushover_sound")
+    @classmethod
+    def _strip(cls, v: str | None) -> str | None:
+        return None if v is None else v.strip()
+
+    @field_validator("pushover_priority")
+    @classmethod
+    def _check_priority(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if v not in {"auto", "-2", "-1", "0", "1", "2"}:
+            raise ValueError("pushover_priority must be auto or an integer from -2 to 2")
         return v
+
+    @field_validator("webhook_events", "pushover_events")
+    @classmethod
+    def _check_events(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        allowed = {"down", "recovered", "degraded", "route_change"}
+        bad = [e for e in v if e not in allowed]
+        if bad:
+            raise ValueError(f"unknown event kinds: {', '.join(bad)}")
+        return list(dict.fromkeys(v))
+
+
+class NotificationTest(BaseModel):
+    channel: Literal["webhook", "pushover"]
+    settings: SettingsUpdate | None = None
 
 
 class ProbeRequest(BaseModel):

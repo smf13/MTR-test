@@ -119,6 +119,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "reverse_dns": True,
     "webhook_url": "",
     "webhook_events": ["down", "recovered", "degraded", "route_change"],
+    "pushover_enabled": False,
+    "pushover_user_key": "",
+    "pushover_api_token": "",
+    "pushover_device": "",
+    "pushover_sound": "",
+    "pushover_priority": "auto",
+    "pushover_events": ["down", "recovered", "degraded"],
+    "base_url": "",
     "site_name": "MTR Tracker",
 }
 

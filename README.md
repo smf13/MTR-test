@@ -18,7 +18,7 @@ Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rath
 - **Path history heatmap.** Hop-by-run grid coloured by loss, latency or jitter, so a flapping hop or a mid-path degradation is obvious at a glance.
 - **Path summary.** Per-hop statistics aggregated over the selected range, including alternate addresses seen at each hop (ECMP or reroutes) with how often each was observed.
 - **Route change detection** with a hop-by-hop diff, and detection of destination IP changes for DNS-based targets.
-- **Alerting.** Per-target loss and latency thresholds produce up / degraded / down state transitions, an event log, and optional JSON webhooks (works with n8n, Zapier, custom receivers).
+- **Alerting.** Per-target loss and latency thresholds produce up / degraded / down state transitions, an event log, and notifications via **Pushover** and generic JSON **webhooks** (n8n, Zapier, custom receivers), each with its own event selection and a one-click test.
 - **Quick trace.** Run a one-off MTR from the server without saving it, then add the host as a target in one click.
 - **Text report export** of any run in the familiar `mtr --report` layout.
 - **Retention** control, SQLite storage (WAL mode), dark, true-black OLED and light themes, responsive layout for phones and wall displays.
@@ -49,7 +49,15 @@ Environment variables (read at startup):
 | `MTR_TRACKER_SIMULATE` | `0` | `1` generates synthetic paths instead of sending packets |
 | `MTR_TRACKER_LOG_LEVEL` | `info` | Log verbosity |
 
-Everything else (retention days, reverse DNS, ASN lookup, webhook URL and events) is set in the UI under **Settings** and stored in the database.
+Everything else (retention days, reverse DNS, ASN lookup, notification channels, public URL) is set in the UI under **Settings** and stored in the database.
+
+### Notifications
+
+Two channels can be enabled independently under **Settings**, each with its own set of events (`down`, `recovered`, `degraded`, `route_change`) and a **Send test** button that uses the values currently in the form.
+
+**Pushover**: enter your user or group key and an application API token (create one at pushover.net/apps/build). Optional device and sound, and a priority that is either fixed or *Auto* (down = high, degraded and recovered = normal, route change = low). Emergency priority repeats every 60 s for 30 min until acknowledged. Set the **Public URL** so each push carries an "Open in MTR Tracker" link to the affected target.
+
+**Webhook**: a JSON POST to any URL.
 
 ### Webhook payload
 
@@ -62,11 +70,12 @@ Everything else (retention days, reverse DNS, ASN lookup, webhook URL and events
   "target": { "id": 3, "name": "Head office WAN", "host": "203.0.113.1" },
   "run_id": 1842,
   "details": { "previous": "up", "current": "down", "loss_pct": 100.0 },
+  "url": "https://mtr.example.com/targets/3",
   "timestamp": 1758000000.0
 }
 ```
 
-Event kinds: `down`, `recovered`, `degraded`, `route_change`.
+Event kinds: `down`, `recovered`, `degraded`, `route_change`. `url` is present when a public URL is configured.
 
 ### Troubleshooting
 
@@ -103,6 +112,7 @@ The UI is a thin client over a JSON API, documented live at `/api/docs`.
 | `GET` | `/api/runs/{id}/report` | Plain-text mtr-style report |
 | `GET` / `DELETE` | `/api/events` | Global event log (`kind`, `severity`, `target_id`, `range`) |
 | `POST` | `/api/probe` | One-off trace, not stored |
+| `POST` | `/api/notifications/test` | Send a test through `webhook` or `pushover`, optionally with unsaved settings |
 
 Ranges accept `1h`, `6h`, `24h`, `7d`, `30d` or a number of seconds.
 
@@ -136,6 +146,7 @@ backend/app/
   api.py         HTTP routes
   scheduler.py   24/7 run loop, state transitions, retention
   mtr.py         mtr command builder, JSON parser, simulator
+  notify.py      webhook + Pushover delivery, event fan-out
   resolver.py    forward / reverse DNS with cache
   db.py          SQLite schema and helpers
   models.py      request schemas

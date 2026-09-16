@@ -101,3 +101,26 @@ async def test_unresolvable_host_marks_target_down(client: AsyncClient) -> None:
     assert full["last_status"] == "down"
     events = (await client.get("/api/events", params={"target_id": t["id"]})).json()
     assert events["total"] >= 1 and events["items"][0]["kind"] == "down"
+
+
+async def test_notification_test_endpoint(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from app import notify
+
+    calls: list[str] = []
+    monkeypatch.setattr(notify, "_TRANSPORT", httpx.MockTransport(lambda r: (calls.append(str(r.url)), httpx.Response(200, json={"status": 1}))[1]))
+
+    r = await client.post("/api/notifications/test", json={"channel": "pushover"})
+    assert r.status_code == 502 and "token" in r.json()["detail"]
+
+    r = await client.post("/api/notifications/test", json={"channel": "pushover", "settings": {"pushover_api_token": "t", "pushover_user_key": "u"}})
+    assert r.status_code == 200 and calls[-1] == notify.PUSHOVER_URL
+
+    r = await client.post("/api/notifications/test", json={"channel": "webhook", "settings": {"webhook_url": "https://hooks.example/abc"}})
+    assert r.status_code == 200 and calls[-1] == "https://hooks.example/abc"
+
+    saved = (await client.put("/api/settings", json={"pushover_enabled": True, "pushover_priority": "1", "pushover_events": ["down", "down"]})).json()
+    assert saved["pushover_enabled"] is True and saved["pushover_priority"] == "1" and saved["pushover_events"] == ["down"]
+    assert (await client.put("/api/settings", json={"pushover_priority": "5"})).status_code == 422
+    assert (await client.put("/api/settings", json={"base_url": "http://mtr.local:8899/"})).json()["base_url"] == "http://mtr.local:8899"

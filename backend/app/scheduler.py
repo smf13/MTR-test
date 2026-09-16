@@ -11,7 +11,7 @@ from typing import Any
 from .config import config
 from .db import Database
 from .mtr import HopResult, MtrResult, route_signature, routes_equivalent, run_mtr
-from .notify import send_webhook
+from .notify import dispatch_event, target_url
 from .resolver import resolve_host, reverse_lookup_many
 
 log = logging.getLogger("mtr-tracker.scheduler")
@@ -288,20 +288,18 @@ class Scheduler:
             (t["id"], run_id, kind, severity, message, json.dumps(details), now),
         )
         log.info("event [%s] %s", kind, message)
-        url = (settings.get("webhook_url") or "").strip()
-        wanted = settings.get("webhook_events") or []
-        if url and kind in wanted:
-            payload = {
-                "source": settings.get("site_name") or "MTR Tracker",
-                "event": kind,
-                "severity": severity,
-                "message": message,
-                "target": {"id": t["id"], "name": t["name"], "host": t["host"]},
-                "run_id": run_id,
-                "details": details,
-                "timestamp": now,
-            }
-            asyncio.create_task(send_webhook(url, payload))
+        payload = {
+            "source": settings.get("site_name") or "MTR Tracker",
+            "event": kind,
+            "severity": severity,
+            "message": message,
+            "target": {"id": t["id"], "name": t["name"], "host": t["host"]},
+            "run_id": run_id,
+            "details": details,
+            "url": target_url(settings, t["id"]),
+            "timestamp": now,
+        }
+        asyncio.create_task(dispatch_event(settings, payload))
 
 
 def _summarise(final: HopResult, reached: bool) -> dict[str, Any]:

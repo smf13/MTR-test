@@ -15,8 +15,9 @@ from fastapi.responses import PlainTextResponse
 from . import __version__
 from .config import config
 from .db import Database, rows_to_dicts
-from .models import ProbeRequest, SettingsUpdate, TargetCreate, TargetUpdate
+from .models import NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetUpdate
 from .mtr import mtr_version, run_mtr
+from .notify import NotifyError, format_pushover_text, send_pushover, send_webhook, target_url
 from .resolver import resolve_host, reverse_lookup_many
 from .scheduler import Scheduler
 
@@ -148,6 +149,35 @@ async def get_settings(request: Request) -> dict[str, Any]:
 async def put_settings(request: Request, body: SettingsUpdate) -> dict[str, Any]:
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     return await _db(request).set_settings(patch)
+
+
+@router.post("/notifications/test")
+async def test_notification(request: Request, body: NotificationTest) -> dict[str, Any]:
+    """Send a test message through one channel using saved settings merged with any unsaved overrides."""
+    settings = await _db(request).get_settings()
+    if body.settings is not None:
+        settings.update({k: v for k, v in body.settings.model_dump(exclude_unset=True).items() if v is not None})
+    site = settings.get("site_name") or "MTR Tracker"
+    payload = {
+        "source": site,
+        "event": "test",
+        "severity": "info",
+        "message": f"Test notification from {site}. Notifications are working.",
+        "target": {"id": None, "name": "Test", "host": "example.invalid"},
+        "run_id": None,
+        "details": {},
+        "url": target_url(settings, None),
+        "timestamp": time.time(),
+    }
+    try:
+        if body.channel == "webhook":
+            await send_webhook((settings.get("webhook_url") or "").strip(), payload)
+        else:
+            title, message = format_pushover_text(payload)
+            await send_pushover(settings, title=title, message=message, kind="recovered")
+    except NotifyError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"ok": True, "channel": body.channel}
 
 
 # ---------------------------------------------------------------------------

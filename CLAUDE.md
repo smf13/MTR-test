@@ -10,6 +10,7 @@ backend/app/        Python package (run with `python -m uvicorn app.main:app` fr
   api.py            All HTTP routes under /api
   scheduler.py      24/7 loop: due targets -> run -> store -> classify -> events/webhooks; retention purge
   mtr.py            mtr command builder, JSON parser, route signature/compare, simulator
+  notify.py         Notification channels (webhook, Pushover); dispatch_event fans one payload out to all enabled channels
   resolver.py       forward + reverse DNS with TTL cache
   db.py             SQLite schema (targets, runs, hops, events, settings) and helpers
   models.py         Pydantic request schemas
@@ -54,5 +55,6 @@ docker compose up -d --build
 - **Series endpoint** returns raw runs up to `max_points`, otherwise buckets server-side; the chart handles both (`bucket_sec` in the response).
 - **Charts** use explicit pixel sizes via the `Sized` ResizeObserver wrapper in `Charts.tsx`; Recharts' ResponsiveContainer and `responsive` prop are intentionally not used.
 - **CSS**: custom classes (`.card`, `.btn`, `.input`, `.table`, `.seg`) live in `@layer components` in `index.css` so Tailwind utilities can override them. Theme tokens are CSS variables on `:root` (light), `[data-theme="dark"]` and `[data-theme="oled"]` (true black), mapped with `@theme inline`; the `dark` Tailwind variant matches both dark themes. Themes are listed in `THEMES` in `hooks.ts`, persisted in `localStorage` under `mtr-tracker.theme`, and applied before first paint by the inline script in `index.html`.
+- **Notifications**: add a channel by extending `notify.dispatch_event`, `DEFAULT_SETTINGS` in `db.py`, `SettingsUpdate` in `models.py`, the `Settings` interface in `api.ts` and the Settings page. Delivery errors raise `NotifyError` (surfaced by `POST /api/notifications/test`, logged by the scheduler). Tests mock HTTP by setting `notify._TRANSPORT` to an `httpx.MockTransport`.
 - **Raw sockets**: real probing needs `CAP_NET_RAW` (compose grants it) or `setcap cap_net_raw+ep $(which mtr)` outside Docker.
 - **Screenshots** in `docs/` are taken with headless Chromium against simulation mode; regenerate them if the UI changes materially.

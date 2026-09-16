@@ -204,6 +204,14 @@ export interface Settings {
   reverse_dns: boolean;
   webhook_url: string;
   webhook_events: string[];
+  pushover_enabled: boolean;
+  pushover_user_key: string;
+  pushover_api_token: string;
+  pushover_device: string;
+  pushover_sound: string;
+  pushover_priority: "auto" | "-2" | "-1" | "0" | "1" | "2";
+  pushover_events: string[];
+  base_url: string;
   site_name: string;
 }
 
@@ -270,6 +278,8 @@ export const api = {
   status: () => request<SystemStatus>("/api/status"),
   settings: () => request<Settings>("/api/settings"),
   updateSettings: (patch: Partial<Settings>) => request<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  testNotification: (channel: "webhook" | "pushover", settings: Partial<Settings>) =>
+    request<{ ok: boolean; channel: string }>("/api/notifications/test", { method: "POST", body: JSON.stringify({ channel, settings }) }),
 
   targets: () => request<Target[]>("/api/targets"),
   target: (id: number, range: string) => request<Target>(`/api/targets/${id}?range=${encodeURIComponent(range)}`),

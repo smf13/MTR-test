@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Save, Database, Cpu, FlaskConical, Webhook } from "lucide-react";
+import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send } from "lucide-react";
 import { api, type Settings as SettingsT } from "../api";
 import { usePoll } from "../hooks";
 import { useToast } from "../components/Toast";
@@ -20,6 +20,26 @@ export function Settings() {
   const status = usePoll(() => api.status(), 10000);
   const [form, setForm] = useState<SettingsT | null>(null);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState<"webhook" | "pushover" | null>(null);
+
+  const sendTest = async (channel: "webhook" | "pushover") => {
+    if (!form) return;
+    setTesting(channel);
+    try {
+      await api.testNotification(channel, form);
+      toast(channel === "pushover" ? "Test push sent. Check your device." : "Test webhook delivered.", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setTesting(null);
+    }
+  };
+
+  const toggleEvent = (key: "webhook_events" | "pushover_events", value: string, on: boolean) => {
+    if (!form) return;
+    const list = form[key];
+    setForm({ ...form, [key]: on ? [...list, value] : list.filter((x) => x !== value) });
+  };
 
   useEffect(() => {
     if (settings.data && !form) setForm(settings.data);
@@ -64,7 +84,12 @@ export function Settings() {
                   <div>
                     <label className="label">Site name</label>
                     <input className="input" value={form.site_name} onChange={(e) => setForm({ ...form, site_name: e.target.value })} />
-                    <div className="help">Used as the source name in webhook payloads.</div>
+                    <div className="help">Shown as the source in webhook payloads and Pushover titles.</div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="label">Public URL (optional)</label>
+                    <input className="input font-mono" placeholder="https://mtr.example.com" value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} spellCheck={false} />
+                    <div className="help">Where this UI is reachable from your phone or team. Used to add an "open target" link to notifications.</div>
                   </div>
                   <label className="flex items-start gap-2 text-sm">
                     <input type="checkbox" className="mt-0.5" checked={form.reverse_dns} onChange={(e) => setForm({ ...form, reverse_dns: e.target.checked })} />
@@ -84,19 +109,24 @@ export function Settings() {
               </section>
 
               <section className="card p-5">
-                <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold"><Webhook size={15} /> Notifications</h2>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold"><Webhook size={15} /> Webhook</h2>
+                  <button className="btn btn-sm" onClick={() => sendTest("webhook")} disabled={testing !== null || !form.webhook_url.trim()} title="Send a test payload using the values in this form (unsaved changes included)">
+                    <Send size={13} /> {testing === "webhook" ? "Sending…" : "Send test"}
+                  </button>
+                </div>
                 <div className="space-y-4">
                   <div>
                     <label className="label">Webhook URL</label>
                     <input className="input font-mono" placeholder="https://hooks.example.com/mtr-tracker" value={form.webhook_url} onChange={(e) => setForm({ ...form, webhook_url: e.target.value })} spellCheck={false} />
-                    <div className="help">A JSON POST is sent for the selected events. Works with any generic webhook receiver (n8n, Zapier, custom).</div>
+                    <div className="help">A JSON POST is sent for the selected events. Works with any generic webhook receiver (n8n, Zapier, custom). Leave empty to disable.</div>
                   </div>
                   <div>
                     <label className="label">Send for</label>
                     <div className="flex flex-wrap gap-x-5 gap-y-2">
                       {EVENT_OPTIONS.map((o) => (
                         <label key={o.value} className="flex items-center gap-2 text-sm">
-                          <input type="checkbox" checked={form.webhook_events.includes(o.value)} onChange={(e) => setForm({ ...form, webhook_events: e.target.checked ? [...form.webhook_events, o.value] : form.webhook_events.filter((x) => x !== o.value) })} />
+                          <input type="checkbox" checked={form.webhook_events.includes(o.value)} onChange={(e) => toggleEvent("webhook_events", o.value, e.target.checked)} />
                           {o.label}
                         </label>
                       ))}
@@ -112,9 +142,70 @@ export function Settings() {
   "target": { "id": 3, "name": "Head office WAN", "host": "203.0.113.1" },
   "run_id": 1842,
   "details": { "previous": "up", "current": "down", "loss_pct": 100.0 },
+  "url": "https://mtr.example.com/targets/3",
   "timestamp": 1758000000.0
 }`}</pre>
                   </details>
+                </div>
+              </section>
+
+              <section className="card p-5">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold"><BellRing size={15} /> Pushover</h2>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={form.pushover_enabled} onChange={(e) => setForm({ ...form, pushover_enabled: e.target.checked })} />
+                      Enabled
+                    </label>
+                    <button className="btn btn-sm" onClick={() => sendTest("pushover")} disabled={testing !== null || !form.pushover_api_token.trim() || !form.pushover_user_key.trim()} title="Send a test push using the values in this form (unsaved changes included)">
+                      <Send size={13} /> {testing === "pushover" ? "Sending…" : "Send test"}
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="label">User or group key</label>
+                    <input className="input font-mono" value={form.pushover_user_key} onChange={(e) => setForm({ ...form, pushover_user_key: e.target.value })} spellCheck={false} autoComplete="off" placeholder="u…" />
+                    <div className="help">From your Pushover dashboard. A delivery group key also works.</div>
+                  </div>
+                  <div>
+                    <label className="label">Application API token</label>
+                    <input className="input font-mono" type="password" value={form.pushover_api_token} onChange={(e) => setForm({ ...form, pushover_api_token: e.target.value })} spellCheck={false} autoComplete="new-password" placeholder="a…" />
+                    <div className="help">Create an application at pushover.net/apps/build and paste its token.</div>
+                  </div>
+                  <div>
+                    <label className="label">Device (optional)</label>
+                    <input className="input font-mono" value={form.pushover_device} onChange={(e) => setForm({ ...form, pushover_device: e.target.value })} spellCheck={false} placeholder="all devices" />
+                  </div>
+                  <div>
+                    <label className="label">Sound (optional)</label>
+                    <input className="input font-mono" value={form.pushover_sound} onChange={(e) => setForm({ ...form, pushover_sound: e.target.value })} spellCheck={false} placeholder="pushover (default)" />
+                    <div className="help">Any Pushover sound name, e.g. siren, alien, none.</div>
+                  </div>
+                  <div>
+                    <label className="label">Priority</label>
+                    <select className="input" value={form.pushover_priority} onChange={(e) => setForm({ ...form, pushover_priority: e.target.value as SettingsT["pushover_priority"] })}>
+                      <option value="auto">Auto (by severity)</option>
+                      <option value="-2">Lowest (silent)</option>
+                      <option value="-1">Low (no sound)</option>
+                      <option value="0">Normal</option>
+                      <option value="1">High (bypass quiet hours)</option>
+                      <option value="2">Emergency (repeats until acknowledged)</option>
+                    </select>
+                    <div className="help">Auto: down is high, degraded and recovered are normal, route change is low.</div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="label">Send for</label>
+                    <div className="flex flex-wrap gap-x-5 gap-y-2">
+                      {EVENT_OPTIONS.map((o) => (
+                        <label key={o.value} className="flex items-center gap-2 text-sm">
+                          <input type="checkbox" checked={form.pushover_events.includes(o.value)} onChange={(e) => toggleEvent("pushover_events", o.value, e.target.checked)} />
+                          {o.label}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="help">Route changes can be noisy on paths with load balancing; they are off by default.</div>
+                  </div>
                 </div>
               </section>
 
