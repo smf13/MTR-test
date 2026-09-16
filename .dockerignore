@@ -1,0 +1,12 @@
+.git
+.gitignore
+**/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+data
+*.db
+*.db-*
+.venv
+.pytest_cache
+README.md

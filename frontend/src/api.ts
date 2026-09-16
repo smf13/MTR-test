@@ -1,0 +1,311 @@
+// Typed client for the HopWatch HTTP API.
+
+export type Status = "up" | "degraded" | "down" | "pending" | "paused";
+export type Protocol = "icmp" | "udp" | "tcp";
+export type IpVersion = "auto" | "4" | "6";
+
+export interface Run {
+  id: number;
+  target_id: number;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  status: "ok" | "error";
+  error: string | null;
+  src: string | null;
+  dst_ip: string | null;
+  reached: boolean;
+  hop_count: number;
+  sent: number | null;
+  loss_pct: number | null;
+  last_ms: number | null;
+  avg_ms: number | null;
+  best_ms: number | null;
+  worst_ms: number | null;
+  stdev_ms: number | null;
+  jitter_avg_ms: number | null;
+  jitter_max_ms: number | null;
+  route_hash: string | null;
+  route_changed: boolean;
+  command: string | null;
+}
+
+export interface Hop {
+  id?: number;
+  run_id?: number;
+  hop_no: number;
+  ip: string | null;
+  hostname: string | null;
+  asn: string | null;
+  loss_pct: number;
+  sent: number;
+  received: number;
+  last_ms: number | null;
+  avg_ms: number | null;
+  best_ms: number | null;
+  worst_ms: number | null;
+  stdev_ms: number | null;
+  gmean_ms: number | null;
+  jitter_ms: number | null;
+  jitter_avg_ms: number | null;
+  jitter_max_ms: number | null;
+  jitter_int_ms: number | null;
+}
+
+export interface RunDetail extends Run {
+  target_name: string;
+  target_host: string;
+  hops: Hop[];
+  prev_run_id: number | null;
+  next_run_id: number | null;
+}
+
+export interface SparkPoint {
+  t: string;
+  avg: number | null;
+  loss: number | null;
+  reached: boolean;
+}
+
+export interface RangeStats {
+  range_sec: number;
+  runs: number;
+  ok_runs: number;
+  failed_runs: number;
+  availability_pct: number | null;
+  avg_ms: number | null;
+  p50_ms: number | null;
+  p95_ms: number | null;
+  p99_ms: number | null;
+  best_ms: number | null;
+  worst_ms: number | null;
+  loss_pct: number | null;
+  max_loss_pct: number | null;
+  jitter_ms: number | null;
+  route_changes: number;
+  hop_count_min: number | null;
+  hop_count_max: number | null;
+  events: number;
+}
+
+export interface Target {
+  id: number;
+  name: string;
+  host: string;
+  description: string;
+  tags: string[];
+  interval_sec: number;
+  count: number;
+  probe_interval: number;
+  protocol: Protocol;
+  port: number | null;
+  packet_size: number;
+  ip_version: IpVersion;
+  max_hops: number;
+  enabled: boolean;
+  alert_loss_pct: number;
+  alert_latency_ms: number;
+  created_at: string;
+  updated_at: string;
+  next_run_at: string | null;
+  last_status: Status;
+  latest_run: Run | null;
+  stats_24h: {
+    runs: number;
+    availability_pct: number | null;
+    avg_ms: number | null;
+    loss_pct: number | null;
+    route_changes: number;
+  };
+  sparkline: SparkPoint[];
+  stats?: RangeStats;
+  running?: boolean;
+}
+
+export type TargetInput = Omit<
+  Target,
+  "id" | "created_at" | "updated_at" | "next_run_at" | "last_status" | "latest_run" | "stats_24h" | "sparkline" | "stats" | "running"
+>;
+
+export interface SeriesPoint {
+  t: string;
+  run_id: number | null;
+  avg: number | null;
+  best: number | null;
+  worst: number | null;
+  loss: number | null;
+  max_loss?: number | null;
+  jitter: number | null;
+  hops: number | null;
+  ok: boolean;
+  route_changed: boolean;
+  n: number;
+}
+
+export interface Series {
+  range_sec: number;
+  bucket_sec: number | null;
+  points: SeriesPoint[];
+}
+
+export interface HopHistoryCell {
+  hop: number;
+  ip: string | null;
+  hostname: string | null;
+  loss: number | null;
+  avg: number | null;
+  best: number | null;
+  worst: number | null;
+  jitter: number | null;
+}
+
+export interface HopHistory {
+  runs: { run_id: number; t: string; reached: boolean; hops: HopHistoryCell[] }[];
+  max_hops: number;
+}
+
+export interface HopSummaryEntry {
+  ip: string | null;
+  hostname: string | null;
+  asn: string | null;
+  runs: number;
+  share_pct: number | null;
+  loss_pct: number;
+  max_loss_pct: number | null;
+  avg_ms: number | null;
+  best_ms: number | null;
+  worst_ms: number | null;
+  stdev_ms: number | null;
+  jitter_ms: number | null;
+  jitter_max_ms: number | null;
+}
+
+export interface HopSummary {
+  total_runs: number;
+  hops: { hop: number; primary: HopSummaryEntry; alternates: HopSummaryEntry[] }[];
+}
+
+export interface Event {
+  id: number;
+  target_id: number | null;
+  run_id: number | null;
+  kind: "down" | "recovered" | "degraded" | "route_change" | string;
+  severity: "info" | "warning" | "critical";
+  message: string;
+  details: Record<string, unknown> | null;
+  created_at: string;
+  target_name?: string;
+  target_host?: string;
+}
+
+export interface Settings {
+  retention_days: number;
+  asn_lookup: boolean;
+  reverse_dns: boolean;
+  webhook_url: string;
+  webhook_events: string[];
+  site_name: string;
+}
+
+export interface SystemStatus {
+  app: string;
+  version: string;
+  time: string;
+  uptime_sec: number;
+  simulate: boolean;
+  mtr_version: string | null;
+  mtr_binary: string;
+  max_concurrent_runs: number;
+  active_runs: number[];
+  runs_completed_since_start: number;
+  db_size_bytes: number;
+  db_path: string;
+  targets: { total: number; enabled: number; up: number; degraded: number; down: number; pending: number };
+  runs_24h: { total: number; ok: number };
+  runs_total: number;
+  events_24h: number;
+}
+
+export interface ProbeResult {
+  host: string;
+  dst_ip: string;
+  src: string | null;
+  reached: boolean;
+  duration_ms: number;
+  command: string;
+  hops: Hop[];
+}
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    headers: { "content-type": "application/json", ...(init?.headers || {}) },
+    ...init,
+  });
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") message = body.detail;
+      else if (Array.isArray(body?.detail)) message = body.detail.map((d: { msg: string; loc?: string[] }) => `${(d.loc || []).slice(-1)[0] ?? ""}: ${d.msg}`).join("; ");
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(res.status, message);
+  }
+  if (res.status === 204) return undefined as T;
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) return (await res.json()) as T;
+  return (await res.text()) as unknown as T;
+}
+
+export const api = {
+  status: () => request<SystemStatus>("/api/status"),
+  settings: () => request<Settings>("/api/settings"),
+  updateSettings: (patch: Partial<Settings>) => request<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+
+  targets: () => request<Target[]>("/api/targets"),
+  target: (id: number, range: string) => request<Target>(`/api/targets/${id}?range=${encodeURIComponent(range)}`),
+  createTarget: (body: TargetInput) => request<Target>("/api/targets", { method: "POST", body: JSON.stringify(body) }),
+  updateTarget: (id: number, patch: Partial<TargetInput>) =>
+    request<Target>(`/api/targets/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
+  deleteTarget: (id: number) => request<void>(`/api/targets/${id}`, { method: "DELETE" }),
+  runNow: (id: number) => request<{ queued: boolean; already_running: boolean }>(`/api/targets/${id}/run`, { method: "POST" }),
+
+  runs: (id: number, params: { limit?: number; offset?: number; range?: string; status?: string }) => {
+    const q = new URLSearchParams();
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.offset) q.set("offset", String(params.offset));
+    if (params.range) q.set("range", params.range);
+    if (params.status) q.set("status", params.status);
+    return request<{ total: number; items: Run[] }>(`/api/targets/${id}/runs?${q}`);
+  },
+  series: (id: number, range: string) => request<Series>(`/api/targets/${id}/series?range=${encodeURIComponent(range)}`),
+  hopHistory: (id: number, range: string, maxRuns = 120) =>
+    request<HopHistory>(`/api/targets/${id}/hops/history?range=${encodeURIComponent(range)}&max_runs=${maxRuns}`),
+  hopSummary: (id: number, range: string) => request<HopSummary>(`/api/targets/${id}/hops/summary?range=${encodeURIComponent(range)}`),
+  targetEvents: (id: number, range?: string) =>
+    request<Event[]>(`/api/targets/${id}/events?limit=200${range ? `&range=${encodeURIComponent(range)}` : ""}`),
+
+  run: (id: number) => request<RunDetail>(`/api/runs/${id}`),
+  runReportUrl: (id: number) => `/api/runs/${id}/report`,
+
+  events: (params: { limit?: number; offset?: number; kind?: string; severity?: string; target_id?: number; range?: string }) => {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") q.set(k, String(v));
+    });
+    return request<{ total: number; items: Event[] }>(`/api/events?${q}`);
+  },
+  clearEvents: (target_id?: number) => request<void>(`/api/events${target_id ? `?target_id=${target_id}` : ""}`, { method: "DELETE" }),
+
+  probe: (body: { host: string; count: number; protocol: Protocol; port: number | null; ip_version: IpVersion; max_hops: number }) =>
+    request<ProbeResult>("/api/probe", { method: "POST", body: JSON.stringify(body) }),
+};
