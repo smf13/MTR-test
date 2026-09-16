@@ -68,7 +68,7 @@ export function Layout({ children }: { children: ReactNode }) {
             {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
             {theme === "dark" ? "Light theme" : "Dark theme"}
           </button>
-          <div className="px-1">HopWatch {s?.version ?? ""}</div>
+          <div className="px-1">MTR Tracker {s?.version ?? ""}</div>
         </div>
       </aside>
 
@@ -105,7 +105,7 @@ function Brand({ compact }: { compact?: boolean }) {
           <path d="M14 44 L32 24 L50 38" stroke="#fff" strokeWidth="5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </span>
-      <span className={classNames("font-semibold tracking-tight", compact ? "text-base" : "text-lg")}>HopWatch</span>
+      <span className={classNames("font-semibold tracking-tight", compact ? "text-base" : "text-lg")}>MTR Tracker</span>
     </Link>
   );
 }

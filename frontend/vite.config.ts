@@ -7,8 +7,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": { target: process.env.HOPWATCH_API || "http://127.0.0.1:8080", changeOrigin: true },
-      "/healthz": { target: process.env.HOPWATCH_API || "http://127.0.0.1:8080", changeOrigin: true },
+      "/api": { target: process.env.MTR_TRACKER_API || "http://127.0.0.1:8080", changeOrigin: true },
+      "/healthz": { target: process.env.MTR_TRACKER_API || "http://127.0.0.1:8080", changeOrigin: true },
     },
   },
   build: { outDir: "dist", sourcemap: false, chunkSizeWarningLimit: 900 },

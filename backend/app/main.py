@@ -21,7 +21,7 @@ logging.basicConfig(
     level=getattr(logging, config.log_level.upper(), logging.INFO),
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
 )
-log = logging.getLogger("hopwatch")
+log = logging.getLogger("mtr-tracker")
 
 
 @asynccontextmanager
@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db = db
     app.state.scheduler = scheduler
     await scheduler.start()
-    log.info("HopWatch %s listening on %s:%s", __version__, config.host, config.port)
+    log.info("MTR Tracker %s listening on %s:%s", __version__, config.host, config.port)
     try:
         yield
     finally:
@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="HopWatch", version=__version__, lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+    app = FastAPI(title="MTR Tracker", version=__version__, lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.include_router(router)
 
     @app.get("/healthz", include_in_schema=False)

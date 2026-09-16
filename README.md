@@ -1,6 +1,6 @@
-# HopWatch
+# MTR Tracker
 
-**Continuous MTR monitoring for IT professionals.** HopWatch runs `mtr` against the hosts you care about on a schedule you choose, stores every hop of every run, and gives you a clean web UI to see exactly where latency, packet loss and route changes happen over time.
+**Continuous MTR monitoring for IT professionals.** MTR Tracker runs `mtr` against the hosts you care about on a schedule you choose, stores every hop of every run, and gives you a clean web UI to see exactly where latency, packet loss and route changes happen over time.
 
 Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rather than a single ping.
 
@@ -27,14 +27,14 @@ Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rath
 ## Quick start (Docker)
 
 ```bash
-git clone https://github.com/smf13/MTR-test.git hopwatch
-cd hopwatch
+git clone https://github.com/smf13/MTR-test.git mtr-tracker
+cd mtr-tracker
 docker compose up -d --build
 ```
 
 Open <http://localhost:8080>, click **Add target**, enter a host and an interval, and the first run starts immediately.
 
-Data lives in the `hopwatch-data` volume (`/data` inside the container). The container needs `CAP_NET_RAW` for mtr, which `docker-compose.yml` already grants. Uncomment `network_mode: host` if you want the first hop to be your host's real gateway instead of the Docker bridge.
+Data lives in the `mtr-tracker-data` volume (`/data` inside the container). The container needs `CAP_NET_RAW` for mtr, which `docker-compose.yml` already grants. Uncomment `network_mode: host` if you want the first hop to be your host's real gateway instead of the Docker bridge.
 
 ### Configuration
 
@@ -42,12 +42,12 @@ Environment variables (read at startup):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HOPWATCH_PORT` | `8080` | HTTP port |
-| `HOPWATCH_DATA_DIR` | `/data` | Directory for the SQLite database |
-| `HOPWATCH_MAX_CONCURRENT_RUNS` | `4` | How many mtr processes may run at once |
-| `HOPWATCH_MTR_BINARY` | `mtr` | Path to the mtr binary |
-| `HOPWATCH_SIMULATE` | `0` | `1` generates synthetic paths instead of sending packets |
-| `HOPWATCH_LOG_LEVEL` | `info` | Log verbosity |
+| `MTR_TRACKER_PORT` | `8080` | HTTP port |
+| `MTR_TRACKER_DATA_DIR` | `/data` | Directory for the SQLite database |
+| `MTR_TRACKER_MAX_CONCURRENT_RUNS` | `4` | How many mtr processes may run at once |
+| `MTR_TRACKER_MTR_BINARY` | `mtr` | Path to the mtr binary |
+| `MTR_TRACKER_SIMULATE` | `0` | `1` generates synthetic paths instead of sending packets |
+| `MTR_TRACKER_LOG_LEVEL` | `info` | Log verbosity |
 
 Everything else (retention days, reverse DNS, ASN lookup, webhook URL and events) is set in the UI under **Settings** and stored in the database.
 
@@ -55,7 +55,7 @@ Everything else (retention days, reverse DNS, ASN lookup, webhook URL and events
 
 ```json
 {
-  "source": "HopWatch",
+  "source": "MTR Tracker",
   "event": "down",
   "severity": "critical",
   "message": "Head office WAN is DOWN: destination unreachable",
@@ -70,7 +70,7 @@ Event kinds: `down`, `recovered`, `degraded`, `route_change`.
 
 ## How a run works
 
-1. The scheduler wakes every second and launches any enabled target whose next run is due (limited by `HOPWATCH_MAX_CONCURRENT_RUNS`).
+1. The scheduler wakes every second and launches any enabled target whose next run is due (limited by `MTR_TRACKER_MAX_CONCURRENT_RUNS`).
 2. The host is resolved to a single IP (honouring the target's IP version) so the destination hop can be identified unambiguously.
 3. `mtr --json -n -c <count> -i <probe interval> -s <size> -m <max hops> -o LSDRNBAWVGJMXI [-4|-6] [--udp|--tcp -P <port>] [-z] <ip>` runs and its JSON report is parsed.
 4. Hop IPs are reverse-resolved (cached), the route signature is compared with the previous run, thresholds are evaluated, and the run, hops and any events are written in one transaction.
@@ -106,7 +106,7 @@ Backend (Python 3.11+):
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-HOPWATCH_SIMULATE=1 HOPWATCH_DATA_DIR=./data python -m uvicorn app.main:app --reload --port 8080
+MTR_TRACKER_SIMULATE=1 MTR_TRACKER_DATA_DIR=./data python -m uvicorn app.main:app --reload --port 8080
 python -m pytest
 ```
 

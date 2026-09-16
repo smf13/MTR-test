@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-log = logging.getLogger("hopwatch.notify")
+log = logging.getLogger("mtr-tracker.notify")
 
 
 async def send_webhook(url: str, payload: dict[str, Any]) -> bool:

@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator, Iterable
 
 import aiosqlite
 
-log = logging.getLogger("hopwatch.db")
+log = logging.getLogger("mtr-tracker.db")
 
 SCHEMA_VERSION = 1
 
@@ -119,7 +119,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "reverse_dns": True,
     "webhook_url": "",
     "webhook_events": ["down", "recovered", "degraded", "route_change"],
-    "site_name": "HopWatch",
+    "site_name": "MTR Tracker",
 }
 
 

@@ -38,11 +38,11 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
-        data_dir = Path(os.environ.get("HOPWATCH_DATA_DIR", "./data")).resolve()
+        data_dir = Path(os.environ.get("MTR_TRACKER_DATA_DIR", "./data")).resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
-        db_path = Path(os.environ.get("HOPWATCH_DB_PATH", str(data_dir / "hopwatch.db"))).resolve()
+        db_path = Path(os.environ.get("MTR_TRACKER_DB_PATH", str(data_dir / "mtr-tracker.db"))).resolve()
 
-        static_env = os.environ.get("HOPWATCH_STATIC_DIR")
+        static_env = os.environ.get("MTR_TRACKER_STATIC_DIR")
         static_dir: Path | None = None
         if static_env:
             static_dir = Path(static_env).resolve()
@@ -54,13 +54,13 @@ class Config:
         return cls(
             data_dir=data_dir,
             db_path=db_path,
-            host=os.environ.get("HOPWATCH_HOST", "0.0.0.0"),
-            port=_env_int("HOPWATCH_PORT", 8080),
-            mtr_binary=os.environ.get("HOPWATCH_MTR_BINARY", "mtr"),
-            simulate=_env_bool("HOPWATCH_SIMULATE", False),
-            max_concurrent_runs=max(1, _env_int("HOPWATCH_MAX_CONCURRENT_RUNS", 4)),
+            host=os.environ.get("MTR_TRACKER_HOST", "0.0.0.0"),
+            port=_env_int("MTR_TRACKER_PORT", 8080),
+            mtr_binary=os.environ.get("MTR_TRACKER_MTR_BINARY", "mtr"),
+            simulate=_env_bool("MTR_TRACKER_SIMULATE", False),
+            max_concurrent_runs=max(1, _env_int("MTR_TRACKER_MAX_CONCURRENT_RUNS", 4)),
             static_dir=static_dir,
-            log_level=os.environ.get("HOPWATCH_LOG_LEVEL", "info"),
+            log_level=os.environ.get("MTR_TRACKER_LOG_LEVEL", "info"),
         )
 
 

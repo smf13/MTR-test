@@ -120,7 +120,7 @@ async def get_status(request: Request) -> dict[str, Any]:
     events = await db.fetchone("SELECT COUNT(*) AS n FROM events WHERE created_at >= ?", (time.time() - 86400,))
     total_runs = await db.fetchone("SELECT COUNT(*) AS n FROM runs")
     return {
-        "app": "HopWatch",
+        "app": "MTR Tracker",
         "version": __version__,
         "time": _iso(time.time()),
         "uptime_sec": int(time.time() - sched.started_at),

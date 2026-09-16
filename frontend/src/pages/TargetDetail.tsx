@@ -27,8 +27,8 @@ export function TargetDetail() {
   const navigate = useNavigate();
   const toast = useToast();
   const now = useNow();
-  const [range, setRange] = useLocalStorage("hopwatch.range", "24h");
-  const [tab, setTab] = useLocalStorage<Tab>("hopwatch.tab", "path");
+  const [range, setRange] = useLocalStorage("mtr-tracker.range", "24h");
+  const [tab, setTab] = useLocalStorage<Tab>("mtr-tracker.tab", "path");
   const [heatMetric, setHeatMetric] = useState<HeatMetric>("loss");
   const [runFilter, setRunFilter] = useState<"" | "ok" | "failed" | "route_change">("");
   const [runPage, setRunPage] = useState(0);

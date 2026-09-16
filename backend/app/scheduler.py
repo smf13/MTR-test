@@ -14,7 +14,7 @@ from .mtr import HopResult, MtrResult, route_signature, routes_equivalent, run_m
 from .notify import send_webhook
 from .resolver import resolve_host, reverse_lookup_many
 
-log = logging.getLogger("hopwatch.scheduler")
+log = logging.getLogger("mtr-tracker.scheduler")
 
 TICK_SECONDS = 1.0
 CLEANUP_EVERY = 3600.0
@@ -36,8 +36,8 @@ class Scheduler:
 
     async def start(self) -> None:
         self._stop.clear()
-        self._task = asyncio.create_task(self._loop(), name="hopwatch-scheduler")
-        self._cleanup_task = asyncio.create_task(self._cleanup_loop(), name="hopwatch-cleanup")
+        self._task = asyncio.create_task(self._loop(), name="mtr-tracker-scheduler")
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop(), name="mtr-tracker-cleanup")
         log.info("scheduler started (max concurrent runs: %d, simulate=%s)", config.max_concurrent_runs, config.simulate)
 
     async def stop(self) -> None:
@@ -88,7 +88,7 @@ class Scheduler:
     def _launch(self, target_id: int) -> None:
         if target_id in self._running:
             return
-        task = asyncio.create_task(self._run_target(target_id), name=f"hopwatch-run-{target_id}")
+        task = asyncio.create_task(self._run_target(target_id), name=f"mtr-tracker-run-{target_id}")
         self._running[target_id] = task
         task.add_done_callback(lambda _t, tid=target_id: self._running.pop(tid, None))
 
@@ -292,7 +292,7 @@ class Scheduler:
         wanted = settings.get("webhook_events") or []
         if url and kind in wanted:
             payload = {
-                "source": settings.get("site_name") or "HopWatch",
+                "source": settings.get("site_name") or "MTR Tracker",
                 "event": kind,
                 "severity": severity,
                 "message": message,

@@ -87,7 +87,7 @@ export function Settings() {
                 <div className="space-y-4">
                   <div>
                     <label className="label">Webhook URL</label>
-                    <input className="input font-mono" placeholder="https://hooks.example.com/hopwatch" value={form.webhook_url} onChange={(e) => setForm({ ...form, webhook_url: e.target.value })} spellCheck={false} />
+                    <input className="input font-mono" placeholder="https://hooks.example.com/mtr-tracker" value={form.webhook_url} onChange={(e) => setForm({ ...form, webhook_url: e.target.value })} spellCheck={false} />
                     <div className="help">A JSON POST is sent for the selected events. Works with any generic webhook receiver (n8n, Zapier, custom).</div>
                   </div>
                   <div>
@@ -104,7 +104,7 @@ export function Settings() {
                   <details className="text-xs text-muted">
                     <summary className="cursor-pointer font-medium">Payload example</summary>
                     <pre className="mt-2 overflow-x-auto rounded-lg border border-border p-3 font-mono text-[11px]" style={{ background: "var(--bg-elev)" }}>{`{
-  "source": "HopWatch",
+  "source": "MTR Tracker",
   "event": "down",
   "severity": "critical",
   "message": "Head office WAN is DOWN: destination unreachable",
@@ -143,17 +143,17 @@ export function Settings() {
             ) : (
               <div className="text-sm text-faint">Loading…</div>
             )}
-            {s?.simulate && <p className="mt-3 text-xs text-degraded">Simulation mode is on: paths are synthetic. Unset HOPWATCH_SIMULATE to send real probes.</p>}
-            {s && !s.simulate && !s.mtr_version && <p className="mt-3 text-xs text-down">The mtr binary was not found. Install mtr / mtr-tiny or set HOPWATCH_MTR_BINARY.</p>}
+            {s?.simulate && <p className="mt-3 text-xs text-degraded">Simulation mode is on: paths are synthetic. Unset MTR_TRACKER_SIMULATE to send real probes.</p>}
+            {s && !s.simulate && !s.mtr_version && <p className="mt-3 text-xs text-down">The mtr binary was not found. Install mtr / mtr-tiny or set MTR_TRACKER_MTR_BINARY.</p>}
           </section>
           <section className="card p-5 text-xs text-muted">
             <h2 className="mb-2 text-sm font-semibold text-text">Environment variables</h2>
             <ul className="space-y-1 font-mono">
-              <li>HOPWATCH_PORT=8080</li>
-              <li>HOPWATCH_DATA_DIR=/data</li>
-              <li>HOPWATCH_MAX_CONCURRENT_RUNS=4</li>
-              <li>HOPWATCH_MTR_BINARY=mtr</li>
-              <li>HOPWATCH_SIMULATE=0</li>
+              <li>MTR_TRACKER_PORT=8080</li>
+              <li>MTR_TRACKER_DATA_DIR=/data</li>
+              <li>MTR_TRACKER_MAX_CONCURRENT_RUNS=4</li>
+              <li>MTR_TRACKER_MTR_BINARY=mtr</li>
+              <li>MTR_TRACKER_SIMULATE=0</li>
             </ul>
             <p className="mt-2 font-sans">These are read at startup; restart the container to apply changes.</p>
           </section>

@@ -14,7 +14,7 @@ from typing import Any
 
 from .config import config
 
-log = logging.getLogger("hopwatch.mtr")
+log = logging.getLogger("mtr-tracker.mtr")
 
 # Field order requested from mtr. L=Loss%, S=Snt, D=Drop, R=Rcv, N=Last, B=Best,
 # A=Avg, W=Wrst, V=StDev, G=Gmean, J=Jttr, M=Javg, X=Jmax, I=Jint.

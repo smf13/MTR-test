@@ -12,10 +12,10 @@ from httpx import ASGITransport, AsyncClient
 
 @pytest.fixture
 async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("HOPWATCH_SIMULATE", "1")
-    monkeypatch.setenv("HOPWATCH_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("HOPWATCH_DB_PATH", str(tmp_path / "test.db"))
-    monkeypatch.setenv("HOPWATCH_STATIC_DIR", str(tmp_path / "missing"))
+    monkeypatch.setenv("MTR_TRACKER_SIMULATE", "1")
+    monkeypatch.setenv("MTR_TRACKER_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MTR_TRACKER_DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("MTR_TRACKER_STATIC_DIR", str(tmp_path / "missing"))
     # config is evaluated at import time; reload the modules for this test.
     import importlib
 

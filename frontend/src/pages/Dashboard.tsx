@@ -23,8 +23,8 @@ export function Dashboard() {
   const now = useNow();
   const toast = useToast();
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useLocalStorage<SortKey>("hopwatch.sort", "status");
-  const [view, setView] = useLocalStorage<View>("hopwatch.view", "cards");
+  const [sort, setSort] = useLocalStorage<SortKey>("mtr-tracker.sort", "status");
+  const [view, setView] = useLocalStorage<View>("mtr-tracker.view", "cards");
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Target | null>(null);
   const [deleting, setDeleting] = useState<Target | null>(null);
@@ -191,7 +191,7 @@ export function Dashboard() {
           <EmptyState
             icon={<Activity size={36} />}
             title="No targets yet"
-            body="Add a host to start running MTR on a schedule. HopWatch records every hop of every run so you can see exactly where latency and loss appear."
+            body="Add a host to start running MTR on a schedule. MTR Tracker records every hop of every run so you can see exactly where latency and loss appear."
             action={
               <button className="btn btn-primary" onClick={() => setFormOpen(true)}>
                 <Plus size={16} /> Add your first target

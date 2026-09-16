@@ -106,7 +106,7 @@ export function useTheme(): [Theme, () => void] {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
-      localStorage.setItem("hopwatch.theme", theme);
+      localStorage.setItem("mtr-tracker.theme", theme);
     } catch {
       /* ignore */
     }

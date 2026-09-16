@@ -1,4 +1,4 @@
-// Typed client for the HopWatch HTTP API.
+// Typed client for the MTR Tracker HTTP API.
 
 export type Status = "up" | "degraded" | "down" | "pending" | "paused";
 export type Protocol = "icmp" | "udp" | "tcp";

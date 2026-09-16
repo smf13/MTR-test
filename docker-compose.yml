@@ -1,20 +1,20 @@
 services:
-  hopwatch:
+  mtr-tracker:
     build: .
-    image: hopwatch:latest
-    container_name: hopwatch
+    image: mtr-tracker:latest
+    container_name: mtr-tracker
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
-      - hopwatch-data:/data
+      - mtr-tracker-data:/data
     environment:
       # Runs older than the retention setting (default 30 days) are purged hourly.
-      HOPWATCH_MAX_CONCURRENT_RUNS: "4"
-      HOPWATCH_LOG_LEVEL: "info"
+      MTR_TRACKER_MAX_CONCURRENT_RUNS: "4"
+      MTR_TRACKER_LOG_LEVEL: "info"
       # Set to "1" to generate synthetic data without sending packets (demos, dev machines).
-      HOPWATCH_SIMULATE: "0"
-      # Optional: HOPWATCH_MTR_BINARY, HOPWATCH_PORT
+      MTR_TRACKER_SIMULATE: "0"
+      # Optional: MTR_TRACKER_MTR_BINARY, MTR_TRACKER_PORT
     # mtr needs raw sockets for ICMP/UDP/TCP probing.
     cap_add:
       - NET_RAW
@@ -28,4 +28,4 @@ services:
       retries: 3
 
 volumes:
-  hopwatch-data:
+  mtr-tracker-data:

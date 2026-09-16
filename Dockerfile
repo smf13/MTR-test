@@ -9,16 +9,16 @@ RUN npm run build
 # ---- Stage 2: runtime ------------------------------------------------------
 FROM python:3.12-slim-bookworm
 
-LABEL org.opencontainers.image.title="HopWatch" \
+LABEL org.opencontainers.image.title="MTR Tracker" \
       org.opencontainers.image.description="Continuous MTR monitoring with per-hop history" \
       org.opencontainers.image.source="https://github.com/smf13/MTR-test"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    HOPWATCH_DATA_DIR=/data \
-    HOPWATCH_STATIC_DIR=/app/static \
-    HOPWATCH_PORT=8080 \
-    HOPWATCH_HOST=0.0.0.0
+    MTR_TRACKER_DATA_DIR=/data \
+    MTR_TRACKER_STATIC_DIR=/app/static \
+    MTR_TRACKER_PORT=8080 \
+    MTR_TRACKER_HOST=0.0.0.0
 
 # mtr-tiny provides the mtr binary; tini reaps zombies from short-lived mtr processes.
 RUN apt-get update \
