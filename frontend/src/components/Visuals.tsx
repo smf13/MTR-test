@@ -190,6 +190,57 @@ export function PathProfileChart({ rows, height = 240 }: { rows: ProfileRow[]; h
 /* Latency distribution histogram                                       */
 /* ------------------------------------------------------------------ */
 
+/** One dashed percentile marker on the histogram; markers with the same value are merged into a single label. */
+interface PercentileMarker {
+  keys: string[];
+  value: number;
+  color: string;
+}
+
+/** Y axis width + margins of the histogram; needed to estimate where the markers land in pixels. */
+const HIST_Y_AXIS_W = 44;
+const HIST_MARGIN_RIGHT = 16;
+const HIST_LABEL_ROW_H = 12;
+const HIST_LABEL_FONT = 10;
+
+function percentileMarkers(p50: number | null, p95: number | null, p99: number | null): PercentileMarker[] {
+  const out: PercentileMarker[] = [];
+  const add = (key: string, value: number | null, color: string) => {
+    if (value === null) return;
+    const same = out.find((m) => Math.abs(m.value - value) < 1e-9);
+    if (same) same.keys.push(key);
+    else out.push({ keys: [key], value, color });
+  };
+  add("p50", p50, "var(--up)");
+  add("p95", p95, "var(--degraded)");
+  add("p99", p99, "var(--down)");
+  return out;
+}
+
+/**
+ * Assign each marker label a row (0 = closest to the chart) so labels whose x positions are
+ * within a label's width of each other are stacked instead of drawn on top of one another.
+ * Only the relative pixel positions matter, so an estimate of the plot scale is good enough.
+ */
+export function layoutPercentileLabels(markers: PercentileMarker[], edges: [number, number], plotWidth: number): number[] {
+  const [min, max] = edges;
+  const span = max - min || 1;
+  const px = (v: number) => ((v - min) / span) * Math.max(1, plotWidth);
+  const labelW = (m: PercentileMarker) => m.keys.join("/").length * (HIST_LABEL_FONT * 0.62) + 6;
+  const order = markers.map((_, i) => i).sort((a, b) => markers[a].value - markers[b].value);
+  const rows = new Array<number>(markers.length).fill(0);
+  const lastInRow: { x: number; w: number }[] = [];
+  order.forEach((i) => {
+    const x = px(markers[i].value);
+    const w = labelW(markers[i]);
+    let row = 0;
+    while (row < lastInRow.length && Math.abs(x - lastInRow[row].x) < (w + lastInRow[row].w) / 2 + 2) row += 1;
+    rows[i] = row;
+    lastInRow[row] = { x, w };
+  });
+  return rows;
+}
+
 export function LatencyHistogram({ points, height = 220, bins = 30 }: { points: SeriesPoint[]; height?: number; bins?: number }) {
   const { rows, p50, p95, p99, count, binWidth, edges } = useMemo(() => {
     const vals = points.filter((p) => p.ok && p.avg !== null).map((p) => p.avg as number);
@@ -214,15 +265,19 @@ export function LatencyHistogram({ points, height = 220, bins = 30 }: { points: 
       edges: [min, max] as [number, number],
     };
   }, [points, bins]);
+  const markers = useMemo(() => percentileMarkers(p50, p95, p99), [p50, p95, p99]);
   if (!rows.length) return <div className="flex items-center justify-center text-sm text-faint" style={{ height }}>Need at least two reachable runs.</div>;
   return (
     <div>
       <Sized height={height}>
-        {(width) => (
-          <ComposedChart width={width} height={height} data={rows} margin={{ top: 16, right: 16, bottom: 0, left: 0 }}>
+        {(width) => {
+          const labelRows = layoutPercentileLabels(markers, edges, width - HIST_Y_AXIS_W - HIST_MARGIN_RIGHT);
+          const rowCount = labelRows.length ? Math.max(...labelRows) + 1 : 1;
+          return (
+          <ComposedChart width={width} height={height} data={rows} margin={{ top: 6 + rowCount * HIST_LABEL_ROW_H, right: HIST_MARGIN_RIGHT, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
             <XAxis dataKey="x" type="number" domain={edges} tickFormatter={(v: number) => fmtNum(v, 0)} tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} unit=" ms" />
-            <YAxis tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} width={44} allowDecimals={false} />
+            <YAxis tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} width={HIST_Y_AXIS_W} allowDecimals={false} />
             <Tooltip
               isAnimationActive={false}
               cursor={{ fill: "var(--surface-2)" }}
@@ -238,11 +293,28 @@ export function LatencyHistogram({ points, height = 220, bins = 30 }: { points: 
               }}
             />
             <Bar dataKey="n" fill="var(--chart-avg)" fillOpacity={0.75} isAnimationActive={false} barSize={Math.max(3, Math.floor((width - 70) / rows.length) - 2)} radius={[2, 2, 0, 0]} />
-            {p50 !== null && <ReferenceLine x={p50} stroke="var(--up)" strokeDasharray="4 3" label={{ value: "p50", position: "top", fontSize: 10, fill: "var(--up)" }} />}
-            {p95 !== null && <ReferenceLine x={p95} stroke="var(--degraded)" strokeDasharray="4 3" label={{ value: "p95", position: "top", fontSize: 10, fill: "var(--degraded)" }} />}
-            {p99 !== null && p99 !== p95 && <ReferenceLine x={p99} stroke="var(--down)" strokeDasharray="4 3" label={{ value: "p99", position: "top", fontSize: 10, fill: "var(--down)" }} />}
+            {markers.map((m, i) => (
+              <ReferenceLine
+                key={m.keys.join("/")}
+                x={m.value}
+                stroke={m.color}
+                strokeDasharray="4 3"
+                label={(props: { viewBox?: { x?: number; y?: number; width?: number } }) => {
+                  // viewBox is the line's bounding box (width 0 for a vertical line); stack colliding labels upwards by row.
+                  const vb = props.viewBox ?? {};
+                  const lx = Math.min(Math.max((vb.x ?? 0) + (vb.width ?? 0) / 2, HIST_Y_AXIS_W + 14), width - HIST_MARGIN_RIGHT - 14);
+                  const ly = (vb.y ?? 0) - 4 - labelRows[i] * HIST_LABEL_ROW_H;
+                  return (
+                    <text x={lx} y={ly} fontSize={HIST_LABEL_FONT} fill={m.color} textAnchor="middle" fontFamily="var(--font-mono)">
+                      {m.keys.join("/")}
+                    </text>
+                  );
+                }}
+              />
+            ))}
           </ComposedChart>
-        )}
+          );
+        }}
       </Sized>
       <div className="num mt-1 flex flex-wrap gap-x-4 px-1 text-[11px] text-faint">
         <span>{count} runs</span>

@@ -326,7 +326,13 @@ export function TargetDetail() {
                 <Segmented<HeatMetric> value={heatMetric} onChange={setHeatMetric} options={[{ value: "loss", label: "Loss" }, { value: "avg", label: "Latency" }, { value: "jitter", label: "Jitter" }]} />
               </div>
             </div>
-            {history.data ? <HopHeatmap history={history.data} metric={heatMetric} rangeSec={series.data?.range_sec ?? 86400} onSelectRun={(rid) => navigate(`/runs/${rid}`)} /> : <div className="py-10 text-center text-sm text-faint">Loading…</div>}
+            {history.data ? (
+              <HopHeatmap history={history.data} metric={heatMetric} rangeSec={series.data?.range_sec ?? 86400} onSelectRun={(rid) => navigate(`/runs/${rid}`)} />
+            ) : history.error ? (
+              <ErrorBanner message={`Could not load path history: ${history.error}`} />
+            ) : (
+              <div className="py-10 text-center text-sm text-faint">Loading…</div>
+            )}
           </div>
         )}
 

@@ -569,11 +569,12 @@ async def get_series(
 async def get_hop_history(
     request: Request,
     target_id: int,
-    range: str = Query(default="24h"),  # noqa: A002
+    # Named range_ (not range) because the body below needs the builtin range().
+    range_: str = Query(default="24h", alias="range"),
     max_runs: int = Query(default=120, ge=10, le=500),
 ) -> dict[str, Any]:
     db = _db(request)
-    since = time.time() - parse_range(range)
+    since = time.time() - parse_range(range_)
     runs = await db.fetchall(
         "SELECT id, started_at, hop_count, reached FROM runs WHERE target_id = ? AND started_at >= ? AND status = 'ok' "
         "ORDER BY started_at ASC",
@@ -581,6 +582,7 @@ async def get_hop_history(
     )
     runs = list(runs)
     if len(runs) > max_runs:
+        # Evenly sample max_runs columns across the window so the heatmap stays bounded.
         step = len(runs) / max_runs
         runs = [runs[int(i * step)] for i in range(max_runs)]
     if not runs:

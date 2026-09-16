@@ -267,3 +267,39 @@ async def test_api_token_protects_writes(protected_client: AsyncClient) -> None:
     assert r.status_code == 201
     r = await c.delete(f"/api/targets/{r.json()['id']}", headers={"X-Api-Token": "s3cret"})
     assert r.status_code == 204
+
+
+async def test_hop_history_downsamples_when_over_max_runs(client: AsyncClient) -> None:
+    """Regression: with more runs than max_runs the endpoint used to raise (query param shadowed builtin range)."""
+    import time
+
+    r = await client.post("/api/targets", json={"name": "Busy", "host": "192.0.2.20", "interval_sec": 60, "count": 3, "enabled": False})
+    assert r.status_code == 201, r.text
+    t = r.json()
+    db = client._transport.app.state.db  # type: ignore[attr-defined]
+    now = time.time()
+    total = 150
+    for i in range(total):
+        started = now - (total - i) * 10
+        run_id = await db.execute(
+            "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, reached, hop_count, loss_pct, avg_ms) "
+            "VALUES (?, ?, ?, 100, 'ok', 1, 2, 0, 10)",
+            (t["id"], started, started + 0.1),
+            commit=False,
+        )
+        await db.executemany(
+            "INSERT INTO hops(run_id, hop_no, ip, loss_pct, sent, received, avg_ms) VALUES (?, ?, ?, 0, 3, 3, ?)",
+            [(run_id, 1, "10.0.0.1", 1.0), (run_id, 2, "192.0.2.20", 10.0)],
+            commit=True,
+        )
+
+    r = await client.get(f"/api/targets/{t['id']}/hops/history?range=1h&max_runs=50")
+    assert r.status_code == 200, r.text
+    hist = r.json()
+    assert len(hist["runs"]) == 50 and hist["max_hops"] == 2
+    ts = [x["t"] for x in hist["runs"]]
+    assert ts == sorted(ts)
+    assert all(len(x["hops"]) == 2 for x in hist["runs"])
+
+    r = await client.get(f"/api/targets/{t['id']}/hops/history?range=1h")
+    assert r.status_code == 200 and len(r.json()["runs"]) == 120
