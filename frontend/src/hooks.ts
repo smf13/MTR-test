@@ -99,10 +99,20 @@ export function useLocalStorage<T>(key: string, initial: T): [T, (v: T) => void]
   return [value, set];
 }
 
-export type Theme = "dark" | "light";
+export type Theme = "dark" | "oled" | "light";
+export const THEMES: { value: Theme; label: string; description: string }[] = [
+  { value: "dark", label: "Dark", description: "Navy surfaces, easy on the eyes" },
+  { value: "oled", label: "OLED", description: "True black backgrounds for OLED displays" },
+  { value: "light", label: "Light", description: "Bright, for well-lit rooms" },
+];
 
-export function useTheme(): [Theme, () => void] {
-  const [theme, setTheme] = useState<Theme>(() => (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
+function readTheme(): Theme {
+  const t = document.documentElement.dataset.theme;
+  return t === "light" || t === "oled" ? t : "dark";
+}
+
+export function useTheme(): [Theme, (t: Theme) => void, () => void] {
+  const [theme, setTheme] = useState<Theme>(readTheme);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
@@ -111,6 +121,7 @@ export function useTheme(): [Theme, () => void] {
       /* ignore */
     }
   }, [theme]);
-  const toggle = useCallback(() => setTheme((t) => (t === "dark" ? "light" : "dark")), []);
-  return [theme, toggle];
+  // Cycle dark -> oled -> light -> dark (used by the compact mobile button).
+  const cycle = useCallback(() => setTheme((t) => THEMES[(THEMES.findIndex((x) => x.value === t) + 1) % THEMES.length].value), []);
+  return [theme, setTheme, cycle];
 }

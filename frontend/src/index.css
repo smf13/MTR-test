@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *, [data-theme="oled"], [data-theme="oled"] *));
 
 :root {
   --bg: #f4f6fa;
@@ -56,6 +56,36 @@
   --chart-jitter: #a78bfa;
   --chart-grid: #1e2a40;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+}
+
+
+/* True black for OLED panels: pure #000 page, near-black surfaces, borders carry the structure. */
+[data-theme="oled"] {
+  --bg: #000000;
+  --bg-elev: #000000;
+  --surface: #050505;
+  --surface-2: #101010;
+  --border: #1f1f1f;
+  --border-strong: #303030;
+  --text: #ededed;
+  --text-muted: #9a9a9a;
+  --text-faint: #666666;
+  --accent: #38bdf8;
+  --accent-soft: #0a2230;
+  --up: #22c55e;
+  --up-soft: #08200f;
+  --degraded: #f59e0b;
+  --degraded-soft: #2a1d04;
+  --down: #ef4444;
+  --down-soft: #2b0a0a;
+  --paused: #8a8a8a;
+  --paused-soft: #161616;
+  --chart-avg: #38bdf8;
+  --chart-band: #38bdf8;
+  --chart-loss: #f87171;
+  --chart-jitter: #a78bfa;
+  --chart-grid: #161616;
+  --shadow: none;
 }
 
 @theme inline {

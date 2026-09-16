@@ -13,7 +13,7 @@ import { Segmented } from "../components/RangePicker";
 import { useToast } from "../components/Toast";
 import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor } from "../utils";
 
-type SortKey = "name" | "status" | "latency" | "loss";
+type SortKey = "name" | "status" | "latency" | "loss" | "hops";
 type View = "cards" | "table";
 
 const STATUS_ORDER: Record<string, number> = { down: 0, degraded: 1, pending: 2, up: 3, paused: 4 };
@@ -56,6 +56,8 @@ export function Dashboard() {
           return (b.latest_run?.avg_ms ?? -1) - (a.latest_run?.avg_ms ?? -1);
         case "loss":
           return (b.latest_run?.loss_pct ?? -1) - (a.latest_run?.loss_pct ?? -1);
+        case "hops":
+          return (b.latest_run?.hop_count ?? -1) - (a.latest_run?.hop_count ?? -1) || a.name.localeCompare(b.name);
         default:
           return a.name.localeCompare(b.name);
       }
@@ -174,6 +176,7 @@ export function Dashboard() {
             { value: "name", label: "Name" },
             { value: "latency", label: "Latency" },
             { value: "loss", label: "Loss" },
+            { value: "hops", label: "Hops" },
           ]}
         />
         <Segmented<View>

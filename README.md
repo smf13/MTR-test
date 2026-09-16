@@ -21,7 +21,7 @@ Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rath
 - **Alerting.** Per-target loss and latency thresholds produce up / degraded / down state transitions, an event log, and optional JSON webhooks (works with n8n, Zapier, custom receivers).
 - **Quick trace.** Run a one-off MTR from the server without saving it, then add the host as a target in one click.
 - **Text report export** of any run in the familiar `mtr --report` layout.
-- **Retention** control, SQLite storage (WAL mode), light and dark themes, responsive layout for phones and wall displays.
+- **Retention** control, SQLite storage (WAL mode), dark, true-black OLED and light themes, responsive layout for phones and wall displays.
 - **Simulation mode** to demo or develop without raw-socket privileges.
 
 ## Quick start (Docker)

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { NavLink, Link } from "react-router-dom";
-import { Activity, Bell, LayoutDashboard, Menu, Moon, Settings, Sun, Radar, X, FlaskConical } from "lucide-react";
-import { useTheme, usePoll } from "../hooks";
+import { Activity, Bell, LayoutDashboard, Menu, Moon, MoonStar, Settings, Sun, Radar, X, FlaskConical } from "lucide-react";
+import { useTheme, usePoll, THEMES } from "../hooks";
 import { api } from "../api";
 import { classNames } from "../utils";
 
@@ -13,7 +13,7 @@ const NAV = [
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
-  const [theme, toggleTheme] = useTheme();
+  const [theme, setTheme, cycleTheme] = useTheme();
   const [open, setOpen] = useState(false);
   const status = usePoll(() => api.status(), 15000);
   const s = status.data;
@@ -64,10 +64,13 @@ export function Layout({ children }: { children: ReactNode }) {
               )}
             </div>
           )}
-          <button className="btn w-full justify-center" onClick={toggleTheme}>
-            {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-            {theme === "dark" ? "Light theme" : "Dark theme"}
-          </button>
+          <div className="seg w-full" role="radiogroup" aria-label="Theme">
+            {THEMES.map((t) => (
+              <button key={t.value} className="flex-1" data-active={theme === t.value} onClick={() => setTheme(t.value)} title={t.description} role="radio" aria-checked={theme === t.value}>
+                {t.label}
+              </button>
+            ))}
+          </div>
           <div className="px-1">MTR Tracker {s?.version ?? ""}</div>
         </div>
       </aside>
@@ -78,8 +81,8 @@ export function Layout({ children }: { children: ReactNode }) {
             {open ? <X size={18} /> : <Menu size={18} />}
           </button>
           <Brand compact />
-          <button className="btn btn-ghost btn-sm ml-auto" onClick={toggleTheme} aria-label="Toggle theme">
-            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+          <button className="btn btn-ghost btn-sm ml-auto" onClick={cycleTheme} aria-label="Switch theme" title={`Theme: ${theme}`}>
+            {theme === "dark" ? <MoonStar size={16} /> : theme === "oled" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
         </header>
         {open && (
