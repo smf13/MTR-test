@@ -149,7 +149,7 @@ export function Settings() {
           <section className="card p-5 text-xs text-muted">
             <h2 className="mb-2 text-sm font-semibold text-text">Environment variables</h2>
             <ul className="space-y-1 font-mono">
-              <li>MTR_TRACKER_PORT=8080</li>
+              <li>MTR_TRACKER_PORT=8899</li>
               <li>MTR_TRACKER_DATA_DIR=/data</li>
               <li>MTR_TRACKER_MAX_CONCURRENT_RUNS=4</li>
               <li>MTR_TRACKER_MTR_BINARY=mtr</li>

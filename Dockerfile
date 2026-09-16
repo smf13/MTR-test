@@ -17,7 +17,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     MTR_TRACKER_DATA_DIR=/data \
     MTR_TRACKER_STATIC_DIR=/app/static \
-    MTR_TRACKER_PORT=8080 \
+    MTR_TRACKER_PORT=8899 \
     MTR_TRACKER_HOST=0.0.0.0
 
 # mtr-tiny provides the mtr binary; tini reaps zombies from short-lived mtr processes.
@@ -32,11 +32,12 @@ COPY backend/app ./app
 COPY --from=ui /ui/dist ./static
 
 VOLUME ["/data"]
-EXPOSE 8080
+EXPOSE 8899
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
+  CMD curl -fsS "http://127.0.0.1:${MTR_TRACKER_PORT:-8899}/healthz" || exit 1
 
 # mtr needs raw sockets: run as root with CAP_NET_RAW (see docker-compose.yml).
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
+# app.main reads MTR_TRACKER_HOST / MTR_TRACKER_PORT, so overriding the port needs no CMD change.
+CMD ["python", "-m", "app.main"]

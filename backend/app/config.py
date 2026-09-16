@@ -55,7 +55,7 @@ class Config:
             data_dir=data_dir,
             db_path=db_path,
             host=os.environ.get("MTR_TRACKER_HOST", "0.0.0.0"),
-            port=_env_int("MTR_TRACKER_PORT", 8080),
+            port=_env_int("MTR_TRACKER_PORT", 8899),
             mtr_binary=os.environ.get("MTR_TRACKER_MTR_BINARY", "mtr"),
             simulate=_env_bool("MTR_TRACKER_SIMULATE", False),
             max_concurrent_runs=max(1, _env_int("MTR_TRACKER_MAX_CONCURRENT_RUNS", 4)),

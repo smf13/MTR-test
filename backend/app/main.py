@@ -74,7 +74,7 @@ app = create_app()
 def main() -> None:
     import uvicorn
 
-    uvicorn.run("app.main:app", host=config.host, port=config.port, log_level=config.log_level.lower())
+    uvicorn.run("app.main:app", host=config.host, port=config.port, log_level=config.log_level.lower(), access_log=False)
 
 
 if __name__ == "__main__":

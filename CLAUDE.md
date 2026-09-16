@@ -30,12 +30,12 @@ docker-compose.yml  Grants NET_RAW, persistent /data volume, healthcheck on /hea
 ```bash
 # Backend
 cd backend && pip install -r requirements-dev.txt
-MTR_TRACKER_SIMULATE=1 MTR_TRACKER_DATA_DIR=./data python -m uvicorn app.main:app --reload --port 8080
+MTR_TRACKER_SIMULATE=1 MTR_TRACKER_DATA_DIR=./data python -m uvicorn app.main:app --reload --port 8899
 python -m pytest -q
 
 # Frontend
 cd frontend && npm install
-npm run dev          # Vite on :5173, proxies /api to :8080
+npm run dev          # Vite on :5173, proxies /api to :8899
 npm run build        # tsc --noEmit && vite build -> frontend/dist (served by the backend if present)
 
 # Docker

@@ -32,7 +32,7 @@ cd mtr-tracker
 docker compose up -d --build
 ```
 
-Open <http://localhost:8080>, click **Add target**, enter a host and an interval, and the first run starts immediately.
+Open <http://localhost:8899>, click **Add target**, enter a host and an interval, and the first run starts immediately.
 
 Data lives in the `mtr-tracker-data` volume (`/data` inside the container). The container needs `CAP_NET_RAW` for mtr, which `docker-compose.yml` already grants. Uncomment `network_mode: host` if you want the first hop to be your host's real gateway instead of the Docker bridge.
 
@@ -42,7 +42,7 @@ Environment variables (read at startup):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MTR_TRACKER_PORT` | `8080` | HTTP port |
+| `MTR_TRACKER_PORT` | `8899` | HTTP port |
 | `MTR_TRACKER_DATA_DIR` | `/data` | Directory for the SQLite database |
 | `MTR_TRACKER_MAX_CONCURRENT_RUNS` | `4` | How many mtr processes may run at once |
 | `MTR_TRACKER_MTR_BINARY` | `mtr` | Path to the mtr binary |
@@ -106,7 +106,7 @@ Backend (Python 3.11+):
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-MTR_TRACKER_SIMULATE=1 MTR_TRACKER_DATA_DIR=./data python -m uvicorn app.main:app --reload --port 8080
+MTR_TRACKER_SIMULATE=1 MTR_TRACKER_DATA_DIR=./data python -m uvicorn app.main:app --reload --port 8899
 python -m pytest
 ```
 
@@ -115,7 +115,7 @@ Frontend (Node 22):
 ```bash
 cd frontend
 npm install
-npm run dev        # http://localhost:5173, proxies /api to :8080
+npm run dev        # http://localhost:5173, proxies /api to :8899
 npm run build      # writes dist/, which the backend serves automatically
 ```
 
