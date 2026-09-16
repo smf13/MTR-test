@@ -6,15 +6,22 @@ Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rath
 
 ![Dashboard](docs/dashboard.png)
 
-| Target detail | Path history heatmap |
+| Target detail | Path profile, distribution, hour-by-day |
 | --- | --- |
-| ![Target detail](docs/target.png) | ![Path history](docs/path-history.png) |
+| ![Target detail](docs/target.png) | ![More visuals](docs/target-visuals.png) |
+
+![Path history](docs/path-history.png)
 
 ## Features
 
 - **Scheduled MTR runs** per target (10 seconds to 24 hours), with configurable probe count, probe interval, packet size, max hops, IPv4/IPv6, and ICMP / UDP / TCP probing with a port.
 - **Every hop, every run.** Loss %, sent/received, last/avg/best/worst, standard deviation, jitter (Jttr, Javg, Jmax, Jint), ASN and reverse DNS for each hop are stored and searchable.
 - **Time-series views.** Round-trip time with best–worst band, packet loss and jitter charts over 1h to 30d, automatically aggregated for long ranges. Click a point to open the underlying run.
+- **Status timeline** on every dashboard card and target page: 48 half-hour cells for the last 24 h coloured up / degraded / down, Uptime Kuma style.
+- **Latency across targets**: one chart on the dashboard overlaying every target's round-trip time so WAN links and providers can be compared at a glance.
+- **Path profile**: latency and loss per hop for the latest run or averaged over the range, showing exactly where delay is added along the path.
+- **Latency distribution** histogram with p50 / p95 / p99 markers, and an **hour-by-day heatmap** of latency, loss or jitter that exposes recurring congestion.
+- **Route timeline**: which distinct path was in use when, with share and hop count per route, one click from any segment to its run.
 - **Path history heatmap.** Hop-by-run grid coloured by loss, latency or jitter, so a flapping hop or a mid-path degradation is obvious at a glance.
 - **Path summary.** Per-hop statistics aggregated over the selected range, including alternate addresses seen at each hop (ECMP or reroutes) with how often each was observed.
 - **Route change detection** with a hop-by-hop diff, and detection of destination IP changes for DNS-based targets.
@@ -100,13 +107,16 @@ The UI is a thin client over a JSON API, documented live at `/api/docs`.
 | --- | --- | --- |
 | `GET` | `/api/status` | Engine status, counters, mtr version |
 | `GET` / `PUT` | `/api/settings` | Global settings |
-| `GET` / `POST` | `/api/targets` | List (with 24h stats and sparkline) / create |
+| `GET` / `POST` | `/api/targets` | List (with 24h stats, sparkline and status timeline) / create |
 | `GET` / `PUT` / `DELETE` | `/api/targets/{id}` | Detail with range stats (`?range=24h`) / update / delete |
 | `POST` | `/api/targets/{id}/run` | Run now |
 | `GET` | `/api/targets/{id}/runs` | Paginated runs (`limit`, `offset`, `range`, `status=ok|failed|route_change`) |
 | `GET` | `/api/targets/{id}/series` | Destination latency / loss / jitter time series, auto-bucketed |
 | `GET` | `/api/targets/{id}/hops/history` | Hop-by-run matrix for the heatmap |
 | `GET` | `/api/targets/{id}/hops/summary` | Per-hop aggregates with alternate addresses |
+| `GET` | `/api/targets/{id}/hourly` | Hour buckets (avg, worst, loss, jitter, reached) for the day-by-hour heatmap |
+| `GET` | `/api/targets/{id}/routes` | Contiguous route segments over time and per-route share |
+| `GET` | `/api/overview/series` | Bucketed latency and loss for every target, for the comparison chart |
 | `GET` | `/api/targets/{id}/events` | Events for one target |
 | `GET` | `/api/runs/{id}` | A run with all hops |
 | `GET` | `/api/runs/{id}/report` | Plain-text mtr-style report |

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Plus, Search, Play, Pause, Pencil, Trash2, Clock, GitBranch, Activity, ShieldCheck, ShieldAlert, ShieldOff, RefreshCw } from "lucide-react";
+import { Plus, Search, Play, Pause, Pencil, Trash2, Clock, GitBranch, Activity, ShieldCheck, ShieldAlert, ShieldOff, RefreshCw, ChevronDown, ChevronUp, LineChart } from "lucide-react";
 import { api, type Target, type TargetInput } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { StatusBadge } from "../components/StatusBadge";
@@ -10,6 +10,7 @@ import { TargetForm } from "../components/TargetForm";
 import { ConfirmDialog } from "../components/Modal";
 import { EmptyState, ErrorBanner } from "../components/EmptyState";
 import { Segmented } from "../components/RangePicker";
+import { OverviewChart, StatusStrip } from "../components/Visuals";
 import { useToast } from "../components/Toast";
 import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor } from "../utils";
 
@@ -20,6 +21,8 @@ const STATUS_ORDER: Record<string, number> = { down: 0, degraded: 1, pending: 2,
 
 export function Dashboard() {
   const targets = usePoll(() => api.targets(), 10000);
+  const overview = usePoll(() => api.overview("24h"), 60000);
+  const [showOverview, setShowOverview] = useLocalStorage("mtr-tracker.overview", true);
   const now = useNow();
   const toast = useToast();
   const [query, setQuery] = useState("");
@@ -163,6 +166,19 @@ export function Dashboard() {
 
       {targets.error && <ErrorBanner message={`Could not load targets: ${targets.error}`} />}
 
+      {overview.data && overview.data.targets.length > 0 && (
+        <div className="card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-semibold"><LineChart size={15} /> Latency across targets · 24h</h2>
+              <p className="text-xs text-faint">Average round-trip time to each destination in {fmtDuration(overview.data.bucket_sec)} buckets. Click a name to hide or show it.</p>
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowOverview(!showOverview)}>{showOverview ? <><ChevronUp size={14} /> Collapse</> : <><ChevronDown size={14} /> Expand</>}</button>
+          </div>
+          {showOverview && <div className="mt-2"><OverviewChart data={overview.data} /></div>}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
@@ -258,7 +274,11 @@ function TargetCard({ t, now, onEdit, onDelete, onToggle, onRun }: { t: Target; 
         <Metric label="Avail 24h" value={t.stats_24h.availability_pct !== null ? fmtNum(t.stats_24h.availability_pct, t.stats_24h.availability_pct === 100 ? 0 : 1) : "–"} unit="%" />
       </div>
 
-      <div className="mt-3 flex items-end justify-between gap-3">
+      <div className="mt-3">
+        <StatusStrip buckets={t.timeline.buckets} bucketSec={t.timeline.bucket_sec} since={t.timeline.since} />
+      </div>
+
+      <div className="mt-2 flex items-end justify-between gap-3">
         <Link to={`/targets/${t.id}`} className="block min-w-0 flex-1" title="Latency of the last runs">
           <div className="w-full">
             <Sparkline points={t.sparkline} width={300} height={40} color={statusColor(status === "paused" || status === "pending" ? "up" : status)} />
@@ -325,6 +345,7 @@ function TargetTable({ list, now, onEdit, onDelete, onToggle, onRun }: { list: T
             <th className="text-right">Avail 24h</th>
             <th className="text-right">Avg 24h</th>
             <th>Trend</th>
+            <th className="w-40">Status 24h</th>
             <th>Interval</th>
             <th>Last run</th>
             <th />
@@ -351,6 +372,7 @@ function TargetTable({ list, now, onEdit, onDelete, onToggle, onRun }: { list: T
                 <td className="text-right">{fmtPct(t.stats_24h.availability_pct)}</td>
                 <td className="text-right text-muted">{fmtNum(t.stats_24h.avg_ms)}</td>
                 <td><Sparkline points={t.sparkline} width={120} height={26} color={statusColor(status === "paused" || status === "pending" ? "up" : status)} /></td>
+                <td><StatusStrip buckets={t.timeline.buckets} bucketSec={t.timeline.bucket_sec} since={t.timeline.since} height={10} className="w-36" /></td>
                 <td className="text-muted">{fmtDuration(t.interval_sec)}</td>
                 <td className="text-muted">{run ? relTime(run.started_at, now) : "–"}</td>
                 <td>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Play, Pause, Pencil, Trash2, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download } from "lucide-react";
+import { ArrowLeft, Play, Pause, Pencil, Trash2, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays } from "lucide-react";
 import { api, type Target, type TargetInput, type Run } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { StatusBadge } from "../components/StatusBadge";
@@ -12,6 +12,7 @@ import { HopHeatmap, HeatLegend, type HeatMetric } from "../components/HopHeatma
 import { PathSummary } from "../components/PathSummary";
 import { RunsTable } from "../components/RunsTable";
 import { EventsList } from "../components/EventsList";
+import { StatusStrip, PathProfileChart, LatencyHistogram, HourlyHeatmap, RouteTimeline, profileFromHops, profileFromSummary, type HourlyMetric } from "../components/Visuals";
 import { TargetForm } from "../components/TargetForm";
 import { ConfirmDialog } from "../components/Modal";
 import { ErrorBanner } from "../components/EmptyState";
@@ -30,6 +31,8 @@ export function TargetDetail() {
   const [range, setRange] = useLocalStorage("mtr-tracker.range", "24h");
   const [tab, setTab] = useLocalStorage<Tab>("mtr-tracker.tab", "path");
   const [heatMetric, setHeatMetric] = useState<HeatMetric>("loss");
+  const [profileSource, setProfileSource] = useState<"latest" | "range">("latest");
+  const [hourlyMetric, setHourlyMetric] = useState<HourlyMetric>("avg");
   const [runFilter, setRunFilter] = useState<"" | "ok" | "failed" | "route_change">("");
   const [runPage, setRunPage] = useState(0);
   const [editing, setEditing] = useState(false);
@@ -47,6 +50,8 @@ export function TargetDetail() {
   const summary = usePoll(() => api.hopSummary(targetId, range), pollMs, [targetId, range]);
   const runs = usePoll(() => api.runs(targetId, { limit: RUN_PAGE, offset: runPage * RUN_PAGE, range, status: runFilter || undefined }), pollMs, [targetId, range, runFilter, runPage]);
   const events = usePoll(() => api.targetEvents(targetId, range), pollMs, [targetId, range]);
+  const routes = usePoll(() => api.routes(targetId, range), pollMs, [targetId, range]);
+  const hourly = usePoll(() => api.hourly(targetId, range), Math.max(pollMs, 60000), [targetId, range]);
 
   useEffect(() => setRunPage(0), [range, runFilter]);
 
@@ -58,7 +63,9 @@ export function TargetDetail() {
     void summary.refresh();
     void runs.refresh();
     void events.refresh();
-  }, [target, series, latest, history, summary, runs, events]);
+    void routes.refresh();
+    void hourly.refresh();
+  }, [target, series, latest, history, summary, runs, events, routes, hourly]);
 
   const t: Target | null = target.data;
   const stats = t?.stats;
@@ -159,6 +166,14 @@ export function TargetDetail() {
         <StatTile label={`Reroutes · ${range}`} value={stats?.route_changes ?? 0} sub={stats?.hop_count_min ? `${stats.hop_count_min === stats.hop_count_max ? stats.hop_count_min : `${stats.hop_count_min}–${stats.hop_count_max}`} hops` : undefined} tone={stats?.route_changes ? "degraded" : undefined} icon={<GitBranch size={15} />} />
       </div>
 
+      <div className="card px-4 py-3">
+        <div className="mb-1.5 flex items-center justify-between text-xs">
+          <span className="font-semibold">Status · last 24 hours</span>
+          <span className="text-faint">{fmtDuration(t.timeline.bucket_sec)} per cell · hover for details</span>
+        </div>
+        <StatusStrip buckets={t.timeline.buckets} bucketSec={t.timeline.bucket_sec} since={t.timeline.since} height={12} />
+      </div>
+
       <div className="card p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -168,7 +183,11 @@ export function TargetDetail() {
           <Legend />
         </div>
         <LatencyChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} onPointClick={(rid) => navigate(`/runs/${rid}`)} />
-        <div className="mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className="mt-2 pl-11 pr-3">
+          <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-muted"><Waypoints size={13} /> Route in use{routes.data ? ` · ${routes.data.routes.length} distinct path${routes.data.routes.length === 1 ? "" : "s"}` : ""}</div>
+          {routes.data ? <RouteTimeline routes={routes.data} onOpenRun={(rid) => navigate(`/runs/${rid}`)} /> : <div className="h-4" />}
+        </div>
+        <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
           <div>
             <h3 className="mb-1 text-xs font-semibold text-muted">Packet loss to destination</h3>
             <LossChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} />
@@ -178,6 +197,40 @@ export function TargetDetail() {
             <JitterChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} />
           </div>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <div className="card p-4">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-semibold"><Route size={15} /> Path profile</h2>
+              <p className="text-xs text-faint">Where latency is added along the path. Line: avg per hop · band: best–worst · bars: loss per hop.</p>
+            </div>
+            <Segmented value={profileSource} onChange={setProfileSource} options={[{ value: "latest", label: "Latest run" }, { value: "range", label: `Avg · ${range}` }]} />
+          </div>
+          <PathProfileChart rows={profileSource === "latest" ? (latestRun ? profileFromHops(latestRun.hops) : []) : summary.data ? profileFromSummary(summary.data) : []} />
+        </div>
+        <div className="card p-4">
+          <div className="mb-2">
+            <h2 className="flex items-center gap-2 text-sm font-semibold"><BarChart3 size={15} /> Latency distribution · {range}</h2>
+            <p className="text-xs text-faint">How often each round-trip time occurs{series.data?.bucket_sec ? ` (from ${fmtDuration(series.data.bucket_sec)} averages)` : ""}. A long right tail means occasional slow runs; two humps mean two paths or states.</p>
+          </div>
+          <LatencyHistogram points={series.data?.points ?? []} />
+        </div>
+      </div>
+
+      <div className="card p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-semibold"><CalendarDays size={15} /> Hour by day · {range}</h2>
+            <p className="text-xs text-faint">One cell per hour in your local time. Recurring dark columns mean congestion at the same time each day.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <HeatLegend metric={hourlyMetric === "loss" ? "loss" : "avg"} />
+            <Segmented<HourlyMetric> value={hourlyMetric} onChange={setHourlyMetric} options={[{ value: "avg", label: "Latency" }, { value: "loss", label: "Loss" }, { value: "jitter", label: "Jitter" }]} />
+          </div>
+        </div>
+        {hourly.data ? <HourlyHeatmap hours={hourly.data.hours} metric={hourlyMetric} /> : <div className="py-10 text-center text-sm text-faint">Loading…</div>}
       </div>
 
       <div className="card overflow-hidden">

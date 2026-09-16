@@ -67,6 +67,59 @@ export interface SparkPoint {
   reached: boolean;
 }
 
+export interface TimelineBucket {
+  s: "up" | "degraded" | "down";
+  n: number;
+  avg: number | null;
+}
+
+export interface OverviewSeries {
+  range_sec: number;
+  bucket_sec: number;
+  targets: { id: number; name: string; host: string; enabled: boolean; points: { t: string; avg: number | null; loss: number | null; ok: boolean; n: number }[] }[];
+}
+
+export interface HourlyBucket {
+  t: string;
+  n: number;
+  ok_n: number;
+  avg: number | null;
+  worst: number | null;
+  loss: number | null;
+  max_loss: number | null;
+  jitter: number | null;
+}
+
+export interface RouteSegment {
+  hash: string;
+  start: string;
+  end: string;
+  runs: number;
+  first_run_id: number;
+  hops: number;
+  index: number;
+}
+
+export interface RouteInfo {
+  hash: string;
+  index: number;
+  runs: number;
+  hops: number;
+  share_pct: number;
+  first_seen: string;
+  last_seen: string;
+  reached: number;
+  example_run_id: number;
+}
+
+export interface Routes {
+  range_sec: number;
+  since: string;
+  total_runs: number;
+  segments: RouteSegment[];
+  routes: RouteInfo[];
+}
+
 export interface RangeStats {
   range_sec: number;
   runs: number;
@@ -118,13 +171,14 @@ export interface Target {
     route_changes: number;
   };
   sparkline: SparkPoint[];
+  timeline: { bucket_sec: number; since: string; buckets: (TimelineBucket | null)[] };
   stats?: RangeStats;
   running?: boolean;
 }
 
 export type TargetInput = Omit<
   Target,
-  "id" | "created_at" | "updated_at" | "next_run_at" | "last_status" | "latest_run" | "stats_24h" | "sparkline" | "stats" | "running"
+  "id" | "created_at" | "updated_at" | "next_run_at" | "last_status" | "latest_run" | "stats_24h" | "sparkline" | "timeline" | "stats" | "running"
 >;
 
 export interface SeriesPoint {
@@ -301,6 +355,9 @@ export const api = {
   hopHistory: (id: number, range: string, maxRuns = 120) =>
     request<HopHistory>(`/api/targets/${id}/hops/history?range=${encodeURIComponent(range)}&max_runs=${maxRuns}`),
   hopSummary: (id: number, range: string) => request<HopSummary>(`/api/targets/${id}/hops/summary?range=${encodeURIComponent(range)}`),
+  overview: (range: string) => request<OverviewSeries>(`/api/overview/series?range=${encodeURIComponent(range)}`),
+  hourly: (id: number, range: string) => request<{ range_sec: number; hours: HourlyBucket[] }>(`/api/targets/${id}/hourly?range=${encodeURIComponent(range)}`),
+  routes: (id: number, range: string) => request<Routes>(`/api/targets/${id}/routes?range=${encodeURIComponent(range)}`),
   targetEvents: (id: number, range?: string) =>
     request<Event[]>(`/api/targets/${id}/events?limit=200${range ? `&range=${encodeURIComponent(range)}` : ""}`),
 

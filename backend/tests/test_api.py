@@ -138,3 +138,26 @@ async def test_schedule_is_measured_from_run_start(client: AsyncClient) -> None:
     started = datetime.fromisoformat(runs[0]["started_at"].replace("Z", "+00:00")).timestamp()
     next_at = datetime.fromisoformat(full["next_run_at"].replace("Z", "+00:00")).timestamp()
     assert abs((next_at - started) - 60) < 1.5, "next run must be start + interval, not finish + interval"
+
+
+async def test_visual_endpoints(client: AsyncClient) -> None:
+    r = await client.post("/api/targets", json={"name": "Vis", "host": "192.0.2.30", "interval_sec": 60, "count": 3})
+    t = r.json()
+    await _wait_for_runs(client, t["id"], 1)
+
+    listing = (await client.get("/api/targets")).json()
+    me = next(x for x in listing if x["id"] == t["id"])
+    tl = me["timeline"]
+    assert tl["bucket_sec"] == 1800 and len(tl["buckets"]) == 48
+    assert tl["buckets"][-1] is not None and tl["buckets"][-1]["s"] in {"up", "degraded", "down"}
+
+    ov = (await client.get("/api/overview/series?range=1h")).json()
+    mine = next(x for x in ov["targets"] if x["id"] == t["id"])
+    assert mine["points"] and mine["points"][-1]["n"] >= 1 and ov["bucket_sec"] >= 10
+
+    hourly = (await client.get(f"/api/targets/{t['id']}/hourly?range=24h")).json()
+    assert len(hourly["hours"]) >= 1 and hourly["hours"][-1]["n"] >= 1
+
+    routes = (await client.get(f"/api/targets/{t['id']}/routes?range=1h")).json()
+    assert routes["total_runs"] >= 1 and len(routes["segments"]) >= 1
+    assert routes["routes"][0]["share_pct"] > 0 and routes["segments"][0]["index"] == routes["routes"][0]["index"]

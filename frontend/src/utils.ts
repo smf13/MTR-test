@@ -125,3 +125,19 @@ export function classNames(...xs: (string | false | null | undefined)[]): string
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
+
+/** Categorical palette for multi-target charts; readable on dark, OLED and light backgrounds. */
+export const SERIES_COLORS = ["#38bdf8", "#f472b6", "#a3e635", "#fbbf24", "#a78bfa", "#fb923c", "#2dd4bf", "#f87171", "#60a5fa", "#e879f9", "#4ade80", "#facc15"];
+
+export function seriesColor(i: number): string {
+  return SERIES_COLORS[i % SERIES_COLORS.length];
+}
+
+export function percentile(values: number[], p: number): number | null {
+  if (!values.length) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const k = (s.length - 1) * p;
+  const lo = Math.floor(k);
+  const hi = Math.ceil(k);
+  return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (k - lo);
+}

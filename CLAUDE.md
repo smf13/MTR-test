@@ -21,7 +21,7 @@ frontend/src/       React 19 + TypeScript + Vite 8 + Tailwind 4 + Recharts 3
   utils.ts          Formatting, colour scales, status helpers
   hooks.ts          usePoll (visibility-aware polling), useTheme, useLocalStorage
   pages/            Dashboard, TargetDetail, RunView, Events, Settings, QuickTrace
-  components/       Charts, HopHeatmap, HopTable, PathSummary, RunsTable, EventsList, TargetForm, Layout
+  components/       Charts (RTT/loss/jitter + Sized wrapper), Visuals (status strip, overview, path profile, histogram, hourly heatmap, route timeline), HopHeatmap, HopTable, PathSummary, RunsTable, EventsList, TargetForm, Layout
 Dockerfile          Multi-stage: node build of frontend -> python:3.12-slim with mtr-tiny + tini
 docker-compose.yml  Grants NET_RAW, persistent /data volume, healthcheck on /healthz
 ```
@@ -54,6 +54,7 @@ docker compose up -d --build
 - **Scheduling** is fixed-cadence: `next_run_at = started_at + interval_sec`, set when a run is claimed and re-asserted in `finally` (never earlier than now + 1 s). Runs of the same target never overlap because the target id sits in `Scheduler._running`. A 10-probe mtr run takes ~15 s (cycles + ~5 s trailing wait), so the form warns when probes × probe interval + 5 s does not fit the interval.
 - **Route change detection** treats unknown hops (`???`) as wildcards (`routes_equivalent`). A run with a different destination IP is reported as a route change with a "now resolves to" message.
 - **Series endpoint** returns raw runs up to `max_points`, otherwise buckets server-side; the chart handles both (`bucket_sec` in the response).
+- **Time axes** on every time-based visual (RTT chart, overview, route strip) start at `max(range start, first data point)` so a fresh target is readable; keep new visuals consistent with that rule. The hour-by-day heatmap receives UTC hour buckets and folds them into the browser's local time.
 - **Charts** use explicit pixel sizes via the `Sized` ResizeObserver wrapper in `Charts.tsx`; Recharts' ResponsiveContainer and `responsive` prop are intentionally not used.
 - **CSS**: custom classes (`.card`, `.btn`, `.input`, `.table`, `.seg`) live in `@layer components` in `index.css` so Tailwind utilities can override them. Theme tokens are CSS variables on `:root` (light), `[data-theme="dark"]` and `[data-theme="oled"]` (true black), mapped with `@theme inline`; the `dark` Tailwind variant matches both dark themes. Themes are listed in `THEMES` in `hooks.ts`, persisted in `localStorage` under `mtr-tracker.theme`, and applied before first paint by the inline script in `index.html`.
 - **Notifications**: add a channel by extending `notify.dispatch_event`, `DEFAULT_SETTINGS` in `db.py`, `SettingsUpdate` in `models.py`, the `Settings` interface in `api.ts` and the Settings page. Delivery errors raise `NotifyError` (surfaced by `POST /api/notifications/test`, logged by the scheduler). Tests mock HTTP by setting `notify._TRANSPORT` to an `httpx.MockTransport`.

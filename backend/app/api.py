@@ -26,6 +26,8 @@ router = APIRouter(prefix="/api")
 _RANGE_RE = re.compile(r"^(\d+)([smhdw])$")
 _RANGE_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 SPARKLINE_POINTS = 60
+TIMELINE_BUCKETS = 48
+TIMELINE_BUCKET_SEC = 86400 // TIMELINE_BUCKETS
 
 
 def _iso(ts: float | None) -> str | None:
@@ -207,6 +209,20 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list
     )
     stats = {int(r["target_id"]): dict(r) for r in stat_rows}
 
+    timeline_rows = await db.fetchall(
+        f"SELECT r.target_id, CAST((r.started_at - ?) / ? AS INTEGER) AS b, COUNT(*) AS n, AVG(CASE WHEN r.reached = 1 THEN r.avg_ms END) AS avg_ms, "
+        f"MAX(CASE WHEN r.status != 'ok' OR r.reached = 0 THEN 3 "
+        f"WHEN (t.alert_loss_pct > 0 AND r.loss_pct >= t.alert_loss_pct) OR (t.alert_latency_ms > 0 AND r.avg_ms >= t.alert_latency_ms) THEN 2 ELSE 1 END) AS worst "
+        f"FROM runs r JOIN targets t ON t.id = r.target_id WHERE r.started_at >= ? AND r.target_id IN ({placeholders}) GROUP BY r.target_id, b",
+        [since, TIMELINE_BUCKET_SEC, since, *ids],
+    )
+    timelines: dict[int, list[dict[str, Any] | None]] = {tid: [None] * TIMELINE_BUCKETS for tid in ids}
+    worst_label = {1: "up", 2: "degraded", 3: "down"}
+    for r in timeline_rows:
+        b = int(r["b"])
+        if 0 <= b < TIMELINE_BUCKETS:
+            timelines[int(r["target_id"])][b] = {"s": worst_label[int(r["worst"])], "n": int(r["n"]), "avg": round(r["avg_ms"], 1) if r["avg_ms"] is not None else None}
+
     spark_rows = await db.fetchall(
         f"SELECT target_id, started_at, avg_ms, loss_pct, reached FROM runs WHERE target_id IN ({placeholders}) "
         f"AND id IN (SELECT id FROM runs r2 WHERE r2.target_id = runs.target_id ORDER BY started_at DESC LIMIT {SPARKLINE_POINTS}) "
@@ -235,6 +251,7 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list
             "route_changes": int(st.get("route_changes") or 0),
         }
         item["sparkline"] = sparks.get(tid, [])
+        item["timeline"] = {"bucket_sec": TIMELINE_BUCKET_SEC, "since": _iso(since), "buckets": timelines.get(tid, [])}
         out.append(item)
     return out
 
@@ -557,6 +574,119 @@ async def get_hop_summary(
         else:
             slot["alternates"].append(entry)
     return {"total_runs": total_runs, "hops": [hops[k] for k in sorted(hops)]}
+
+
+@router.get("/overview/series")
+async def overview_series(
+    request: Request, range: str = Query(default="24h"), max_points: int = Query(default=144, ge=24, le=1000)  # noqa: A002
+) -> dict[str, Any]:
+    """Bucketed destination latency and loss for every enabled target, for side-by-side comparison."""
+    db = _db(request)
+    range_sec = parse_range(range)
+    since = time.time() - range_sec
+    bucket = max(10, math.ceil(range_sec / max_points))
+    targets = await db.fetchall("SELECT id, name, host, enabled FROM targets ORDER BY name COLLATE NOCASE")
+    rows = await db.fetchall(
+        "SELECT target_id, CAST(started_at / ? AS INTEGER) * ? AS bucket, COUNT(*) AS n, "
+        "SUM(CASE WHEN status='ok' AND reached=1 THEN 1 ELSE 0 END) AS ok_n, "
+        "AVG(CASE WHEN reached=1 THEN avg_ms END) AS avg_ms, MAX(loss_pct) AS max_loss "
+        "FROM runs WHERE started_at >= ? GROUP BY target_id, bucket ORDER BY bucket ASC",
+        (bucket, bucket, since),
+    )
+    by_target: dict[int, list[dict[str, Any]]] = {}
+    for r in rows:
+        by_target.setdefault(int(r["target_id"]), []).append(
+            {
+                "t": _iso(float(r["bucket"])),
+                "avg": round(r["avg_ms"], 2) if r["avg_ms"] is not None else None,
+                "loss": r["max_loss"],
+                "ok": int(r["ok_n"] or 0) == int(r["n"] or 0),
+                "n": int(r["n"] or 0),
+            }
+        )
+    return {
+        "range_sec": range_sec,
+        "bucket_sec": bucket,
+        "targets": [
+            {"id": int(t["id"]), "name": t["name"], "host": t["host"], "enabled": bool(t["enabled"]), "points": by_target.get(int(t["id"]), [])}
+            for t in targets
+            if int(t["id"]) in by_target
+        ],
+    }
+
+
+@router.get("/targets/{target_id}/hourly")
+async def get_hourly(request: Request, target_id: int, range: str = Query(default="7d")) -> dict[str, Any]:  # noqa: A002
+    """Hour buckets for the day-by-hour heatmap. The client folds them into its local timezone."""
+    db = _db(request)
+    range_sec = parse_range(range)
+    since = time.time() - range_sec
+    rows = await db.fetchall(
+        "SELECT CAST(started_at / 3600 AS INTEGER) * 3600 AS hour, COUNT(*) AS n, "
+        "SUM(CASE WHEN status='ok' AND reached=1 THEN 1 ELSE 0 END) AS ok_n, "
+        "AVG(CASE WHEN reached=1 THEN avg_ms END) AS avg_ms, MAX(worst_ms) AS worst_ms, AVG(loss_pct) AS loss_pct, MAX(loss_pct) AS max_loss, "
+        "AVG(jitter_avg_ms) AS jitter "
+        "FROM runs WHERE target_id = ? AND started_at >= ? GROUP BY hour ORDER BY hour ASC",
+        (target_id, since),
+    )
+    return {
+        "range_sec": range_sec,
+        "hours": [
+            {
+                "t": _iso(float(r["hour"])),
+                "n": int(r["n"] or 0),
+                "ok_n": int(r["ok_n"] or 0),
+                "avg": round(r["avg_ms"], 2) if r["avg_ms"] is not None else None,
+                "worst": r["worst_ms"],
+                "loss": round(r["loss_pct"], 2) if r["loss_pct"] is not None else None,
+                "max_loss": r["max_loss"],
+                "jitter": round(r["jitter"], 2) if r["jitter"] is not None else None,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/targets/{target_id}/routes")
+async def get_routes(request: Request, target_id: int, range: str = Query(default="24h")) -> dict[str, Any]:  # noqa: A002
+    """Contiguous segments of identical routes over time, plus a per-route share summary."""
+    db = _db(request)
+    range_sec = parse_range(range)
+    since = time.time() - range_sec
+    rows = await db.fetchall(
+        "SELECT id, started_at, finished_at, route_hash, hop_count, reached FROM runs WHERE target_id = ? AND started_at >= ? AND status = 'ok' "
+        "ORDER BY started_at ASC",
+        (target_id, since),
+    )
+    segments: list[dict[str, Any]] = []
+    totals: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        h = r["route_hash"] or "unknown"
+        end = float(r["finished_at"] or r["started_at"])
+        if segments and segments[-1]["hash"] == h:
+            seg = segments[-1]
+            seg["end"] = end
+            seg["runs"] += 1
+        else:
+            segments.append({"hash": h, "start": float(r["started_at"]), "end": end, "runs": 1, "first_run_id": int(r["id"]), "hops": int(r["hop_count"])})
+        tot = totals.setdefault(h, {"hash": h, "runs": 0, "hops": int(r["hop_count"]), "first_seen": float(r["started_at"]), "last_seen": end, "reached": 0, "example_run_id": int(r["id"])})
+        tot["runs"] += 1
+        tot["last_seen"] = end
+        tot["reached"] += int(r["reached"])
+    n = len(rows)
+    for seg in segments:
+        seg["start"] = _iso(seg["start"])
+        seg["end"] = _iso(seg["end"])
+    routes = sorted(totals.values(), key=lambda x: -x["runs"])
+    for i, rt in enumerate(routes):
+        rt["index"] = i
+        rt["share_pct"] = round(100.0 * rt["runs"] / n, 1) if n else 0.0
+        rt["first_seen"] = _iso(rt["first_seen"])
+        rt["last_seen"] = _iso(rt["last_seen"])
+    index = {rt["hash"]: rt["index"] for rt in routes}
+    for seg in segments:
+        seg["index"] = index.get(seg["hash"], 0)
+    return {"range_sec": range_sec, "since": _iso(since), "total_runs": n, "segments": segments, "routes": routes}
 
 
 @router.get("/targets/{target_id}/events")

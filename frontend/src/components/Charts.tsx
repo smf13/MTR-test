@@ -46,7 +46,7 @@ function useDomain(rows: Row[], rangeSec: number): [number, number] {
 }
 
 /** Measures its own width with a ResizeObserver and renders the chart at explicit pixel size. */
-function Sized({ height, children }: { height: number; children: (width: number) => ReactNode }) {
+export function Sized({ height, children }: { height: number; children: (width: number) => ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
