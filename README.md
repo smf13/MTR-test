@@ -68,6 +68,13 @@ Everything else (retention days, reverse DNS, ASN lookup, webhook URL and events
 
 Event kinds: `down`, `recovered`, `degraded`, `route_change`.
 
+### Troubleshooting
+
+- **`WARN current commit information was not captured by the build`** during `docker compose up --build`: harmless. BuildKit tries to embed git metadata in the image and could not run `git rev-parse` in the build directory (not a git checkout, git not installed, or git refuses the directory owner). Silence it with `BUILDX_GIT_INFO=0 docker compose up -d --build`, or fix the ownership case with `git config --global --add safe.directory /path/to/mtr-tracker`.
+- **Every hop shows 100% loss** in live mode: the container lacks raw-socket rights. Keep `cap_add: [NET_RAW]` in the compose file, or use `network_mode: host`.
+- **First hop is `172.x.x.x`** instead of your gateway: that is the Docker bridge. Use `network_mode: host` to probe from the host's network stack.
+- **`mtr binary not found`** in Settings: the image ships `mtr-tiny`; outside Docker install it (`apt install mtr-tiny`) or set `MTR_TRACKER_MTR_BINARY`.
+
 ## How a run works
 
 1. The scheduler wakes every second and launches any enabled target whose next run is due (limited by `MTR_TRACKER_MAX_CONCURRENT_RUNS`).
