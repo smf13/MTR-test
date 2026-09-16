@@ -15,7 +15,7 @@ from fastapi.responses import PlainTextResponse
 from . import __version__
 from .config import config
 from .db import Database, rows_to_dicts
-from .models import NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetUpdate
+from .models import BulkAction, NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, validate_options
 from .mtr import mtr_version, run_mtr
 from .notify import NotifyError, format_pushover_text, send_pushover, send_webhook, target_url
 from .resolver import resolve_host, reverse_lookup_many
@@ -63,6 +63,11 @@ def _target_out(row: dict[str, Any]) -> dict[str, Any]:
         out["tags"] = json.loads(out.get("tags") or "[]")
     except json.JSONDecodeError:
         out["tags"] = []
+    out["type"] = out.get("type") or "mtr"
+    try:
+        out["options"] = json.loads(out.get("options") or "{}")
+    except json.JSONDecodeError:
+        out["options"] = {}
     for k in ("created_at", "updated_at", "next_run_at"):
         out[k] = _iso(out.get(k))
     return out
@@ -74,6 +79,11 @@ def _run_out(row: dict[str, Any]) -> dict[str, Any]:
     out["route_changed"] = bool(out.get("route_changed"))
     out["started_at"] = _iso(out.get("started_at"))
     out["finished_at"] = _iso(out.get("finished_at"))
+    raw = out.pop("details", None)
+    try:
+        out["details"] = json.loads(raw) if raw else None
+    except (json.JSONDecodeError, TypeError):
+        out["details"] = None
     return out
 
 
@@ -264,23 +274,83 @@ async def list_targets(request: Request) -> list[dict[str, Any]]:
     return await _attach_summaries(db, targets)
 
 
-@router.post("/targets", status_code=201)
-async def create_target(request: Request, body: TargetCreate) -> dict[str, Any]:
-    db = _db(request)
+async def _insert_target(db: Database, data: dict[str, Any]) -> int:
     now = time.time()
-    data = body.model_dump()
-    tid = await db.execute(
-        "INSERT INTO targets(name, host, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, "
+    return await db.execute(
+        "INSERT INTO targets(name, host, type, options, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, "
         "ip_version, max_hops, enabled, alert_loss_pct, alert_latency_ms, created_at, updated_at, next_run_at, last_status) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
         (
-            data["name"], data["host"], data["description"], json.dumps(data["tags"]), data["interval_sec"], data["count"],
-            data["probe_interval"], data["protocol"], data["port"], data["packet_size"], data["ip_version"], data["max_hops"],
+            data["name"], data["host"], data["type"], json.dumps(data["options"]), data["description"], json.dumps(data["tags"]), data["interval_sec"],
+            data["count"], data["probe_interval"], data["protocol"], data["port"], data["packet_size"], data["ip_version"], data["max_hops"],
             int(data["enabled"]), data["alert_loss_pct"], data["alert_latency_ms"], now, now, now,
         ),
     )
+
+
+EXPORT_FIELDS = (
+    "name", "host", "type", "options", "description", "tags", "interval_sec", "count", "probe_interval", "protocol", "port", "packet_size",
+    "ip_version", "max_hops", "enabled", "alert_loss_pct", "alert_latency_ms",
+)
+
+
+@router.post("/targets", status_code=201)
+async def create_target(request: Request, body: TargetCreate) -> dict[str, Any]:
+    tid = await _insert_target(_db(request), body.model_dump())
     _sched(request).wake()
     return await _load_target(request, tid)
+
+
+@router.get("/targets/export")
+async def export_targets(request: Request) -> list[dict[str, Any]]:
+    """Portable definitions of every target (no runs), suitable for POST /api/targets/import."""
+    rows = await _db(request).fetchall("SELECT * FROM targets ORDER BY name COLLATE NOCASE")
+    return [{k: v for k, v in _target_out(dict(r)).items() if k in EXPORT_FIELDS} for r in rows]
+
+
+@router.post("/targets/import")
+async def import_targets(request: Request, body: TargetImport) -> dict[str, Any]:
+    """Create or update targets in bulk. upsert matches on name (case-insensitive); replace deletes everything first."""
+    db = _db(request)
+    created = updated = 0
+    if body.mode == "replace":
+        await db.execute("DELETE FROM targets")
+    existing = {r["name"].lower(): int(r["id"]) for r in await db.fetchall("SELECT id, name FROM targets")} if body.mode == "upsert" else {}
+    for item in body.targets:
+        data = item.model_dump()
+        tid = existing.get(data["name"].lower())
+        if tid is not None:
+            cols = [k for k in EXPORT_FIELDS if k != "name"]
+            values = [json.dumps(data[k]) if k in ("options", "tags") else (int(data[k]) if k == "enabled" else data[k]) for k in cols]
+            await db.execute(f"UPDATE targets SET {', '.join(f'{c} = ?' for c in cols)}, updated_at = ?, next_run_at = ? WHERE id = ?", [*values, time.time(), time.time(), tid])
+            updated += 1
+        else:
+            existing[data["name"].lower()] = await _insert_target(db, data)
+            created += 1
+    _sched(request).wake()
+    return {"created": created, "updated": updated, "total": len(await db.fetchall("SELECT id FROM targets"))}
+
+
+@router.post("/targets/bulk")
+async def bulk_targets(request: Request, body: BulkAction) -> dict[str, Any]:
+    db = _db(request)
+    placeholders = ",".join("?" for _ in body.ids)
+    rows = await db.fetchall(f"SELECT id FROM targets WHERE id IN ({placeholders})", body.ids)
+    ids = [int(r["id"]) for r in rows]
+    if not ids:
+        raise HTTPException(404, "no matching targets")
+    ph = ",".join("?" for _ in ids)
+    if body.action == "delete":
+        await db.execute(f"DELETE FROM targets WHERE id IN ({ph})", ids)
+    elif body.action == "pause":
+        await db.execute(f"UPDATE targets SET enabled = 0, updated_at = ? WHERE id IN ({ph})", [time.time(), *ids])
+    elif body.action == "resume":
+        await db.execute(f"UPDATE targets SET enabled = 1, last_status = 'pending', next_run_at = ?, updated_at = ? WHERE id IN ({ph})", [time.time(), time.time(), *ids])
+    elif body.action == "run":
+        for tid in ids:
+            await _sched(request).run_now(tid)
+    _sched(request).wake()
+    return {"action": body.action, "affected": ids}
 
 
 async def _load_target(request: Request, target_id: int, range_sec: int = 86400) -> dict[str, Any]:
@@ -349,13 +419,27 @@ async def update_target(request: Request, target_id: int, body: TargetUpdate) ->
     patch = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
     if not patch:
         return await _load_target(request, target_id)
+    if "type" in patch or "options" in patch:
+        kind = patch.get("type") or row["type"] or "mtr"
+        try:
+            current = json.loads(row["options"] or "{}")
+        except json.JSONDecodeError:
+            current = {}
+        merged = patch.get("options") if patch.get("options") is not None else (current if kind == (row["type"] or "mtr") else {})
+        try:
+            patch["options"] = json.dumps(validate_options(kind, merged))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        patch["type"] = kind
+        if kind == "tcp" and not (patch.get("port") or row["port"]):
+            raise HTTPException(422, "tcp probes need a port")
     if "tags" in patch and patch["tags"] is not None:
         patch["tags"] = json.dumps(patch["tags"])
     if "enabled" in patch and patch["enabled"] is not None:
         patch["enabled"] = int(patch["enabled"])
     patch["updated_at"] = time.time()
     # Re-run promptly when the schedule or probe definition changes.
-    if any(k in patch for k in ("interval_sec", "host", "enabled", "protocol", "port", "ip_version")):
+    if any(k in patch for k in ("interval_sec", "host", "enabled", "protocol", "port", "ip_version", "type", "options")):
         patch["next_run_at"] = time.time()
         if patch.get("enabled") == 1 and not row["enabled"]:
             patch["last_status"] = "pending"

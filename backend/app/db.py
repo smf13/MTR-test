@@ -13,7 +13,7 @@ import aiosqlite
 
 log = logging.getLogger("mtr-tracker.db")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS targets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     host TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'mtr',
+    options TEXT NOT NULL DEFAULT '{}',
     description TEXT NOT NULL DEFAULT '',
     tags TEXT NOT NULL DEFAULT '[]',
     interval_sec INTEGER NOT NULL DEFAULT 300,
@@ -72,7 +74,8 @@ CREATE TABLE IF NOT EXISTS runs (
     jitter_max_ms REAL,
     route_hash TEXT,
     route_changed INTEGER NOT NULL DEFAULT 0,
-    command TEXT
+    command TEXT,
+    details TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runs_target_started ON runs(target_id, started_at DESC);
 
@@ -153,12 +156,27 @@ class Database:
         await self._conn.execute("PRAGMA synchronous=NORMAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.executescript(SCHEMA)
+        await self._migrate()
         await self._conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
+            "INSERT INTO meta(key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (str(SCHEMA_VERSION),),
         )
         await self._conn.commit()
         log.info("database ready at %s", self.path)
+
+    async def _migrate(self) -> None:
+        """Add columns introduced after the first release to databases created earlier."""
+        wanted = {
+            "targets": [("type", "TEXT NOT NULL DEFAULT 'mtr'"), ("options", "TEXT NOT NULL DEFAULT '{}'")],
+            "runs": [("details", "TEXT")],
+        }
+        for table, cols in wanted.items():
+            async with self.conn.execute(f"PRAGMA table_info({table})") as cur:
+                existing = {row[1] for row in await cur.fetchall()}
+            for name, decl in cols:
+                if name not in existing:
+                    log.info("migrating: adding %s.%s", table, name)
+                    await self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
     async def close(self) -> None:
         if self._conn is not None:

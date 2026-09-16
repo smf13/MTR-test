@@ -35,6 +35,7 @@ class Config:
     max_concurrent_runs: int
     static_dir: Path | None
     log_level: str
+    api_token: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -61,6 +62,7 @@ class Config:
             max_concurrent_runs=max(1, _env_int("MTR_TRACKER_MAX_CONCURRENT_RUNS", 8)),
             static_dir=static_dir,
             log_level=os.environ.get("MTR_TRACKER_LOG_LEVEL", "info"),
+            api_token=os.environ.get("MTR_TRACKER_API_TOKEN", "").strip(),
         )
 
 

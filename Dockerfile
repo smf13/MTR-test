@@ -20,9 +20,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MTR_TRACKER_PORT=8899 \
     MTR_TRACKER_HOST=0.0.0.0
 
-# mtr-tiny provides the mtr binary; tini reaps zombies from short-lived mtr processes.
+# mtr-tiny and iputils-ping provide the probe binaries; tini reaps zombies from short-lived processes.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends mtr-tiny tini ca-certificates curl \
+ && apt-get install -y --no-install-recommends mtr-tiny iputils-ping tini ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

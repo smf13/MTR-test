@@ -7,7 +7,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+import hmac
+
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -43,6 +45,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     app = FastAPI(title="MTR Tracker", version=__version__, lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.include_router(router)
+
+    if config.api_token:
+
+        @app.middleware("http")
+        async def require_token_for_writes(request: Request, call_next):  # type: ignore[no-untyped-def]
+            """When MTR_TRACKER_API_TOKEN is set, every mutating /api call needs `Authorization: Bearer <token>`."""
+            if request.url.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+                auth = request.headers.get("authorization", "")
+                supplied = auth[7:].strip() if auth.lower().startswith("bearer ") else request.headers.get("x-api-token", "")
+                if not supplied or not hmac.compare_digest(supplied, config.api_token):
+                    return JSONResponse({"detail": "API token required for write operations"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+            return await call_next(request)
+
+        log.info("API write protection enabled (MTR_TRACKER_API_TOKEN is set)")
 
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:

@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Link } from "react-router-dom";
-import { Activity, Bell, LayoutDashboard, Menu, Moon, MoonStar, Settings, Sun, Radar, X, FlaskConical } from "lucide-react";
+import { Activity, Bell, LayoutDashboard, Menu, Moon, MoonStar, Settings, Sun, Radar, X, FlaskConical, KeyRound } from "lucide-react";
 import { useTheme, usePoll, THEMES } from "../hooks";
-import { api } from "../api";
+import { api, AUTH_REQUIRED_EVENT, getApiToken, setApiToken } from "../api";
+import { Modal } from "./Modal";
 import { classNames } from "../utils";
 
 const NAV = [
@@ -17,6 +18,16 @@ export function Layout({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const status = usePoll(() => api.status(), 15000);
   const s = status.data;
+  const [tokenPrompt, setTokenPrompt] = useState(false);
+  const [tokenDraft, setTokenDraft] = useState("");
+  useEffect(() => {
+    const onAuth = () => {
+      setTokenDraft(getApiToken());
+      setTokenPrompt(true);
+    };
+    window.addEventListener(AUTH_REQUIRED_EVENT, onAuth);
+    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, onAuth);
+  }, []);
 
   const nav = (
     <nav className="flex flex-col gap-1">
@@ -93,6 +104,20 @@ export function Layout({ children }: { children: ReactNode }) {
         )}
         <main className="mx-auto w-full max-w-[1500px] flex-1 px-4 py-5 sm:px-6">{children}</main>
       </div>
+      <Modal
+        open={tokenPrompt}
+        onClose={() => setTokenPrompt(false)}
+        title={<span className="inline-flex items-center gap-2"><KeyRound size={16} /> API token required</span>}
+        footer={
+          <>
+            <button className="btn" onClick={() => setTokenPrompt(false)}>Cancel</button>
+            <button className="btn btn-primary" onClick={() => { setApiToken(tokenDraft.trim()); setTokenPrompt(false); }}>Save token in this browser</button>
+          </>
+        }
+      >
+        <p className="text-sm text-muted">This server protects changes with an API token (MTR_TRACKER_API_TOKEN). Enter it once; it is kept in this browser's local storage and sent with every write. Then retry the action.</p>
+        <input className="input mt-3 font-mono" type="password" value={tokenDraft} onChange={(e) => setTokenDraft(e.target.value)} placeholder="token" autoFocus onKeyDown={(e) => { if (e.key === "Enter") { setApiToken(tokenDraft.trim()); setTokenPrompt(false); } }} />
+      </Modal>
     </div>
   );
 }

@@ -12,9 +12,16 @@ Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rath
 
 ![Path history](docs/path-history.png)
 
+![Probe types](docs/probe-types.png)
+
 ## Features
 
-- **Scheduled MTR runs** per target (10 seconds to 24 hours), with configurable probe count, probe interval, packet size, max hops, IPv4/IPv6, and ICMP / UDP / TCP probing with a port.
+- **Five probe types**, each on its own schedule (10 seconds to 24 hours):
+  - **MTR**: full path trace with configurable probe count, probe interval, packet size, max hops, IPv4/IPv6, ICMP / UDP / TCP with a port.
+  - **Ping**: ICMP echo to the destination only; loss, avg/best/worst, jitter and per-ping samples.
+  - **HTTP(S)**: any method, expected status codes, keyword present or absent, JSON path check (`data.items[0].status` equals, `>= 5`, `~substring`), custom headers and body, redirects, TLS verification and a warning before the certificate expires.
+  - **TCP port**: connect time to host:port.
+  - **DNS**: record type, optional resolver, expected answer, lookup time.
 - **Every hop, every run.** Loss %, sent/received, last/avg/best/worst, standard deviation, jitter (Jttr, Javg, Jmax, Jint), ASN and reverse DNS for each hop are stored and searchable.
 - **Time-series views.** Round-trip time with best–worst band, packet loss and jitter charts over 1h to 30d, automatically aggregated for long ranges. Click a point to open the underlying run.
 - **Status timeline** on every dashboard card and target page: 48 half-hour cells for the last 24 h coloured up / degraded / down, Uptime Kuma style.
@@ -55,6 +62,7 @@ Environment variables (read at startup):
 | `MTR_TRACKER_MTR_BINARY` | `mtr` | Path to the mtr binary |
 | `MTR_TRACKER_SIMULATE` | `0` | `1` generates synthetic paths instead of sending packets |
 | `MTR_TRACKER_LOG_LEVEL` | `info` | Log verbosity |
+| `MTR_TRACKER_API_TOKEN` | empty | When set, all write requests need `Authorization: Bearer <token>` |
 
 Everything else (retention days, reverse DNS, ASN lookup, notification channels, public URL) is set in the UI under **Settings** and stored in the database.
 
@@ -91,13 +99,75 @@ Event kinds: `down`, `recovered`, `degraded`, `route_change`. `url` is present w
 - **First hop is `172.x.x.x`** instead of your gateway: that is the Docker bridge. Use `network_mode: host` to probe from the host's network stack.
 - **`mtr binary not found`** in Settings: the image ships `mtr-tiny`; outside Docker install it (`apt install mtr-tiny`) or set `MTR_TRACKER_MTR_BINARY`.
 
+## Managing targets from the API
+
+The UI is a thin client over a JSON API, so anything you do by hand can be scripted. Interactive docs with every schema live at `/api/docs`.
+
+Set `MTR_TRACKER_API_TOKEN` on the server to require `Authorization: Bearer <token>` (or `X-Api-Token`) on every `POST`, `PUT` and `DELETE`. Reads stay open so dashboards and wall displays work without credentials. When a token is set, the UI asks for it once and keeps it in the browser (Settings → API access).
+
+```bash
+BASE=http://localhost:8899
+AUTH="Authorization: Bearer $MTR_TRACKER_API_TOKEN"   # omit if no token is configured
+
+# List targets with latest run, 24h stats, sparkline and status timeline
+curl -s $BASE/api/targets | jq '.[] | {id, name, type, last_status}'
+
+# MTR target
+curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json' -d '{
+  "name": "Head office WAN", "host": "203.0.113.1", "type": "mtr",
+  "interval_sec": 60, "count": 10, "alert_loss_pct": 5, "alert_latency_ms": 150, "tags": ["wan"]
+}'
+
+# Ping target
+curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json' -d '{
+  "name": "Core switch", "host": "10.0.0.1", "type": "ping", "interval_sec": 30, "count": 5
+}'
+
+# HTTP target with keyword + JSON + TLS expiry warning
+curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json' -d '{
+  "name": "Portal health", "host": "https://portal.example.com/health", "type": "http", "interval_sec": 60,
+  "options": { "expected_status": "200", "keyword": "ok", "json_path": "status", "json_expected": "ok",
+               "headers": { "Authorization": "Bearer abc" }, "tls_warn_days": 21 }
+}'
+
+# TCP port and DNS targets
+curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json' \
+  -d '{ "name": "Mail submission", "host": "mail.example.com", "type": "tcp", "port": 587, "interval_sec": 60 }'
+curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json' \
+  -d '{ "name": "Public DNS", "host": "www.example.com", "type": "dns", "interval_sec": 60,
+        "options": { "record_type": "A", "resolver": "1.1.1.1", "expected": "93.184." } }'
+
+# Update (partial), pause, run now, delete
+curl -s -X PUT $BASE/api/targets/3 -H "$AUTH" -H 'content-type: application/json' -d '{ "interval_sec": 120 }'
+curl -s -X PUT $BASE/api/targets/3 -H "$AUTH" -H 'content-type: application/json' -d '{ "enabled": false }'
+curl -s -X POST $BASE/api/targets/3/run -H "$AUTH"
+curl -s -X DELETE $BASE/api/targets/3 -H "$AUTH"
+
+# Bulk: pause | resume | run | delete
+curl -s -X POST $BASE/api/targets/bulk -H "$AUTH" -H 'content-type: application/json' -d '{ "action": "pause", "ids": [1, 2, 3] }'
+
+# Backup and restore (upsert matches on name; create always adds; replace wipes first)
+curl -s $BASE/api/targets/export > targets.json
+curl -s -X POST $BASE/api/targets/import -H "$AUTH" -H 'content-type: application/json' \
+  -d "{ \"mode\": \"upsert\", \"targets\": $(cat targets.json) }"
+
+# Read results
+curl -s "$BASE/api/targets/3/runs?limit=5"
+curl -s "$BASE/api/targets/3/series?range=24h"
+curl -s "$BASE/api/runs/1842/report"          # mtr-style text
+```
+
+Target fields: `name`, `host` (hostname, IP, or URL for http), `type` (`mtr` | `ping` | `http` | `tcp` | `dns`), `options` (per type, see `/api/docs`), `description`, `tags`, `interval_sec`, `count`, `probe_interval`, `protocol`, `port`, `packet_size`, `ip_version`, `max_hops`, `enabled`, `alert_loss_pct`, `alert_latency_ms`.
+
 ## How a run works
 
 1. The scheduler wakes every second and launches any enabled target whose next run is due (limited by `MTR_TRACKER_MAX_CONCURRENT_RUNS`). The interval is measured from the start of a run, so a 30 s target starts a run every 30 s; a run with 10 probes takes about 15 s, so keep the interval comfortably above probes × probe interval + 5 s.
 2. The host is resolved to a single IP (honouring the target's IP version) so the destination hop can be identified unambiguously.
-3. `mtr --json -n -c <count> -i <probe interval> -s <size> -m <max hops> -o LSDRNBAWVGJMXI [-4|-6] [--udp|--tcp -P <port>] [-z] <ip>` runs and its JSON report is parsed.
+3. For MTR targets, `mtr --json -n -c <count> -i <probe interval> -s <size> -m <max hops> -o LSDRNBAWVGJMXI [-4|-6] [--udp|--tcp -P <port>] [-z] <ip>` runs and its JSON report is parsed.
 4. Hop IPs are reverse-resolved (cached), the route signature is compared with the previous run, thresholds are evaluated, and the run, hops and any events are written in one transaction.
-5. State transitions (`up` → `degraded` → `down` → `recovered`) create events and fire webhooks.
+5. State transitions (`up` → `degraded` → `down` → `recovered`) create events and fire notifications.
+
+Ping, HTTP, TCP and DNS targets follow the same loop with `probes.py` in place of mtr: one summary row per run plus a `details` object (samples, status code, TLS expiry, answers) instead of hops. A failed check is `down`; a TLS certificate inside the warning window is `degraded`.
 
 ## API
 
@@ -108,6 +178,9 @@ The UI is a thin client over a JSON API, documented live at `/api/docs`.
 | `GET` | `/api/status` | Engine status, counters, mtr version |
 | `GET` / `PUT` | `/api/settings` | Global settings |
 | `GET` / `POST` | `/api/targets` | List (with 24h stats, sparkline and status timeline) / create |
+| `GET` | `/api/targets/export` | Portable target definitions (no runs) |
+| `POST` | `/api/targets/import` | Bulk create/update: `{ "mode": "upsert" \| "create" \| "replace", "targets": [...] }` |
+| `POST` | `/api/targets/bulk` | `{ "action": "pause" \| "resume" \| "run" \| "delete", "ids": [...] }` |
 | `GET` / `PUT` / `DELETE` | `/api/targets/{id}` | Detail with range stats (`?range=24h`) / update / delete |
 | `POST` | `/api/targets/{id}/run` | Run now |
 | `GET` | `/api/targets/{id}/runs` | Paginated runs (`limit`, `offset`, `range`, `status=ok|failed|route_change`) |
@@ -156,6 +229,7 @@ backend/app/
   api.py         HTTP routes
   scheduler.py   24/7 run loop, state transitions, retention
   mtr.py         mtr command builder, JSON parser, simulator
+  probes.py      ping, HTTP, TCP and DNS probes
   notify.py      webhook + Pushover delivery, event fan-out
   resolver.py    forward / reverse DNS with cache
   db.py          SQLite schema and helpers

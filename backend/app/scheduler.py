@@ -12,6 +12,7 @@ from .config import config
 from .db import Database
 from .mtr import HopResult, MtrResult, route_signature, routes_equivalent, run_mtr
 from .notify import dispatch_event, target_url
+from .probes import run_probe
 from .resolver import resolve_host, reverse_lookup_many
 
 log = logging.getLogger("mtr-tracker.scheduler")
@@ -151,6 +152,9 @@ class Scheduler:
                 await self.db.execute("UPDATE targets SET next_run_at = ? WHERE id = ?", (next_at, target_id))
 
     async def _execute(self, t: dict[str, Any], settings: dict[str, Any]) -> None:
+        if (t.get("type") or "mtr") != "mtr":
+            await self._execute_probe(t, settings)
+            return
         started = time.time()
         try:
             dst_ip = await resolve_host(t["host"], t["ip_version"])
@@ -246,6 +250,31 @@ class Scheduler:
         status = _classify(t, reached, summary)
         await self._apply_status(t, run_id, status, settings, summary=summary)
 
+    async def _execute_probe(self, t: dict[str, Any], settings: dict[str, Any]) -> None:
+        """Ping / HTTP / TCP / DNS: one summary row per run, no hops."""
+        o = await run_probe(t)
+        if not o.ok:
+            run_id = await self.db.execute(
+                "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, dst_ip, reached, hop_count, sent, loss_pct, command, details) "
+                "VALUES (?, ?, ?, ?, 'error', ?, ?, 0, 0, ?, 100, ?, ?)",
+                (t["id"], o.started_at, o.finished_at, o.duration_ms, o.error, o.dst_ip, o.sent, o.command, json.dumps(o.details) if o.details else None),
+            )
+            await self._apply_status(t, run_id, "down", settings, error=o.error)
+            return
+        summary = o.summary()
+        run_id = await self.db.execute(
+            "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, dst_ip, reached, hop_count, sent, "
+            "loss_pct, last_ms, avg_ms, best_ms, worst_ms, stdev_ms, jitter_avg_ms, jitter_max_ms, command, details) "
+            "VALUES (?, ?, ?, ?, 'ok', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                t["id"], o.started_at, o.finished_at, o.duration_ms, o.error if not o.reached else None, o.dst_ip, int(o.reached), o.sent,
+                summary["loss_pct"], summary["last_ms"], summary["avg_ms"], summary["best_ms"], summary["worst_ms"], summary["stdev_ms"],
+                summary["jitter_avg_ms"], summary["jitter_max_ms"], o.command, json.dumps(o.details) if o.details else None,
+            ),
+        )
+        status = _classify(t, o.reached, summary, o.warnings)
+        await self._apply_status(t, run_id, status, settings, summary=summary, error=o.error if not o.reached else None, warnings=o.warnings)
+
     # -- status transitions and alerts ------------------------------------
 
     async def _apply_status(
@@ -257,6 +286,7 @@ class Scheduler:
         *,
         summary: dict[str, Any] | None = None,
         error: str | None = None,
+        warnings: list[str] | None = None,
     ) -> None:
         prev = t.get("last_status") or "pending"
         await self.db.execute("UPDATE targets SET last_status = ? WHERE id = ?", (status, t["id"]))
@@ -267,12 +297,14 @@ class Scheduler:
             details.update({k: v for k, v in summary.items() if v is not None})
         if error:
             details["error"] = error
+        if warnings:
+            details["warnings"] = warnings
 
         if status == "down":
             reason = error or "destination unreachable"
             await self._event(t, run_id, "down", "critical", f"{t['name']} is DOWN: {reason}", details, settings)
         elif status == "degraded":
-            reason = _degraded_reason(t, summary or {})
+            reason = _degraded_reason(t, summary or {}, warnings)
             await self._event(t, run_id, "degraded", "warning", f"{t['name']} is degraded: {reason}", details, settings)
         elif status == "up" and prev in {"down", "degraded"}:
             await self._event(t, run_id, "recovered", "info", f"{t['name']} recovered ({prev} -> up)", details, settings)
@@ -325,9 +357,11 @@ def _summarise(final: HopResult, reached: bool) -> dict[str, Any]:
     }
 
 
-def _classify(t: dict[str, Any], reached: bool, summary: dict[str, Any]) -> str:
+def _classify(t: dict[str, Any], reached: bool, summary: dict[str, Any], warnings: list[str] | None = None) -> str:
     if not reached or (summary.get("loss_pct") or 0) >= 100:
         return "down"
+    if warnings:
+        return "degraded"
     loss_limit = float(t.get("alert_loss_pct") or 0)
     lat_limit = float(t.get("alert_latency_ms") or 0)
     if loss_limit > 0 and (summary.get("loss_pct") or 0) >= loss_limit:
@@ -337,8 +371,8 @@ def _classify(t: dict[str, Any], reached: bool, summary: dict[str, Any]) -> str:
     return "up"
 
 
-def _degraded_reason(t: dict[str, Any], summary: dict[str, Any]) -> str:
-    reasons = []
+def _degraded_reason(t: dict[str, Any], summary: dict[str, Any], warnings: list[str] | None = None) -> str:
+    reasons = list(warnings or [])
     loss_limit = float(t.get("alert_loss_pct") or 0)
     lat_limit = float(t.get("alert_latency_ms") or 0)
     loss = summary.get("loss_pct")

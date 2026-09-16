@@ -3,6 +3,38 @@
 export type Status = "up" | "degraded" | "down" | "pending" | "paused";
 export type Protocol = "icmp" | "udp" | "tcp";
 export type IpVersion = "auto" | "4" | "6";
+export type ProbeType = "mtr" | "ping" | "http" | "tcp" | "dns";
+export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
+export type DnsRecordType = "A" | "AAAA" | "CNAME" | "MX" | "NS" | "TXT" | "SOA" | "PTR" | "SRV";
+
+export interface HttpOptions {
+  method: HttpMethod;
+  expected_status: string;
+  keyword: string;
+  keyword_absent: boolean;
+  json_path: string;
+  json_expected: string;
+  headers: Record<string, string>;
+  body: string;
+  timeout_sec: number;
+  verify_tls: boolean;
+  follow_redirects: boolean;
+  tls_warn_days: number;
+}
+export interface PingOptions { timeout_sec: number }
+export interface TcpOptions { timeout_sec: number }
+export interface DnsOptions { record_type: DnsRecordType; resolver: string; expected: string; timeout_sec: number }
+export type ProbeOptions = Partial<HttpOptions & PingOptions & TcpOptions & DnsOptions>;
+
+export const PROBE_TYPE_LABEL: Record<ProbeType, string> = { mtr: "MTR", ping: "Ping", http: "HTTP(S)", tcp: "TCP port", dns: "DNS" };
+
+export const DEFAULT_OPTIONS: Record<ProbeType, ProbeOptions> = {
+  mtr: {},
+  ping: { timeout_sec: 2 },
+  http: { method: "GET", expected_status: "200-299", keyword: "", keyword_absent: false, json_path: "", json_expected: "", headers: {}, body: "", timeout_sec: 10, verify_tls: true, follow_redirects: true, tls_warn_days: 14 },
+  tcp: { timeout_sec: 5 },
+  dns: { record_type: "A", resolver: "", expected: "", timeout_sec: 5 },
+};
 
 export interface Run {
   id: number;
@@ -28,6 +60,7 @@ export interface Run {
   route_hash: string | null;
   route_changed: boolean;
   command: string | null;
+  details: Record<string, unknown> | null;
 }
 
 export interface Hop {
@@ -145,6 +178,8 @@ export interface Target {
   id: number;
   name: string;
   host: string;
+  type: ProbeType;
+  options: ProbeOptions;
   description: string;
   tags: string[];
   interval_sec: number;
@@ -306,11 +341,37 @@ export class ApiError extends Error {
   }
 }
 
+const TOKEN_KEY = "mtr-tracker.token";
+
+export function getApiToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setApiToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Fired when the server rejects a write for lack of a valid API token; the layout opens a prompt. */
+export const AUTH_REQUIRED_EVENT = "mtr-tracker:auth-required";
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getApiToken();
   const res = await fetch(path, {
-    headers: { "content-type": "application/json", ...(init?.headers || {}) },
     ...init,
+    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}), ...(init?.headers || {}) },
   });
+  if (res.status === 401) {
+    window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+  }
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -341,6 +402,11 @@ export const api = {
   updateTarget: (id: number, patch: Partial<TargetInput>) =>
     request<Target>(`/api/targets/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
   deleteTarget: (id: number) => request<void>(`/api/targets/${id}`, { method: "DELETE" }),
+  exportTargets: () => request<TargetInput[]>("/api/targets/export"),
+  importTargets: (targets: TargetInput[], mode: "upsert" | "create" | "replace") =>
+    request<{ created: number; updated: number; total: number }>("/api/targets/import", { method: "POST", body: JSON.stringify({ targets, mode }) }),
+  bulk: (action: "pause" | "resume" | "run" | "delete", ids: number[]) =>
+    request<{ action: string; affected: number[] }>("/api/targets/bulk", { method: "POST", body: JSON.stringify({ action, ids }) }),
   runNow: (id: number) => request<{ queued: boolean; already_running: boolean }>(`/api/targets/${id}/run`, { method: "POST" }),
 
   runs: (id: number, params: { limit?: number; offset?: number; range?: string; status?: string }) => {

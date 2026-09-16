@@ -2,12 +2,65 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 Protocol = Literal["icmp", "udp", "tcp"]
 IpVersion = Literal["auto", "4", "6"]
+ProbeType = Literal["mtr", "ping", "http", "tcp", "dns"]
+HttpMethod = Literal["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+DnsRecordType = Literal["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV"]
+
+
+class HttpOptions(BaseModel):
+    method: HttpMethod = "GET"
+    expected_status: str = Field(default="200-299", max_length=100, description="e.g. 200, 200-299, 200,301")
+    keyword: str = Field(default="", max_length=500)
+    keyword_absent: bool = False
+    json_path: str = Field(default="", max_length=300, description="dotted path, e.g. data.items[0].status")
+    json_expected: str = Field(default="", max_length=500, description="value, or ==/!=/>/</>=/<= number, or ~substring")
+    headers: dict[str, str] = Field(default_factory=dict)
+    body: str = Field(default="", max_length=20000)
+    timeout_sec: float = Field(default=10.0, ge=1, le=120)
+    verify_tls: bool = True
+    follow_redirects: bool = True
+    tls_warn_days: int = Field(default=14, ge=0, le=365, description="warn (degraded) when the certificate expires within N days; 0 disables")
+
+    @field_validator("expected_status")
+    @classmethod
+    def _status(cls, v: str) -> str:
+        v = v.strip() or "200-299"
+        for token in v.split(","):
+            if not re.match(r"^\s*\d{3}(\s*-\s*\d{3})?\s*$", token):
+                raise ValueError(f"invalid status token '{token.strip()}'")
+        return v
+
+
+class PingOptions(BaseModel):
+    timeout_sec: float = Field(default=2.0, ge=0.2, le=30)
+
+
+class TcpOptions(BaseModel):
+    timeout_sec: float = Field(default=5.0, ge=0.5, le=60)
+
+
+class DnsOptions(BaseModel):
+    record_type: DnsRecordType = "A"
+    resolver: str = Field(default="", max_length=253, description="IP or hostname of the server to query; empty = system resolver")
+    expected: str = Field(default="", max_length=500, description="substring that must appear in one of the answers")
+    timeout_sec: float = Field(default=5.0, ge=0.5, le=60)
+
+
+OPTION_MODELS: dict[str, type[BaseModel]] = {"http": HttpOptions, "ping": PingOptions, "tcp": TcpOptions, "dns": DnsOptions}
+
+
+def validate_options(kind: str, options: dict[str, Any] | None) -> dict[str, Any]:
+    model = OPTION_MODELS.get(kind)
+    if model is None:
+        return {}
+    return model.model_validate(options or {}).model_dump()
 
 
 def _clean_host_value(v: str) -> str:
@@ -42,7 +95,9 @@ class _TargetValidators(BaseModel):
 
 class TargetBase(_TargetValidators):
     name: str = Field(min_length=1, max_length=120)
-    host: str = Field(min_length=1, max_length=253)
+    host: str = Field(min_length=1, max_length=2048, description="hostname/IP, or a URL for http probes")
+    type: ProbeType = "mtr"
+    options: dict[str, Any] = Field(default_factory=dict)
     description: str = Field(default="", max_length=2000)
     tags: list[str] = Field(default_factory=list)
     interval_sec: int = Field(default=300, ge=10, le=86400, description="Seconds between MTR runs")
@@ -58,13 +113,26 @@ class TargetBase(_TargetValidators):
     alert_latency_ms: float = Field(default=200.0, ge=0, description="0 disables")
 
 
+LATENCY_ALERT_DEFAULT: dict[str, float] = {"mtr": 200.0, "ping": 200.0, "http": 1500.0, "tcp": 500.0, "dns": 500.0}
+
+
 class TargetCreate(TargetBase):
-    pass
+    @model_validator(mode="after")
+    def _check_options(self) -> "TargetCreate":
+        self.options = validate_options(self.type, self.options)
+        if self.type == "tcp" and not self.port:
+            raise ValueError("tcp probes need a port")
+        # A 200 ms threshold suits paths and pings, not HTTP; apply a per-type default when the caller did not choose one.
+        if "alert_latency_ms" not in self.model_fields_set:
+            self.alert_latency_ms = LATENCY_ALERT_DEFAULT.get(self.type, 200.0)
+        return self
 
 
 class TargetUpdate(_TargetValidators):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    host: str | None = Field(default=None, min_length=1, max_length=253)
+    host: str | None = Field(default=None, min_length=1, max_length=2048)
+    type: ProbeType | None = None
+    options: dict[str, Any] | None = None
     description: str | None = None
     tags: list[str] | None = None
     interval_sec: int | None = Field(default=None, ge=10, le=86400)
@@ -152,3 +220,13 @@ def apply_update(existing: dict[str, Any], patch: dict[str, Any]) -> dict[str, A
     for k, v in patch.items():
         merged[k] = v
     return merged
+
+
+class BulkAction(BaseModel):
+    action: Literal["pause", "resume", "run", "delete"]
+    ids: list[int] = Field(min_length=1, max_length=1000)
+
+
+class TargetImport(BaseModel):
+    targets: list[TargetCreate] = Field(min_length=1, max_length=1000)
+    mode: Literal["upsert", "create", "replace"] = "upsert"

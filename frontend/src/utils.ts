@@ -141,3 +141,12 @@ export function percentile(values: number[], p: number): number | null {
   const hi = Math.ceil(k);
   return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (k - lo);
 }
+
+export function isPathProbe(type: string | undefined): boolean {
+  return !type || type === "mtr";
+}
+
+/** Short label for the host of a target: strips the scheme for http probes so cards stay compact. */
+export function hostLabel(host: string): string {
+  return host.replace(/^https?:\/\//i, "");
+}

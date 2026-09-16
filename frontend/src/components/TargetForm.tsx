@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { IpVersion, Protocol, Target, TargetInput } from "../api";
+import { DEFAULT_OPTIONS, PROBE_TYPE_LABEL, type DnsRecordType, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
 import { Modal } from "./Modal";
 import { NumberInput } from "./NumberInput";
 import { classNames } from "../utils";
@@ -7,6 +7,8 @@ import { classNames } from "../utils";
 const DEFAULTS: TargetInput = {
   name: "",
   host: "",
+  type: "mtr",
+  options: {},
   description: "",
   tags: [],
   interval_sec: 300,
@@ -52,25 +54,46 @@ export function TargetForm({
   const [tagText, setTagText] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [headersText, setHeadersText] = useState("");
 
   useEffect(() => {
     if (!open) return;
     if (initial) {
-      const { name, host, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, ip_version, max_hops, enabled, alert_loss_pct, alert_latency_ms } = initial;
-      setForm({ name, host, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, ip_version, max_hops, enabled, alert_loss_pct, alert_latency_ms });
+      const { name, host, type, options, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, ip_version, max_hops, enabled, alert_loss_pct, alert_latency_ms } = initial;
+      setForm({ name, host, type: type || "mtr", options: { ...DEFAULT_OPTIONS[type || "mtr"], ...(options || {}) }, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, ip_version, max_hops, enabled, alert_loss_pct, alert_latency_ms });
       setTagText(tags.join(", "));
       setAdvanced(protocol !== "icmp" || packet_size !== 64 || max_hops !== 30 || ip_version !== "auto" || probe_interval !== 1);
+      setHeadersText(Object.entries(options?.headers || {}).map(([k, v]) => `${k}: ${v}`).join("\n"));
     } else {
       setForm({ ...DEFAULTS, ...(prefill ?? {}) });
       setTagText("");
       setAdvanced(false);
+      setHeadersText("");
     }
     setError(null);
   }, [open, initial, prefill]);
 
   const set = <K extends keyof TargetInput>(k: K, v: TargetInput[K]) => setForm((f) => ({ ...f, [k]: v }));
-  // mtr sends one probe cycle per probe interval, then waits roughly 5 s for late replies.
-  const runDuration = Math.round(form.count * form.probe_interval + 5);
+  const setOpt = <K extends keyof ProbeOptions>(k: K, v: ProbeOptions[K]) => setForm((f) => ({ ...f, options: { ...f.options, [k]: v } }));
+  const LATENCY_DEFAULT: Record<ProbeType, number> = { mtr: 200, ping: 200, http: 1500, tcp: 500, dns: 500 };
+  const setType = (type: ProbeType) =>
+    setForm((f) => ({
+      ...f,
+      type,
+      options: { ...DEFAULT_OPTIONS[type] },
+      port: type === "tcp" ? (f.port ?? 443) : f.port,
+      count: type === "ping" && f.count === 10 ? 5 : f.count,
+      // Keep a user-edited threshold; only swap the per-type default.
+      alert_latency_ms: f.alert_latency_ms === LATENCY_DEFAULT[f.type] ? LATENCY_DEFAULT[type] : f.alert_latency_ms,
+    }));
+  const isMtr = form.type === "mtr";
+  const isPing = form.type === "ping";
+  const isHttp = form.type === "http";
+  const isTcp = form.type === "tcp";
+  const isDns = form.type === "dns";
+  const usesProbes = isMtr || isPing;
+  // mtr sends one probe cycle per probe interval, then waits roughly 5 s for late replies; ping waits up to its timeout.
+  const runDuration = isMtr ? Math.round(form.count * form.probe_interval + 5) : isPing ? Math.round(form.count * form.probe_interval + (form.options.timeout_sec ?? 2)) : Math.round(form.options.timeout_sec ?? 10);
   const durationWarn = runDuration > form.interval_sec * 0.9;
 
   const submit = async () => {
@@ -79,8 +102,19 @@ export function TargetForm({
     if (!form.host.trim()) return setError("Host is required.");
     if (durationWarn) return setError(`A run takes about ${runDuration}s (probes × probe interval, plus mtr's final wait), which does not fit the ${form.interval_sec}s schedule. Increase the interval or lower the probe count.`);
     const tags = tagText.split(",").map((t) => t.trim()).filter(Boolean);
+    if (isTcp && !form.port) return setError("TCP probes need a port.");
+    const options: ProbeOptions = { ...form.options };
+    if (isHttp) {
+      const headers: Record<string, string> = {};
+      for (const line of headersText.split("\n")) {
+        const idx = line.indexOf(":");
+        if (idx > 0) headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+        else if (line.trim()) return setError(`Header line "${line.trim()}" must look like Name: value.`);
+      }
+      options.headers = headers;
+    }
     try {
-      await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), tags, port: form.protocol === "icmp" ? null : form.port });
+      await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), tags, options, port: isMtr && form.protocol === "icmp" ? null : form.port });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -109,14 +143,116 @@ export function TargetForm({
           void submit();
         }}
       >
+        <div className="sm:col-span-2">
+          <label className="label">Probe type</label>
+          <div className="seg w-full" role="radiogroup">
+            {(Object.keys(PROBE_TYPE_LABEL) as ProbeType[]).map((k) => (
+              <button key={k} type="button" className="flex-1" data-active={form.type === k} onClick={() => setType(k)} role="radio" aria-checked={form.type === k} disabled={!!initial && initial.type !== k && false}>
+                {PROBE_TYPE_LABEL[k]}
+              </button>
+            ))}
+          </div>
+          <div className="help">
+            {isMtr && "Full path trace: every hop, loss, latency and jitter. Detects route changes."}
+            {isPing && "ICMP echo to the destination only. Lightweight; good for many targets on short intervals."}
+            {isHttp && "Fetch a URL and check the status code, and optionally a keyword or a JSON value. Warns before the TLS certificate expires."}
+            {isTcp && "Open a TCP connection to a port and measure connect time. Good for services that do not answer ping."}
+            {isDns && "Resolve a name and check the answer, optionally against a specific resolver."}
+          </div>
+        </div>
         <div>
           <label className="label">Name</label>
-          <input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Head office WAN" autoFocus />
+          <input className="input" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder={isHttp ? "Intranet portal" : "Head office WAN"} autoFocus />
         </div>
         <div>
-          <label className="label">Host or IP</label>
-          <input className="input font-mono" value={form.host} onChange={(e) => set("host", e.target.value)} placeholder="1.1.1.1 or vpn.example.com" spellCheck={false} />
+          <label className="label">{isHttp ? "URL" : isDns ? "Name to resolve" : "Host or IP"}</label>
+          <input className="input font-mono" value={form.host} onChange={(e) => set("host", e.target.value)} placeholder={isHttp ? "https://portal.example.com/health" : isDns ? "www.example.com" : "1.1.1.1 or vpn.example.com"} spellCheck={false} />
         </div>
+        {isTcp && (
+          <div>
+            <label className="label">Port</label>
+            <NumberInput className="input num" min={1} max={65535} nullable value={form.port} onChange={(v) => set("port", v)} placeholder="443" />
+          </div>
+        )}
+        {isHttp && (
+          <>
+            <div>
+              <label className="label">Method</label>
+              <select className="input" value={form.options.method ?? "GET"} onChange={(e) => setOpt("method", e.target.value as HttpMethod)}>
+                {["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Expected status</label>
+              <input className="input font-mono" value={form.options.expected_status ?? "200-299"} onChange={(e) => setOpt("expected_status", e.target.value)} placeholder="200-299" spellCheck={false} />
+              <div className="help">Codes or ranges, comma separated: 200, 200-299, 200,301.</div>
+            </div>
+            <div>
+              <label className="label">Keyword (optional)</label>
+              <input className="input" value={form.options.keyword ?? ""} onChange={(e) => setOpt("keyword", e.target.value)} placeholder="text that must appear in the body" />
+              <label className="mt-1.5 flex items-center gap-2 text-xs text-muted">
+                <input type="checkbox" checked={!!form.options.keyword_absent} onChange={(e) => setOpt("keyword_absent", e.target.checked)} /> Fail if the keyword is present instead
+              </label>
+            </div>
+            <div>
+              <label className="label">JSON check (optional)</label>
+              <div className="flex gap-2">
+                <input className="input font-mono" value={form.options.json_path ?? ""} onChange={(e) => setOpt("json_path", e.target.value)} placeholder="data.status" spellCheck={false} />
+                <input className="input font-mono w-40" value={form.options.json_expected ?? ""} onChange={(e) => setOpt("json_expected", e.target.value)} placeholder="ok" spellCheck={false} />
+              </div>
+              <div className="help">Path like items[0].state; expected value, or a comparison such as {">= 5"}, or ~substring.</div>
+            </div>
+            <div>
+              <label className="label">Timeout (s)</label>
+              <NumberInput className="input num" min={1} max={120} value={form.options.timeout_sec ?? 10} onChange={(v) => setOpt("timeout_sec", v ?? 10)} />
+            </div>
+            <div>
+              <label className="label">Warn when certificate expires within (days)</label>
+              <NumberInput className="input num" min={0} max={365} value={form.options.tls_warn_days ?? 14} onChange={(v) => setOpt("tls_warn_days", v ?? 14)} />
+              <div className="help">0 disables. Marks the target degraded.</div>
+            </div>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.options.verify_tls ?? true} onChange={(e) => setOpt("verify_tls", e.target.checked)} /> Verify TLS certificate</label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.options.follow_redirects ?? true} onChange={(e) => setOpt("follow_redirects", e.target.checked)} /> Follow redirects</label>
+            <div className="sm:col-span-2">
+              <label className="label">Headers (optional, one per line as Name: value)</label>
+              <textarea className="input font-mono" rows={2} value={headersText} onChange={(e) => setHeadersText(e.target.value)} placeholder={"Authorization: Bearer …\nAccept: application/json"} spellCheck={false} />
+            </div>
+            {["POST", "PUT", "PATCH"].includes(form.options.method ?? "GET") && (
+              <div className="sm:col-span-2">
+                <label className="label">Request body (optional)</label>
+                <textarea className="input font-mono" rows={3} value={form.options.body ?? ""} onChange={(e) => setOpt("body", e.target.value)} spellCheck={false} />
+              </div>
+            )}
+          </>
+        )}
+        {isDns && (
+          <>
+            <div>
+              <label className="label">Record type</label>
+              <select className="input" value={form.options.record_type ?? "A"} onChange={(e) => setOpt("record_type", e.target.value as DnsRecordType)}>
+                {["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV"].map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Resolver (optional)</label>
+              <input className="input font-mono" value={form.options.resolver ?? ""} onChange={(e) => setOpt("resolver", e.target.value)} placeholder="system resolver, or e.g. 1.1.1.1" spellCheck={false} />
+            </div>
+            <div>
+              <label className="label">Expected answer (optional)</label>
+              <input className="input font-mono" value={form.options.expected ?? ""} onChange={(e) => setOpt("expected", e.target.value)} placeholder="substring of an expected answer" spellCheck={false} />
+            </div>
+            <div>
+              <label className="label">Timeout (s)</label>
+              <NumberInput className="input num" min={0.5} max={60} step={0.5} value={form.options.timeout_sec ?? 5} onChange={(v) => setOpt("timeout_sec", v ?? 5)} />
+            </div>
+          </>
+        )}
+        {(isTcp || isPing) && (
+          <div>
+            <label className="label">Timeout per {isPing ? "probe" : "connect"} (s)</label>
+            <NumberInput className="input num" min={0.2} max={60} step={0.5} value={form.options.timeout_sec ?? (isPing ? 2 : 5)} onChange={(v) => setOpt("timeout_sec", v ?? (isPing ? 2 : 5))} />
+          </div>
+        )}
         <div className="sm:col-span-2">
           <label className="label">Description (optional)</label>
           <input className="input" value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="What this target represents and why it matters" />
@@ -141,44 +277,58 @@ export function TargetForm({
           </div>
           <div className="help">Seconds between the start of one run and the start of the next (10 – 86400).</div>
         </div>
-        <div>
-          <label className="label">Probes per hop</label>
-          <NumberInput className="input num" min={1} max={200} value={form.count} onChange={(v) => set("count", v ?? form.count)} />
-          <div className={classNames("help", durationWarn && "!text-degraded")}>
-            Each run sends {form.count} probes per hop and takes about {runDuration}s including mtr's final wait.
+        {usesProbes ? (
+          <div>
+            <label className="label">{isMtr ? "Probes per hop" : "Pings per run"}</label>
+            <NumberInput className="input num" min={1} max={200} value={form.count} onChange={(v) => set("count", v ?? form.count)} />
+            <div className={classNames("help", durationWarn && "!text-degraded")}>
+              {isMtr ? `Each run sends ${form.count} probes per hop and takes about ${runDuration}s including mtr's final wait.` : `Each run sends ${form.count} pings and takes about ${runDuration}s.`}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="hidden sm:block" />
+        )}
 
+        {usesProbes ? (
+          <div>
+            <label className="label">Alert when packet loss ≥ (%)</label>
+            <NumberInput className="input num" min={0} max={100} step={0.5} value={form.alert_loss_pct} onChange={(v) => set("alert_loss_pct", v ?? form.alert_loss_pct)} />
+            <div className="help">0 disables the loss alert.</div>
+          </div>
+        ) : (
+          <div className="hidden sm:block" />
+        )}
         <div>
-          <label className="label">Alert when packet loss ≥ (%)</label>
-          <NumberInput className="input num" min={0} max={100} step={0.5} value={form.alert_loss_pct} onChange={(v) => set("alert_loss_pct", v ?? form.alert_loss_pct)} />
-          <div className="help">0 disables the loss alert.</div>
-        </div>
-        <div>
-          <label className="label">Alert when avg latency ≥ (ms)</label>
+          <label className="label">{isHttp ? "Alert when response time ≥ (ms)" : isTcp ? "Alert when connect time ≥ (ms)" : isDns ? "Alert when lookup time ≥ (ms)" : "Alert when avg latency ≥ (ms)"}</label>
           <NumberInput className="input num" min={0} step={1} value={form.alert_latency_ms} onChange={(v) => set("alert_latency_ms", v ?? form.alert_latency_ms)} />
           <div className="help">0 disables the latency alert.</div>
         </div>
 
-        <div className="sm:col-span-2">
-          <button type="button" className="text-xs font-medium text-accent hover:underline" onClick={() => setAdvanced((a) => !a)}>
-            {advanced ? "Hide" : "Show"} advanced probe options
-          </button>
-        </div>
-        {advanced && (
+        {usesProbes && (
+          <div className="sm:col-span-2">
+            <button type="button" className="text-xs font-medium text-accent hover:underline" onClick={() => setAdvanced((a) => !a)}>
+              {advanced ? "Hide" : "Show"} advanced probe options
+            </button>
+          </div>
+        )}
+        {usesProbes && advanced && (
           <>
-            <div>
-              <label className="label">Protocol</label>
-              <select className="input" value={form.protocol} onChange={(e) => set("protocol", e.target.value as Protocol)}>
-                <option value="icmp">ICMP echo</option>
-                <option value="udp">UDP</option>
-                <option value="tcp">TCP SYN</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">Port {form.protocol === "icmp" && "(UDP/TCP only)"}</label>
-              <NumberInput className="input num" min={1} max={65535} nullable disabled={form.protocol === "icmp"} value={form.port} onChange={(v) => set("port", v)} placeholder={form.protocol === "tcp" ? "443" : "33434"} />
-            </div>
+            {isMtr && (
+              <>
+                <div>
+                  <label className="label">Protocol</label>
+                  <select className="input" value={form.protocol} onChange={(e) => set("protocol", e.target.value as Protocol)}>
+                    <option value="icmp">ICMP echo</option>
+                    <option value="udp">UDP</option>
+                    <option value="tcp">TCP SYN</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Port {form.protocol === "icmp" && "(UDP/TCP only)"}</label>
+                  <NumberInput className="input num" min={1} max={65535} nullable disabled={form.protocol === "icmp"} value={form.port} onChange={(v) => set("port", v)} placeholder={form.protocol === "tcp" ? "443" : "33434"} />
+                </div>
+              </>
+            )}
             <div>
               <label className="label">IP version</label>
               <select className="input" value={form.ip_version} onChange={(e) => set("ip_version", e.target.value as IpVersion)}>
@@ -190,16 +340,18 @@ export function TargetForm({
             <div>
               <label className="label">Probe interval (s)</label>
               <NumberInput className="input num" min={0.1} max={10} step={0.1} value={form.probe_interval} onChange={(v) => set("probe_interval", v ?? form.probe_interval)} />
-              <div className="help">Delay between probes, mtr -i.</div>
+              <div className="help">Delay between probes ({isMtr ? "mtr -i" : "ping -i"}).</div>
             </div>
             <div>
               <label className="label">Packet size (bytes)</label>
               <NumberInput className="input num" min={28} max={1500} value={form.packet_size} onChange={(v) => set("packet_size", v ?? form.packet_size)} />
             </div>
-            <div>
-              <label className="label">Max hops</label>
-              <NumberInput className="input num" min={1} max={64} value={form.max_hops} onChange={(v) => set("max_hops", v ?? form.max_hops)} />
-            </div>
+            {isMtr && (
+              <div>
+                <label className="label">Max hops</label>
+                <NumberInput className="input num" min={1} max={64} value={form.max_hops} onChange={(v) => set("max_hops", v ?? form.max_hops)} />
+              </div>
+            )}
           </>
         )}
 

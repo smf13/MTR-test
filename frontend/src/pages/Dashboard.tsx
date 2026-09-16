@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Plus, Search, Play, Pause, Pencil, Trash2, Clock, GitBranch, Activity, ShieldCheck, ShieldAlert, ShieldOff, RefreshCw, ChevronDown, ChevronUp, LineChart } from "lucide-react";
-import { api, type Target, type TargetInput } from "../api";
+import { api, PROBE_TYPE_LABEL, type Target, type TargetInput } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { StatusBadge } from "../components/StatusBadge";
 import { StatTile } from "../components/StatTile";
@@ -12,7 +12,7 @@ import { EmptyState, ErrorBanner } from "../components/EmptyState";
 import { Segmented } from "../components/RangePicker";
 import { OverviewChart, StatusStrip } from "../components/Visuals";
 import { useToast } from "../components/Toast";
-import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor } from "../utils";
+import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe } from "../utils";
 
 type SortKey = "name" | "status" | "latency" | "loss" | "hops";
 type View = "cards" | "table";
@@ -258,19 +258,25 @@ function TargetCard({ t, now, onEdit, onDelete, onToggle, onRun }: { t: Target; 
             {t.name}
           </Link>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
-            <span className="font-mono">{t.host}</span>
-            {run?.dst_ip && run.dst_ip !== t.host && <span className="font-mono text-faint">{run.dst_ip}</span>}
-            <span className="text-faint">·</span>
-            <span className="uppercase">{t.protocol}{t.port ? `/${t.port}` : ""}</span>
+            <TypeBadge type={t.type} />
+            <span className="font-mono truncate max-w-[260px]" title={t.host}>{hostLabel(t.host)}</span>
+            {run?.dst_ip && run.dst_ip !== t.host && t.type !== "http" && <span className="font-mono text-faint">{run.dst_ip}</span>}
+            {t.type === "mtr" && <><span className="text-faint">·</span><span className="uppercase">{t.protocol}{t.port ? `/${t.port}` : ""}</span></>}
+            {t.type === "tcp" && <span className="font-mono">:{t.port}</span>}
+            {t.type === "dns" && <span className="font-mono">{String(t.options.record_type ?? "A")}</span>}
           </div>
         </div>
         <StatusBadge status={status} running={t.running} />
       </div>
 
       <div className="mt-3 grid grid-cols-4 gap-2">
-        <Metric label="Latency" value={run?.reached ? fmtNum(run.avg_ms) : "–"} unit="ms" />
-        <Metric label="Loss" value={fmtNum(loss)} unit="%" color={loss && loss > 0 ? lossColor(loss) : undefined} />
-        <Metric label="Hops" value={run?.hop_count ? String(run.hop_count) : "–"} />
+        <Metric label={t.type === "http" ? "Response" : t.type === "tcp" ? "Connect" : t.type === "dns" ? "Lookup" : "Latency"} value={run?.reached ? fmtNum(run.avg_ms) : "–"} unit="ms" />
+        {isPathProbe(t.type) || t.type === "ping" ? (
+          <Metric label="Loss" value={fmtNum(loss)} unit="%" color={loss && loss > 0 ? lossColor(loss) : undefined} />
+        ) : (
+          <Metric label="Check" value={run ? (run.reached ? "pass" : "fail") : "–"} color={run ? (run.reached ? "var(--up)" : "var(--down)") : undefined} />
+        )}
+        <ThirdMetric t={t} />
         <Metric label="Avail 24h" value={t.stats_24h.availability_pct !== null ? fmtNum(t.stats_24h.availability_pct, t.stats_24h.availability_pct === 100 ? 0 : 1) : "–"} unit="%" />
       </div>
 
@@ -309,6 +315,31 @@ function TargetCard({ t, now, onEdit, onDelete, onToggle, onRun }: { t: Target; 
   );
 }
 
+export function TypeBadge({ type }: { type: Target["type"] }) {
+  return (
+    <span className="rounded px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+      {PROBE_TYPE_LABEL[type] ?? type}
+    </span>
+  );
+}
+
+function ThirdMetric({ t }: { t: Target }) {
+  const run = t.latest_run;
+  const d = (run?.details || {}) as Record<string, unknown>;
+  switch (t.type) {
+    case "http":
+      return <Metric label="HTTP" value={d.status !== undefined ? String(d.status) : "–"} color={d.status !== undefined ? (d.status_ok ? "var(--up)" : "var(--down)") : undefined} />;
+    case "tcp":
+      return <Metric label="Port" value={t.port ? String(t.port) : "–"} />;
+    case "dns":
+      return <Metric label="Answers" value={Array.isArray(d.answers) ? String((d.answers as unknown[]).length) : "–"} />;
+    case "ping":
+      return <Metric label="Jitter" value={run?.reached ? fmtNum(run.jitter_avg_ms) : "–"} unit="ms" />;
+    default:
+      return <Metric label="Hops" value={run?.hop_count ? String(run.hop_count) : "–"} />;
+  }
+}
+
 function Metric({ label, value, unit, color }: { label: string; value: string; unit?: string; color?: string }) {
   return (
     <div className="min-w-0">
@@ -341,7 +372,7 @@ function TargetTable({ list, now, onEdit, onDelete, onToggle, onRun }: { list: T
             <th className="text-right">Best</th>
             <th className="text-right">Worst</th>
             <th className="text-right">Loss</th>
-            <th className="text-right">Hops</th>
+            <th className="text-right">Hops / HTTP</th>
             <th className="text-right">Avail 24h</th>
             <th className="text-right">Avg 24h</th>
             <th>Trend</th>
@@ -361,14 +392,14 @@ function TargetTable({ list, now, onEdit, onDelete, onToggle, onRun }: { list: T
                   <Link to={`/targets/${t.id}`} className="font-semibold hover:text-accent">
                     {t.name}
                   </Link>
-                  <div className="font-mono text-[11px] text-faint">{t.host}</div>
+                  <div className="flex items-center gap-1.5 font-mono text-[11px] text-faint"><TypeBadge type={t.type} /><span className="truncate max-w-[220px]" title={t.host}>{hostLabel(t.host)}</span></div>
                 </td>
                 <td><StatusBadge status={status} running={t.running} /></td>
                 <td className="text-right font-semibold">{run?.reached ? fmtNum(run.avg_ms) : "–"}</td>
                 <td className="text-right text-muted">{run?.reached ? fmtNum(run.best_ms) : "–"}</td>
                 <td className="text-right text-muted">{run?.reached ? fmtNum(run.worst_ms) : "–"}</td>
                 <td className="text-right font-semibold" style={{ color: (run?.loss_pct ?? 0) > 0 ? lossColor(run?.loss_pct) : undefined }}>{fmtPct(run?.loss_pct)}</td>
-                <td className="text-right">{run?.hop_count || "–"}</td>
+                <td className="text-right">{t.type === "mtr" ? run?.hop_count || "–" : t.type === "http" ? String((run?.details as Record<string, unknown> | null)?.status ?? "–") : "–"}</td>
                 <td className="text-right">{fmtPct(t.stats_24h.availability_pct)}</td>
                 <td className="text-right text-muted">{fmtNum(t.stats_24h.avg_ms)}</td>
                 <td><Sparkline points={t.sparkline} width={120} height={26} color={statusColor(status === "paused" || status === "pending" ? "up" : status)} /></td>

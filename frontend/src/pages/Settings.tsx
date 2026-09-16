@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send } from "lucide-react";
-import { api, type Settings as SettingsT } from "../api";
+import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload } from "lucide-react";
+import { api, getApiToken, setApiToken, type Settings as SettingsT, type TargetInput } from "../api";
+import { useRef } from "react";
 import { usePoll } from "../hooks";
 import { useToast } from "../components/Toast";
 import { ErrorBanner } from "../components/EmptyState";
@@ -21,6 +22,38 @@ export function Settings() {
   const [form, setForm] = useState<SettingsT | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<"webhook" | "pushover" | null>(null);
+  const [token, setToken] = useState(getApiToken());
+  const [importMode, setImportMode] = useState<"upsert" | "create" | "replace">("upsert");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const exportTargets = async () => {
+    try {
+      const data = await api.exportTargets();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `mtr-tracker-targets-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    }
+  };
+
+  const importFile = async (file: File) => {
+    try {
+      const parsed = JSON.parse(await file.text()) as TargetInput[] | { targets: TargetInput[] };
+      const targets = Array.isArray(parsed) ? parsed : parsed.targets;
+      if (!Array.isArray(targets) || !targets.length) throw new Error("File must contain a JSON array of targets.");
+      if (importMode === "replace" && !window.confirm(`Replace ALL existing targets with the ${targets.length} in this file? Their run history will be deleted.`)) return;
+      const res = await api.importTargets(targets, importMode);
+      toast(`Imported: ${res.created} created, ${res.updated} updated (${res.total} total)`, "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
 
   const sendTest = async (channel: "webhook" | "pushover") => {
     if (!form) return;
@@ -238,6 +271,30 @@ export function Settings() {
             {s?.simulate && <p className="mt-3 text-xs text-degraded">Simulation mode is on: paths are synthetic. Unset MTR_TRACKER_SIMULATE to send real probes.</p>}
             {s && !s.simulate && !s.mtr_version && <p className="mt-3 text-xs text-down">The mtr binary was not found. Install mtr / mtr-tiny or set MTR_TRACKER_MTR_BINARY.</p>}
           </section>
+          <section className="card p-5">
+            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold"><KeyRound size={15} /> API access</h2>
+            <p className="text-xs text-muted">Everything in this UI is available as a JSON API, documented live at <a className="text-accent hover:underline" href="/api/docs" target="_blank" rel="noreferrer">/api/docs</a>. Set <span className="font-mono">MTR_TRACKER_API_TOKEN</span> on the server to require a bearer token for all changes; reads stay open.</p>
+            <label className="label mt-3">Token for this browser</label>
+            <div className="flex gap-2">
+              <input className="input font-mono" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="only needed when the server sets a token" autoComplete="off" />
+              <button className="btn" onClick={() => { setApiToken(token.trim()); toast(token.trim() ? "Token saved in this browser" : "Token cleared", "success"); }}>Save</button>
+            </div>
+            <div className="help">Stored in local storage only; never sent to anyone but this server.</div>
+            <div className="mt-4 border-t border-border pt-3">
+              <div className="mb-2 text-xs font-semibold">Targets backup</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button className="btn btn-sm" onClick={exportTargets}><Download size={13} /> Export JSON</button>
+                <select className="input w-auto py-1 text-xs" value={importMode} onChange={(e) => setImportMode(e.target.value as typeof importMode)} title="How to handle targets that already exist">
+                  <option value="upsert">Import: update by name</option>
+                  <option value="create">Import: always create</option>
+                  <option value="replace">Import: replace all</option>
+                </select>
+                <button className="btn btn-sm" onClick={() => fileRef.current?.click()}><Upload size={13} /> Import JSON</button>
+                <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => e.target.files?.[0] && void importFile(e.target.files[0])} />
+              </div>
+              <div className="help">Same format as GET /api/targets/export. Useful for backups, cloning a server or managing targets from git.</div>
+            </div>
+          </section>
           <section className="card p-5 text-xs text-muted">
             <h2 className="mb-2 text-sm font-semibold text-text">Environment variables</h2>
             <ul className="space-y-1 font-mono">
@@ -246,6 +303,7 @@ export function Settings() {
               <li>MTR_TRACKER_MAX_CONCURRENT_RUNS=8</li>
               <li>MTR_TRACKER_MTR_BINARY=mtr</li>
               <li>MTR_TRACKER_SIMULATE=0</li>
+              <li>MTR_TRACKER_API_TOKEN=</li>
             </ul>
             <p className="mt-2 font-sans">These are read at startup; restart the container to apply changes.</p>
           </section>

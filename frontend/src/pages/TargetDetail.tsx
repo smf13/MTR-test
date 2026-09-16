@@ -17,7 +17,10 @@ import { TargetForm } from "../components/TargetForm";
 import { ConfirmDialog } from "../components/Modal";
 import { ErrorBanner } from "../components/EmptyState";
 import { useToast } from "../components/Toast";
-import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, classNames } from "../utils";
+import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, classNames, hostLabel, isPathProbe } from "../utils";
+import { CheckDetails } from "../components/CheckDetails";
+import { TypeBadge } from "./Dashboard";
+import { PROBE_TYPE_LABEL } from "../api";
 
 type Tab = "path" | "history" | "summary" | "runs" | "events";
 const RUN_PAGE = 25;
@@ -116,6 +119,10 @@ export function TargetDetail() {
 
   const run = t.latest_run;
   const latestRun = latest.data && latest.data.id === run?.id ? latest.data : latest.data;
+  const pathProbe = isPathProbe(t.type);
+  const latencyWord = t.type === "http" ? "Response" : t.type === "tcp" ? "Connect" : t.type === "dns" ? "Lookup" : "Latency";
+  const singleSample = !pathProbe && t.type !== "ping";
+  const latestDetails = (run?.details || {}) as Record<string, unknown>;
 
   return (
     <div className="space-y-5">
@@ -129,11 +136,15 @@ export function TargetDetail() {
             <StatusBadge status={status} running={t.running} />
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
-            <span className="font-mono">{t.host}</span>
-            {run?.dst_ip && run.dst_ip !== t.host && <span className="font-mono text-faint">→ {run.dst_ip}</span>}
-            <span className="uppercase">{t.protocol}{t.port ? ` :${t.port}` : ""}</span>
+            <TypeBadge type={t.type} />
+            <span className="font-mono break-all">{t.type === "http" ? t.host : hostLabel(t.host)}</span>
+            {run?.dst_ip && run.dst_ip !== t.host && t.type !== "http" && <span className="font-mono text-faint">→ {run.dst_ip}</span>}
+            {pathProbe && <span className="uppercase">{t.protocol}{t.port ? ` :${t.port}` : ""}</span>}
+            {t.type === "tcp" && <span className="font-mono">port {t.port}</span>}
+            {t.type === "dns" && <span className="font-mono">{String(t.options.record_type ?? "A")}{t.options.resolver ? ` @${t.options.resolver}` : ""}</span>}
+            {t.type === "http" && <span className="font-mono">{String(t.options.method ?? "GET")} · expect {String(t.options.expected_status ?? "200-299")}</span>}
             <span className="inline-flex items-center gap-1"><Clock size={12} /> every {fmtDuration(t.interval_sec)}</span>
-            <span>{t.count} probes × {t.probe_interval}s</span>
+            {(pathProbe || t.type === "ping") && <span>{t.count} probes × {t.probe_interval}s</span>}
             {t.ip_version !== "auto" && <span>IPv{t.ip_version}</span>}
             {t.tags.map((tag) => (
               <span key={tag} className="rounded px-1.5 py-px text-xs font-medium" style={{ background: "var(--paused-soft)", color: "var(--text-muted)" }}>{tag}</span>
@@ -158,12 +169,26 @@ export function TargetDetail() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        <StatTile label="Latency now" value={run?.reached ? `${fmtNum(run.avg_ms)} ms` : run ? "unreachable" : "–"} sub={run?.reached ? `best ${fmtNum(run.best_ms)} · worst ${fmtNum(run.worst_ms)}` : run?.error ?? undefined} tone={status === "down" ? "down" : status === "degraded" ? "degraded" : undefined} icon={<Gauge size={15} />} />
+        <StatTile label={`${latencyWord} now`} value={run?.reached ? `${fmtNum(run.avg_ms)} ms` : run ? "unreachable" : "–"} sub={run?.reached ? `best ${fmtNum(run.best_ms)} · worst ${fmtNum(run.worst_ms)}` : run?.error ?? undefined} tone={status === "down" ? "down" : status === "degraded" ? "degraded" : undefined} icon={<Gauge size={15} />} />
         <StatTile label={`Avg · ${range}`} value={stats?.avg_ms !== null && stats?.avg_ms !== undefined ? `${fmtNum(stats.avg_ms)} ms` : "–"} sub={stats?.p95_ms !== null && stats?.p95_ms !== undefined ? `p95 ${fmtNum(stats.p95_ms)} · p99 ${fmtNum(stats.p99_ms)}` : undefined} icon={<Activity size={15} />} />
         <StatTile label={`Loss · ${range}`} value={fmtPct(stats?.loss_pct)} sub={stats?.max_loss_pct ? `max ${fmtPct(stats.max_loss_pct)}` : "no loss recorded"} tone={stats && (stats.loss_pct ?? 0) >= t.alert_loss_pct && t.alert_loss_pct > 0 ? "degraded" : undefined} icon={<Percent size={15} />} />
         <StatTile label={`Uptime · ${range}`} value={fmtPct(stats?.availability_pct, stats?.availability_pct === 100 ? 0 : 2)} sub={stats ? `${stats.ok_runs}/${stats.runs} runs reached` : undefined} tone={stats && stats.availability_pct !== null && stats.availability_pct < 99 ? "degraded" : "up"} icon={<Timer size={15} />} />
-        <StatTile label={`Jitter · ${range}`} value={stats?.jitter_ms !== null && stats?.jitter_ms !== undefined ? `${fmtNum(stats.jitter_ms)} ms` : "–"} sub={run?.reached ? `now ${fmtNum(run.jitter_avg_ms)} ms` : undefined} icon={<Route size={15} />} />
-        <StatTile label={`Reroutes · ${range}`} value={stats?.route_changes ?? 0} sub={stats?.hop_count_min ? `${stats.hop_count_min === stats.hop_count_max ? stats.hop_count_min : `${stats.hop_count_min}–${stats.hop_count_max}`} hops` : undefined} tone={stats?.route_changes ? "degraded" : undefined} icon={<GitBranch size={15} />} />
+        {singleSample ? (
+          <StatTile
+            label="Last check"
+            value={run ? (run.reached ? "Pass" : "Fail") : "–"}
+            sub={t.type === "http" ? (latestDetails.status !== undefined ? `HTTP ${latestDetails.status}${latestDetails.tls_expires_in_days !== undefined && latestDetails.tls_expires_in_days !== null ? ` · TLS ${latestDetails.tls_expires_in_days}d` : ""}` : run?.error ?? undefined) : t.type === "dns" ? (Array.isArray(latestDetails.answers) ? `${(latestDetails.answers as unknown[]).length} answer${(latestDetails.answers as unknown[]).length === 1 ? "" : "s"}` : run?.error ?? undefined) : run?.error ?? (t.port ? `port ${t.port}` : undefined)}
+            tone={run ? (run.reached ? "up" : "down") : undefined}
+            icon={<Route size={15} />}
+          />
+        ) : (
+          <StatTile label={`Jitter · ${range}`} value={stats?.jitter_ms !== null && stats?.jitter_ms !== undefined ? `${fmtNum(stats.jitter_ms)} ms` : "–"} sub={run?.reached ? `now ${fmtNum(run.jitter_avg_ms)} ms` : undefined} icon={<Route size={15} />} />
+        )}
+        {pathProbe ? (
+          <StatTile label={`Reroutes · ${range}`} value={stats?.route_changes ?? 0} sub={stats?.hop_count_min ? `${stats.hop_count_min === stats.hop_count_max ? stats.hop_count_min : `${stats.hop_count_min}–${stats.hop_count_max}`} hops` : undefined} tone={stats?.route_changes ? "degraded" : undefined} icon={<GitBranch size={15} />} />
+        ) : (
+          <StatTile label={`Failed checks · ${range}`} value={stats?.failed_runs ?? 0} sub={stats ? `of ${stats.runs} runs` : undefined} tone={stats?.failed_runs ? "down" : "up"} icon={<GitBranch size={15} />} />
+        )}
       </div>
 
       <div className="card px-4 py-3">
@@ -177,39 +202,55 @@ export function TargetDetail() {
       <div className="card p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-sm font-semibold">Round-trip time to destination</h2>
+            <h2 className="text-sm font-semibold">{pathProbe ? "Round-trip time to destination" : `${latencyWord} time per run`}</h2>
             <p className="text-xs text-faint">Line: average · Band: best–worst{series.data?.bucket_sec ? ` · aggregated in ${fmtDuration(series.data.bucket_sec)} buckets` : ""} · dashed: route change. Click a point to open the run.</p>
           </div>
           <Legend />
         </div>
         <LatencyChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} onPointClick={(rid) => navigate(`/runs/${rid}`)} />
-        <div className="mt-2 pl-11 pr-3">
-          <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-muted"><Waypoints size={13} /> Route in use{routes.data ? ` · ${routes.data.routes.length} distinct path${routes.data.routes.length === 1 ? "" : "s"}` : ""}</div>
-          {routes.data ? <RouteTimeline routes={routes.data} onOpenRun={(rid) => navigate(`/runs/${rid}`)} /> : <div className="h-4" />}
-        </div>
+        {pathProbe && (
+          <div className="mt-2 pl-11 pr-3">
+            <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-muted"><Waypoints size={13} /> Route in use{routes.data ? ` · ${routes.data.routes.length} distinct path${routes.data.routes.length === 1 ? "" : "s"}` : ""}</div>
+            {routes.data ? <RouteTimeline routes={routes.data} onOpenRun={(rid) => navigate(`/runs/${rid}`)} /> : <div className="h-4" />}
+          </div>
+        )}
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
           <div>
-            <h3 className="mb-1 text-xs font-semibold text-muted">Packet loss to destination</h3>
+            <h3 className="mb-1 text-xs font-semibold text-muted">{pathProbe || t.type === "ping" ? "Packet loss to destination" : "Failed checks (bar = check failed)"}</h3>
             <LossChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} />
           </div>
-          <div>
-            <h3 className="mb-1 text-xs font-semibold text-muted">Jitter (average inter-probe variation)</h3>
-            <JitterChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} />
-          </div>
+          {singleSample ? null : (
+            <div>
+              <h3 className="mb-1 text-xs font-semibold text-muted">Jitter (average inter-probe variation)</h3>
+              <JitterChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} />
+            </div>
+          )}
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <div className="card p-4">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="flex items-center gap-2 text-sm font-semibold"><Route size={15} /> Path profile</h2>
-              <p className="text-xs text-faint">Where latency is added along the path. Line: avg per hop · band: best–worst · bars: loss per hop.</p>
+        {pathProbe ? (
+          <div className="card p-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="flex items-center gap-2 text-sm font-semibold"><Route size={15} /> Path profile</h2>
+                <p className="text-xs text-faint">Where latency is added along the path. Line: avg per hop · band: best–worst · bars: loss per hop.</p>
+              </div>
+              <Segmented value={profileSource} onChange={setProfileSource} options={[{ value: "latest", label: "Latest run" }, { value: "range", label: `Avg · ${range}` }]} />
             </div>
-            <Segmented value={profileSource} onChange={setProfileSource} options={[{ value: "latest", label: "Latest run" }, { value: "range", label: `Avg · ${range}` }]} />
+            <PathProfileChart rows={profileSource === "latest" ? (latestRun ? profileFromHops(latestRun.hops) : []) : summary.data ? profileFromSummary(summary.data) : []} />
           </div>
-          <PathProfileChart rows={profileSource === "latest" ? (latestRun ? profileFromHops(latestRun.hops) : []) : summary.data ? profileFromSummary(summary.data) : []} />
-        </div>
+        ) : (
+          <div className="card p-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="flex items-center gap-2 text-sm font-semibold"><Route size={15} /> Latest check · {PROBE_TYPE_LABEL[t.type]}</h2>
+                <p className="text-xs text-faint">{latestRun ? <>Run <Link to={`/runs/${latestRun.id}`} className="text-accent hover:underline">#{latestRun.id}</Link> · {fmtDateTime(latestRun.started_at)}</> : "Waiting for the first run…"}</p>
+              </div>
+            </div>
+            {latestRun ? <CheckDetails run={latestRun} type={t.type} /> : null}
+          </div>
+        )}
         <div className="card p-4">
           <div className="mb-2">
             <h2 className="flex items-center gap-2 text-sm font-semibold"><BarChart3 size={15} /> Latency distribution · {range}</h2>
@@ -236,13 +277,18 @@ export function TargetDetail() {
       <div className="card overflow-hidden">
         <div className="flex flex-wrap items-center gap-1 border-b border-border px-2 pt-2">
           {(
-            [
-              ["path", "Current path"],
-              ["history", "Path history"],
-              ["summary", `Path summary · ${range}`],
-              ["runs", "Runs"],
-              ["events", `Events${events.data?.length ? ` (${events.data.length})` : ""}`],
-            ] as [Tab, string][]
+            (pathProbe
+              ? [
+                  ["path", "Current path"],
+                  ["history", "Path history"],
+                  ["summary", `Path summary · ${range}`],
+                  ["runs", "Runs"],
+                  ["events", `Events${events.data?.length ? ` (${events.data.length})` : ""}`],
+                ]
+              : [
+                  ["runs", "Runs"],
+                  ["events", `Events${events.data?.length ? ` (${events.data.length})` : ""}`],
+                ]) as [Tab, string][]
           ).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)} className={classNames("-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors", tab === k ? "border-accent text-accent" : "border-transparent text-muted hover:text-text")}>
               {label}
@@ -250,7 +296,8 @@ export function TargetDetail() {
           ))}
         </div>
 
-        {tab === "path" && (
+        {!pathProbe && !["runs", "events"].includes(tab) && <RunsFallback onPick={() => setTab("runs")} />}
+        {pathProbe && tab === "path" && (
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-xs text-muted">
               {latestRun ? (
@@ -270,7 +317,7 @@ export function TargetDetail() {
           </div>
         )}
 
-        {tab === "history" && (
+        {pathProbe && tab === "history" && (
           <div className="p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs text-muted">Each column is one run (oldest left), each row one hop. Hover a cell for details, click a column to open that run.</div>
@@ -283,7 +330,7 @@ export function TargetDetail() {
           </div>
         )}
 
-        {tab === "summary" && (
+        {pathProbe && tab === "summary" && (
           <div>
             <div className="px-4 py-2.5 text-xs text-muted">Per-hop statistics aggregated over {summary.data?.total_runs ?? 0} runs in the selected range. Expand a hop to see alternate addresses observed at that position (load balancing or reroutes).</div>
             {summary.data ? <PathSummary summary={summary.data} dstIp={run?.dst_ip} /> : <div className="py-10 text-center text-sm text-faint">Loading…</div>}
@@ -293,7 +340,7 @@ export function TargetDetail() {
         {tab === "runs" && (
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-              <Segmented value={runFilter} onChange={setRunFilter} options={[{ value: "", label: "All" }, { value: "ok", label: "Reached" }, { value: "failed", label: "Failed" }, { value: "route_change", label: "Route changes" }]} />
+              <Segmented value={runFilter} onChange={setRunFilter} options={[{ value: "", label: "All" }, { value: "ok", label: pathProbe || t.type === "ping" ? "Reached" : "Passed" }, { value: "failed", label: "Failed" }, ...(pathProbe ? [{ value: "route_change" as const, label: "Route changes" }] : [])]} />
               <Pager page={runPage} pageSize={RUN_PAGE} total={runs.data?.total ?? 0} onChange={setRunPage} />
             </div>
             <RunsTable runs={(runs.data?.items ?? []) as Run[]} now={now} onOpen={(rid) => navigate(`/runs/${rid}`)} />
@@ -307,6 +354,11 @@ export function TargetDetail() {
       <ConfirmDialog open={deleting} title={`Delete ${t.name}?`} message="This permanently removes the target and all of its recorded runs, hops and events." confirmLabel="Delete target" danger onConfirm={remove} onCancel={() => setDeleting(false)} />
     </div>
   );
+}
+
+function RunsFallback({ onPick }: { onPick: () => void }) {
+  useEffect(() => onPick(), [onPick]);
+  return null;
 }
 
 function Legend() {

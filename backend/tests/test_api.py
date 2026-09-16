@@ -22,9 +22,9 @@ async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     from app import config as config_mod
 
     importlib.reload(config_mod)
-    from app import api as api_mod, main as main_mod, mtr as mtr_mod, scheduler as sched_mod
+    from app import api as api_mod, main as main_mod, mtr as mtr_mod, probes as probes_mod, scheduler as sched_mod
 
-    for m in (mtr_mod, sched_mod, api_mod, main_mod):
+    for m in (mtr_mod, probes_mod, sched_mod, api_mod, main_mod):
         importlib.reload(m)
     app = main_mod.create_app()
     async with main_mod.lifespan(app):
@@ -161,3 +161,109 @@ async def test_visual_endpoints(client: AsyncClient) -> None:
     routes = (await client.get(f"/api/targets/{t['id']}/routes?range=1h")).json()
     assert routes["total_runs"] >= 1 and len(routes["segments"]) >= 1
     assert routes["routes"][0]["share_pct"] > 0 and routes["segments"][0]["index"] == routes["routes"][0]["index"]
+
+
+async def test_probe_types_end_to_end(client: AsyncClient) -> None:
+    specs = [
+        {"name": "Ping demo", "host": "192.0.2.40", "type": "ping", "interval_sec": 60, "count": 4},
+        {"name": "HTTP demo", "host": "https://status.example.test/health", "type": "http", "interval_sec": 60, "options": {"keyword": "ok", "json_path": "status", "json_expected": "ok"}},
+        {"name": "TCP demo", "host": "192.0.2.41", "type": "tcp", "port": 443, "interval_sec": 60},
+        {"name": "DNS demo", "host": "example.test", "type": "dns", "interval_sec": 60, "options": {"record_type": "A", "expected": "192.0.2"}},
+    ]
+    ids = []
+    for spec in specs:
+        r = await client.post("/api/targets", json=spec)
+        assert r.status_code == 201, r.text
+        assert r.json()["type"] == spec["type"]
+        ids.append(r.json()["id"])
+    for tid, spec in zip(ids, specs):
+        runs = await _wait_for_runs(client, tid, 1)
+        run = (await client.get(f"/api/runs/{runs[0]['id']}")).json()
+        assert run["status"] == "ok" and run["hop_count"] == 0 and run["hops"] == []
+        assert run["avg_ms"] is not None and isinstance(run["details"], dict)
+        if spec["type"] == "ping":
+            assert "samples_ms" in run["details"]
+        if spec["type"] == "http":
+            assert run["details"]["status"] in (200, 503) and run["details"]["keyword"] == "ok"
+        if spec["type"] == "tcp":
+            assert run["details"]["port"] == 443
+        if spec["type"] == "dns":
+            assert run["details"]["record_type"] == "A" and run["details"]["answers"]
+
+    listing = {t["id"]: t for t in (await client.get("/api/targets")).json()}
+    assert listing[ids[1]]["alert_latency_ms"] == 1500 and listing[ids[0]]["alert_latency_ms"] == 200
+    explicit = (await client.post("/api/targets", json={"name": "HTTP strict", "host": "https://s.test", "type": "http", "alert_latency_ms": 300})).json()
+    assert explicit["alert_latency_ms"] == 300
+
+    # option validation
+    assert (await client.post("/api/targets", json={"name": "bad tcp", "host": "192.0.2.1", "type": "tcp"})).status_code == 422
+    assert (await client.post("/api/targets", json={"name": "bad http", "host": "https://x.test", "type": "http", "options": {"expected_status": "abc"}})).status_code == 422
+    # switching type re-validates options
+    r = await client.put(f"/api/targets/{ids[0]}", json={"type": "http", "options": {"method": "HEAD"}})
+    assert r.status_code == 200 and r.json()["type"] == "http" and r.json()["options"]["method"] == "HEAD" and r.json()["options"]["expected_status"] == "200-299"
+
+
+async def test_export_import_bulk(client: AsyncClient) -> None:
+    await client.post("/api/targets", json={"name": "Exp A", "host": "192.0.2.50", "interval_sec": 60})
+    await client.post("/api/targets", json={"name": "Exp B", "host": "https://b.test", "type": "http", "interval_sec": 60})
+    exported = (await client.get("/api/targets/export")).json()
+    assert {e["name"] for e in exported} >= {"Exp A", "Exp B"} and "id" not in exported[0] and "options" in exported[0]
+
+    exported[0]["interval_sec"] = 120
+    res = (await client.post("/api/targets/import", json={"targets": exported + [{"name": "Exp C", "host": "192.0.2.51"}], "mode": "upsert"})).json()
+    assert res["created"] == 1 and res["updated"] == len(exported)
+    listing = (await client.get("/api/targets")).json()
+    byname = {t["name"]: t for t in listing}
+    assert byname[exported[0]["name"]]["interval_sec"] == 120 and "Exp C" in byname
+
+    ids = [byname["Exp A"]["id"], byname["Exp C"]["id"]]
+    r = (await client.post("/api/targets/bulk", json={"action": "pause", "ids": ids})).json()
+    assert sorted(r["affected"]) == sorted(ids)
+    listing = {t["id"]: t for t in (await client.get("/api/targets")).json()}
+    assert not listing[ids[0]]["enabled"] and not listing[ids[1]]["enabled"]
+    await client.post("/api/targets/bulk", json={"action": "resume", "ids": ids})
+    assert (await client.post("/api/targets/bulk", json={"action": "delete", "ids": ids})).status_code == 200
+    assert (await client.get(f"/api/targets/{ids[0]}")).status_code == 404
+    assert (await client.post("/api/targets/bulk", json={"action": "run", "ids": [999999]})).status_code == 404
+
+    res = (await client.post("/api/targets/import", json={"targets": [{"name": "Only", "host": "192.0.2.60"}], "mode": "replace"})).json()
+    assert res["total"] == 1
+
+
+@pytest.fixture
+async def protected_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MTR_TRACKER_API_TOKEN", "s3cret")
+    monkeypatch.setenv("MTR_TRACKER_SIMULATE", "1")
+    monkeypatch.setenv("MTR_TRACKER_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MTR_TRACKER_DB_PATH", str(tmp_path / "p.db"))
+    monkeypatch.setenv("MTR_TRACKER_STATIC_DIR", str(tmp_path / "missing"))
+    import importlib
+
+    from app import config as config_mod
+
+    importlib.reload(config_mod)
+    from app import api as api_mod, main as main_mod, mtr as mtr_mod, probes as probes_mod, scheduler as sched_mod
+
+    for m in (mtr_mod, probes_mod, sched_mod, api_mod, main_mod):
+        importlib.reload(m)
+    app = main_mod.create_app()
+    async with main_mod.lifespan(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            yield c
+    monkeypatch.delenv("MTR_TRACKER_API_TOKEN")
+    importlib.reload(config_mod)
+    for m in (mtr_mod, probes_mod, sched_mod, api_mod, main_mod):
+        importlib.reload(m)
+
+
+async def test_api_token_protects_writes(protected_client: AsyncClient) -> None:
+    c = protected_client
+    assert (await c.get("/api/targets")).status_code == 200  # reads stay open
+    r = await c.post("/api/targets", json={"name": "T", "host": "192.0.2.70"})
+    assert r.status_code == 401 and r.headers.get("www-authenticate") == "Bearer"
+    r = await c.post("/api/targets", json={"name": "T", "host": "192.0.2.70"}, headers={"Authorization": "Bearer wrong"})
+    assert r.status_code == 401
+    r = await c.post("/api/targets", json={"name": "T", "host": "192.0.2.70"}, headers={"Authorization": "Bearer s3cret"})
+    assert r.status_code == 201
+    r = await c.delete(f"/api/targets/{r.json()['id']}", headers={"X-Api-Token": "s3cret"})
+    assert r.status_code == 204
