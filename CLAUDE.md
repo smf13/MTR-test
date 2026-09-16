@@ -51,6 +51,7 @@ docker compose up -d --build
 - **Simulation mode** (`MTR_TRACKER_SIMULATE=1`, or automatic when the mtr binary is missing) generates synthetic paths seeded by the destination /24. Use it for UI work; it sends no packets.
 - **Timestamps** are stored as epoch floats (REAL) and serialised as ISO 8601 UTC strings with a `Z` suffix in the API.
 - **Run status**: `runs.status` is `ok` or `error`; `runs.reached` says whether the final hop was the destination. Target `last_status` is `pending | up | degraded | down`; the UI derives `paused` from `enabled = 0`.
+- **Scheduling** is fixed-cadence: `next_run_at = started_at + interval_sec`, set when a run is claimed and re-asserted in `finally` (never earlier than now + 1 s). Runs of the same target never overlap because the target id sits in `Scheduler._running`. A 10-probe mtr run takes ~15 s (cycles + ~5 s trailing wait), so the form warns when probes × probe interval + 5 s does not fit the interval.
 - **Route change detection** treats unknown hops (`???`) as wildcards (`routes_equivalent`). A run with a different destination IP is reported as a route change with a "now resolves to" message.
 - **Series endpoint** returns raw runs up to `max_points`, otherwise buckets server-side; the chart handles both (`bucket_sec` in the response).
 - **Charts** use explicit pixel sizes via the `Sized` ResizeObserver wrapper in `Charts.tsx`; Recharts' ResponsiveContainer and `responsive` prop are intentionally not used.

@@ -69,14 +69,15 @@ export function TargetForm({
   }, [open, initial, prefill]);
 
   const set = <K extends keyof TargetInput>(k: K, v: TargetInput[K]) => setForm((f) => ({ ...f, [k]: v }));
-  const runDuration = Math.round(form.count * form.probe_interval);
-  const durationWarn = runDuration > form.interval_sec * 0.8;
+  // mtr sends one probe cycle per probe interval, then waits roughly 5 s for late replies.
+  const runDuration = Math.round(form.count * form.probe_interval + 5);
+  const durationWarn = runDuration > form.interval_sec * 0.9;
 
   const submit = async () => {
     setError(null);
     if (!form.name.trim()) return setError("Name is required.");
     if (!form.host.trim()) return setError("Host is required.");
-    if (durationWarn) return setError(`A run takes about ${runDuration}s (probes × probe interval), which is too close to the ${form.interval_sec}s schedule. Increase the interval or lower the probe count.`);
+    if (durationWarn) return setError(`A run takes about ${runDuration}s (probes × probe interval, plus mtr's final wait), which does not fit the ${form.interval_sec}s schedule. Increase the interval or lower the probe count.`);
     const tags = tagText.split(",").map((t) => t.trim()).filter(Boolean);
     try {
       await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), tags, port: form.protocol === "icmp" ? null : form.port });
@@ -138,13 +139,13 @@ export function TargetForm({
             </select>
             <NumberInput className="input w-28 num" min={10} max={86400} value={form.interval_sec} onChange={(v) => set("interval_sec", v ?? form.interval_sec)} aria-label="Interval in seconds" />
           </div>
-          <div className="help">Seconds between MTR runs (10 – 86400).</div>
+          <div className="help">Seconds between the start of one run and the start of the next (10 – 86400).</div>
         </div>
         <div>
           <label className="label">Probes per hop</label>
           <NumberInput className="input num" min={1} max={200} value={form.count} onChange={(v) => set("count", v ?? form.count)} />
           <div className={classNames("help", durationWarn && "!text-degraded")}>
-            Each run sends {form.count} probes per hop and takes about {runDuration}s.
+            Each run sends {form.count} probes per hop and takes about {runDuration}s including mtr's final wait.
           </div>
         </div>
 

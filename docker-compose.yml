@@ -10,7 +10,7 @@ services:
       - mtr-tracker-data:/data
     environment:
       # Runs older than the retention setting (default 30 days) are purged hourly.
-      MTR_TRACKER_MAX_CONCURRENT_RUNS: "4"
+      MTR_TRACKER_MAX_CONCURRENT_RUNS: "8"
       MTR_TRACKER_LOG_LEVEL: "info"
       # Set to "1" to generate synthetic data without sending packets (demos, dev machines).
       MTR_TRACKER_SIMULATE: "0"

@@ -44,7 +44,7 @@ Environment variables (read at startup):
 | --- | --- | --- |
 | `MTR_TRACKER_PORT` | `8899` | HTTP port |
 | `MTR_TRACKER_DATA_DIR` | `/data` | Directory for the SQLite database |
-| `MTR_TRACKER_MAX_CONCURRENT_RUNS` | `4` | How many mtr processes may run at once |
+| `MTR_TRACKER_MAX_CONCURRENT_RUNS` | `8` | How many mtr processes may run at once. Raise it if you have many targets on short intervals |
 | `MTR_TRACKER_MTR_BINARY` | `mtr` | Path to the mtr binary |
 | `MTR_TRACKER_SIMULATE` | `0` | `1` generates synthetic paths instead of sending packets |
 | `MTR_TRACKER_LOG_LEVEL` | `info` | Log verbosity |
@@ -86,7 +86,7 @@ Event kinds: `down`, `recovered`, `degraded`, `route_change`. `url` is present w
 
 ## How a run works
 
-1. The scheduler wakes every second and launches any enabled target whose next run is due (limited by `MTR_TRACKER_MAX_CONCURRENT_RUNS`).
+1. The scheduler wakes every second and launches any enabled target whose next run is due (limited by `MTR_TRACKER_MAX_CONCURRENT_RUNS`). The interval is measured from the start of a run, so a 30 s target starts a run every 30 s; a run with 10 probes takes about 15 s, so keep the interval comfortably above probes × probe interval + 5 s.
 2. The host is resolved to a single IP (honouring the target's IP version) so the destination hop can be identified unambiguously.
 3. `mtr --json -n -c <count> -i <probe interval> -s <size> -m <max hops> -o LSDRNBAWVGJMXI [-4|-6] [--udp|--tcp -P <port>] [-z] <ip>` runs and its JSON report is parsed.
 4. Hop IPs are reverse-resolved (cached), the route signature is compared with the previous run, thresholds are evaluated, and the run, hops and any events are written in one transaction.

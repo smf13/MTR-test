@@ -58,7 +58,7 @@ class Config:
             port=_env_int("MTR_TRACKER_PORT", 8899),
             mtr_binary=os.environ.get("MTR_TRACKER_MTR_BINARY", "mtr"),
             simulate=_env_bool("MTR_TRACKER_SIMULATE", False),
-            max_concurrent_runs=max(1, _env_int("MTR_TRACKER_MAX_CONCURRENT_RUNS", 4)),
+            max_concurrent_runs=max(1, _env_int("MTR_TRACKER_MAX_CONCURRENT_RUNS", 8)),
             static_dir=static_dir,
             log_level=os.environ.get("MTR_TRACKER_LOG_LEVEL", "info"),
         )

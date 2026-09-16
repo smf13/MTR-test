@@ -124,3 +124,17 @@ async def test_notification_test_endpoint(client: AsyncClient, monkeypatch: pyte
     assert saved["pushover_enabled"] is True and saved["pushover_priority"] == "1" and saved["pushover_events"] == ["down"]
     assert (await client.put("/api/settings", json={"pushover_priority": "5"})).status_code == 422
     assert (await client.put("/api/settings", json={"base_url": "http://mtr.local:8899/"})).json()["base_url"] == "http://mtr.local:8899"
+
+
+async def test_schedule_is_measured_from_run_start(client: AsyncClient) -> None:
+    r = await client.post("/api/targets", json={"name": "Cadence", "host": "192.0.2.20", "interval_sec": 60, "count": 3})
+    t = r.json()
+    runs = await _wait_for_runs(client, t["id"], 1)
+    # allow the finally-block to reschedule
+    await asyncio.sleep(0.3)
+    full = (await client.get(f"/api/targets/{t['id']}")).json()
+    from datetime import datetime
+
+    started = datetime.fromisoformat(runs[0]["started_at"].replace("Z", "+00:00")).timestamp()
+    next_at = datetime.fromisoformat(full["next_run_at"].replace("Z", "+00:00")).timestamp()
+    assert abs((next_at - started) - 60) < 1.5, "next run must be start + interval, not finish + interval"

@@ -123,8 +123,12 @@ class Scheduler:
                 return
             t = dict(target)
             interval = max(10, int(t["interval_sec"]))
-            # Claim the slot before running so a slow run never double-fires.
-            await self.db.execute("UPDATE targets SET next_run_at = ? WHERE id = ?", (time.time() + interval, target_id))
+            # Fixed cadence: the interval is measured from the start of this run, not
+            # from its end, so "every 30s" means a run starts every 30s regardless of
+            # how long mtr takes. The target stays in self._running meanwhile, which
+            # prevents a double launch even if next_run_at passes during a slow run.
+            started = time.time()
+            await self.db.execute("UPDATE targets SET next_run_at = ? WHERE id = ?", (started + interval, target_id))
             settings = await self.db.get_settings()
             try:
                 await self._execute(t, settings)
@@ -141,9 +145,10 @@ class Scheduler:
                 await self._apply_status(t, run_id, "down", settings, error=str(exc))
             finally:
                 self.runs_completed += 1
-                await self.db.execute(
-                    "UPDATE targets SET next_run_at = ? WHERE id = ?", (time.time() + interval, target_id)
-                )
+                # If the run overran the interval, go again right away (with a short
+                # breather); otherwise keep the original cadence.
+                next_at = max(started + interval, time.time() + 1.0)
+                await self.db.execute("UPDATE targets SET next_run_at = ? WHERE id = ?", (next_at, target_id))
 
     async def _execute(self, t: dict[str, Any], settings: dict[str, Any]) -> None:
         started = time.time()

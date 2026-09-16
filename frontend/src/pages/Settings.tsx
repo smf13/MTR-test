@@ -243,7 +243,7 @@ export function Settings() {
             <ul className="space-y-1 font-mono">
               <li>MTR_TRACKER_PORT=8899</li>
               <li>MTR_TRACKER_DATA_DIR=/data</li>
-              <li>MTR_TRACKER_MAX_CONCURRENT_RUNS=4</li>
+              <li>MTR_TRACKER_MAX_CONCURRENT_RUNS=8</li>
               <li>MTR_TRACKER_MTR_BINARY=mtr</li>
               <li>MTR_TRACKER_SIMULATE=0</li>
             </ul>
