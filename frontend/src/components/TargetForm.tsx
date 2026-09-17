@@ -89,6 +89,10 @@ export function TargetForm({
   const [colorDraft, setColorDraft] = useState<Record<string, string | null>>({});
   const parsedTags = useMemo(() => sortTags(parseTags(tagText)), [tagText]);
 
+  // Initialise the fields when the form opens or when a different target is edited. The deps deliberately use
+  // the target's id rather than the object: the target page re-fetches its target every few seconds and hands
+  // the fresh object down, and re-initialising on every refresh wiped whatever was being typed.
+  const initialId = initial?.id ?? null;
   useEffect(() => {
     if (!open) return;
     setColorDraft({});
@@ -105,7 +109,8 @@ export function TargetForm({
       setHeadersText("");
     }
     setError(null);
-  }, [open, initial, prefill]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialId, prefill]);
 
   const set = <K extends keyof TargetInput>(k: K, v: TargetInput[K]) => setForm((f) => ({ ...f, [k]: v }));
   const setOpt = <K extends keyof ProbeOptions>(k: K, v: ProbeOptions[K]) => setForm((f) => ({ ...f, options: { ...f.options, [k]: v } }));
