@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Plus, Search, Play, Pause, Pencil, Trash2, Clock, GitBranch, Activity, ShieldCheck, ShieldAlert, ShieldOff, RefreshCw, ChevronDown, ChevronUp, LineChart } from "lucide-react";
-import { api, type Target, type TargetInput } from "../api";
+import { Plus, Search, Play, Pause, Pencil, Trash2, Copy, Clock, GitBranch, Activity, ShieldCheck, ShieldAlert, ShieldOff, RefreshCw, ChevronDown, ChevronUp, LineChart } from "lucide-react";
+import { api, cloneInput, type Target, type TargetInput } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { StatusBadge } from "../components/StatusBadge";
 import { StatTile } from "../components/StatTile";
@@ -38,6 +38,8 @@ export function Dashboard() {
   const [deleting, setDeleting] = useState<Target | null>(null);
   const [saving, setSaving] = useState(false);
   const [prefill, setPrefill] = useState<Partial<TargetInput> | null>(null);
+  // Set while cloning, so the form says which target the copy comes from.
+  const [formTitle, setFormTitle] = useState<string | undefined>(undefined);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -81,6 +83,13 @@ export function Dashboard() {
     return c;
   }, [targets.data]);
 
+  const closeForm = () => {
+    setFormOpen(false);
+    setEditing(null);
+    setPrefill(null);
+    setFormTitle(undefined);
+  };
+
   const submit = async (values: TargetInput) => {
     setSaving(true);
     try {
@@ -91,12 +100,19 @@ export function Dashboard() {
         await api.createTarget(values);
         toast(`Added ${values.name}. First run starts now.`, "success");
       }
-      setFormOpen(false);
-      setEditing(null);
+      closeForm();
       await targets.refresh();
     } finally {
       setSaving(false);
     }
+  };
+
+  /** Open the add form with every setting of `t` and a "(copy)" name; saving creates a new target. */
+  const clone = (t: Target) => {
+    setEditing(null);
+    setPrefill(cloneInput(t));
+    setFormTitle(`Clone ${t.name}`);
+    setFormOpen(true);
   };
 
   const toggle = async (t: Target) => {
@@ -234,16 +250,16 @@ export function Dashboard() {
       {view === "cards" ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {list.map((t) => (
-            <TargetCard key={t.id} t={t} now={now} onEdit={() => { setEditing(t); setFormOpen(true); }} onDelete={() => setDeleting(t)} onToggle={() => toggle(t)} onRun={() => runNow(t)} />
+            <TargetCard key={t.id} t={t} now={now} onEdit={() => { setEditing(t); setFormOpen(true); }} onClone={() => clone(t)} onDelete={() => setDeleting(t)} onToggle={() => toggle(t)} onRun={() => runNow(t)} />
           ))}
         </div>
       ) : (
         <div className="card overflow-hidden">
-          <TargetTable list={list} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onDelete={setDeleting} onToggle={toggle} onRun={runNow} />
+          <TargetTable list={list} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onRun={runNow} />
         </div>
       )}
 
-      <TargetForm open={formOpen} initial={editing} prefill={prefill} onClose={() => { setFormOpen(false); setEditing(null); setPrefill(null); }} onSubmit={submit} submitting={saving} />
+      <TargetForm open={formOpen} initial={editing} prefill={prefill} title={formTitle} submitLabel={formTitle ? "Create clone" : undefined} onClose={closeForm} onSubmit={submit} submitting={saving} />
       <ConfirmDialog
         open={!!deleting}
         title={`Delete ${deleting?.name ?? ""}?`}
@@ -257,7 +273,7 @@ export function Dashboard() {
   );
 }
 
-function TargetCard({ t, now, onEdit, onDelete, onToggle, onRun }: { t: Target; now: number; onEdit: () => void; onDelete: () => void; onToggle: () => void; onRun: () => void }) {
+function TargetCard({ t, now, onEdit, onClone, onDelete, onToggle, onRun }: { t: Target; now: number; onEdit: () => void; onClone: () => void; onDelete: () => void; onToggle: () => void; onRun: () => void }) {
   const status = effectiveStatus(t);
   const run = t.latest_run;
   const loss = run?.loss_pct ?? null;
@@ -317,6 +333,7 @@ function TargetCard({ t, now, onEdit, onDelete, onToggle, onRun }: { t: Target; 
           <IconBtn title="Run now" onClick={onRun}><Play size={13} /></IconBtn>
           <IconBtn title={t.enabled ? "Pause" : "Resume"} onClick={onToggle}>{t.enabled ? <Pause size={13} /> : <Play size={13} />}</IconBtn>
           <IconBtn title="Edit" onClick={onEdit}><Pencil size={13} /></IconBtn>
+          <IconBtn title="Clone" onClick={onClone}><Copy size={13} /></IconBtn>
           <IconBtn title="Delete" onClick={onDelete} danger><Trash2 size={13} /></IconBtn>
         </div>
       </div>
@@ -372,7 +389,7 @@ export function IconBtn({ title, onClick, children, danger }: { title: string; o
   );
 }
 
-function TargetTable({ list, now, onEdit, onDelete, onToggle, onRun }: { list: Target[]; now: number; onEdit: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onRun: (t: Target) => void }) {
+function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onRun }: { list: Target[]; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onRun: (t: Target) => void }) {
   return (
     <div className="overflow-x-auto">
       <table className="table num">
@@ -423,6 +440,7 @@ function TargetTable({ list, now, onEdit, onDelete, onToggle, onRun }: { list: T
                     <IconBtn title="Run now" onClick={() => onRun(t)}><Play size={13} /></IconBtn>
                     <IconBtn title={t.enabled ? "Pause" : "Resume"} onClick={() => onToggle(t)}>{t.enabled ? <Pause size={13} /> : <Play size={13} />}</IconBtn>
                     <IconBtn title="Edit" onClick={() => onEdit(t)}><Pencil size={13} /></IconBtn>
+                    <IconBtn title="Clone" onClick={() => onClone(t)}><Copy size={13} /></IconBtn>
                     <IconBtn title="Delete" onClick={() => onDelete(t)} danger><Trash2 size={13} /></IconBtn>
                   </div>
                 </td>

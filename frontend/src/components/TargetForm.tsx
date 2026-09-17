@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, DEFAULT_OPTIONS, LATENCY_ALERT_DEFAULT, PROBE_TYPE_LABEL, type DnsRecordType, type GlobalpingHttpMethod, type GlobalpingHttpProtocol, type GlobalpingMeasurement, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
+import { api, DEFAULT_OPTIONS, LATENCY_ALERT_DEFAULT, PROBE_TYPE_LABEL, targetInput, type DnsRecordType, type GlobalpingHttpMethod, type GlobalpingHttpProtocol, type GlobalpingMeasurement, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
 import { Modal } from "./Modal";
 import { NumberInput } from "./NumberInput";
 import { Segmented } from "./RangePicker";
@@ -67,13 +67,19 @@ export function TargetForm({
   open,
   initial,
   prefill,
+  title,
+  submitLabel,
   onClose,
   onSubmit,
   submitting,
 }: {
   open: boolean;
+  /** The target being edited; absent when adding (or cloning, where `prefill` carries the copy). */
   initial?: Target | null;
+  /** Starting values for a new target: a host from the quick trace, or a full copy of a target being cloned. */
   prefill?: Partial<TargetInput> | null;
+  title?: string;
+  submitLabel?: string;
   onClose: () => void;
   onSubmit: (values: TargetInput) => Promise<void>;
   submitting: boolean;
@@ -96,18 +102,13 @@ export function TargetForm({
   useEffect(() => {
     if (!open) return;
     setColorDraft({});
-    if (initial) {
-      const { name, host, type, options, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, ip_version, max_hops, enabled, alert_loss_pct, alert_latency_ms } = initial;
-      setForm({ name, host, type: type || "mtr", options: { ...DEFAULT_OPTIONS[type || "mtr"], ...(options || {}) }, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, ip_version, max_hops, enabled, alert_loss_pct, alert_latency_ms });
-      setTagText(tags.join(", "));
-      setAdvanced(protocol !== "icmp" || packet_size !== 64 || max_hops !== 30 || ip_version !== "auto" || probe_interval !== 1);
-      setHeadersText(Object.entries(options?.headers || {}).map(([k, v]) => `${k}: ${v}`).join("\n"));
-    } else {
-      setForm({ ...DEFAULTS, ...(prefill ?? {}) });
-      setTagText("");
-      setAdvanced(false);
-      setHeadersText("");
-    }
+    // Editing starts from the target; adding starts from the defaults plus any prefill (a quick-trace host, or a clone).
+    const base: TargetInput = initial ? targetInput(initial) : { ...DEFAULTS, ...(prefill ?? {}) };
+    const type = base.type || "mtr";
+    setForm({ ...base, type, options: { ...DEFAULT_OPTIONS[type], ...(base.options || {}) } });
+    setTagText(base.tags.join(", "));
+    setAdvanced(base.protocol !== "icmp" || base.packet_size !== 64 || base.max_hops !== 30 || base.ip_version !== "auto" || base.probe_interval !== 1);
+    setHeadersText(Object.entries(base.options?.headers || {}).map(([k, v]) => `${k}: ${v}`).join("\n"));
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialId, prefill]);
@@ -198,14 +199,14 @@ export function TargetForm({
     <Modal
       open={open}
       onClose={onClose}
-      title={initial ? `Edit ${initial.name}` : "Add target"}
+      title={title ?? (initial ? `Edit ${initial.name}` : "Add target")}
       footer={
         <>
           <button className="btn" onClick={onClose} disabled={submitting}>
             Cancel
           </button>
           <button className="btn btn-primary" onClick={submit} disabled={submitting}>
-            {submitting ? "Saving…" : initial ? "Save changes" : "Add target"}
+            {submitting ? "Saving…" : (submitLabel ?? (initial ? "Save changes" : "Add target"))}
           </button>
         </>
       }

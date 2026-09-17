@@ -35,6 +35,7 @@ Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rath
 - **Route change detection** with a hop-by-hop diff, and detection of destination IP changes for DNS-based targets.
 - **Alerting.** Per-target loss and latency thresholds produce up / degraded / down state transitions, an event log, and notifications via **Pushover** and generic JSON **webhooks** (n8n, Zapier, custom receivers), each with its own event selection and a one-click test.
 - **Tags** to group and filter targets, always sorted alphabetically, each with an automatic colour that can be replaced by a preset or a custom colour (from the target form or under Settings). A colour applies everywhere the tag is used.
+- **Clone** a target from the dashboard or its page: the form opens with every setting of the original and a "(copy)" name, ready to adjust before the new target is created.
 - **Quick trace.** Run a one-off MTR from the server without saving it, then add the host as a target in one click.
 - **Text report export** of any run in the familiar `mtr --report` layout.
 - **Retention** control, SQLite storage (WAL mode), dark, true-black OLED and light themes, responsive layout for phones and wall displays.

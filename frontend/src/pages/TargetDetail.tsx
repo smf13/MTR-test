@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Play, Pause, Pencil, Trash2, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays } from "lucide-react";
-import { api, type Target, type TargetInput, type Run } from "../api";
+import { ArrowLeft, Play, Pause, Pencil, Copy, Trash2, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays } from "lucide-react";
+import { api, cloneInput, type Target, type TargetInput, type Run } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { StatusBadge } from "../components/StatusBadge";
 import { StatTile } from "../components/StatTile";
@@ -43,6 +43,7 @@ export function TargetDetail() {
   const [runFilter, setRunFilter] = useState<"" | "ok" | "failed" | "route_change">("");
   const [runPage, setRunPage] = useState(0);
   const [editing, setEditing] = useState(false);
+  const [cloning, setCloning] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -77,6 +78,9 @@ export function TargetDetail() {
   const t: Target | null = target.data;
   const stats = t?.stats;
   const status = t ? effectiveStatus(t) : "pending";
+  // Built once per clone session (the target object itself is replaced by every poll).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const clonePrefill = useMemo(() => (cloning && t ? cloneInput(t) : null), [cloning, t?.id]);
 
   const save = async (values: TargetInput) => {
     setSaving(true);
@@ -85,6 +89,19 @@ export function TargetDetail() {
       toast("Target updated", "success");
       setEditing(false);
       refreshAll();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Create the adjusted copy and jump to it. */
+  const createClone = async (values: TargetInput) => {
+    setSaving(true);
+    try {
+      const created = await api.createTarget(values);
+      toast(`Added ${created.name}. First run starts now.`, "success");
+      setCloning(false);
+      navigate(`/targets/${created.id}`);
     } finally {
       setSaving(false);
     }
@@ -174,6 +191,7 @@ export function TargetDetail() {
           <button className="btn" onClick={runNow} disabled={t.running}><Play size={15} /> Run now</button>
           <button className="btn" onClick={toggle}>{t.enabled ? <><Pause size={15} /> Pause</> : <><Play size={15} /> Resume</>}</button>
           <button className="btn" onClick={() => setEditing(true)}><Pencil size={15} /> Edit</button>
+          <button className="btn" onClick={() => setCloning(true)} title="Create a new target with the same settings"><Copy size={15} /> Clone</button>
           <button className="btn btn-danger" onClick={() => setDeleting(true)}><Trash2 size={15} /></button>
         </div>
       </div>
@@ -374,7 +392,16 @@ export function TargetDetail() {
         {tab === "events" && <EventsList events={events.data ?? []} now={now} showTarget={false} />}
       </div>
 
-      <TargetForm open={editing} initial={t} onClose={() => setEditing(false)} onSubmit={save} submitting={saving} />
+      <TargetForm
+        open={editing || cloning}
+        initial={cloning ? null : t}
+        prefill={clonePrefill}
+        title={cloning ? `Clone ${t.name}` : undefined}
+        submitLabel={cloning ? "Create clone" : undefined}
+        onClose={() => { setEditing(false); setCloning(false); }}
+        onSubmit={cloning ? createClone : save}
+        submitting={saving}
+      />
       <ConfirmDialog open={deleting} title={`Delete ${t.name}?`} message="This permanently removes the target and all of its recorded runs, hops and events." confirmLabel="Delete target" danger onConfirm={remove} onCancel={() => setDeleting(false)} />
     </div>
   );

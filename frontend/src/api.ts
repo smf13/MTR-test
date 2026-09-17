@@ -313,6 +313,34 @@ export type TargetInput = Omit<
   "id" | "created_at" | "updated_at" | "next_run_at" | "last_status" | "latest_run" | "stats_24h" | "sparkline" | "timeline" | "stats" | "running"
 >;
 
+/** The editable fields of a target, as the API accepts them on create and update. */
+export function targetInput(t: Target): TargetInput {
+  return {
+    name: t.name,
+    host: t.host,
+    type: t.type || "mtr",
+    options: { ...(t.options || {}) },
+    description: t.description,
+    tags: [...t.tags],
+    interval_sec: t.interval_sec,
+    count: t.count,
+    probe_interval: t.probe_interval,
+    protocol: t.protocol,
+    port: t.port,
+    packet_size: t.packet_size,
+    ip_version: t.ip_version,
+    max_hops: t.max_hops,
+    enabled: t.enabled,
+    alert_loss_pct: t.alert_loss_pct,
+    alert_latency_ms: t.alert_latency_ms,
+  };
+}
+
+/** A copy of a target ready for the "add" form: every setting of the original and a "(copy)" name. */
+export function cloneInput(t: Target): TargetInput {
+  return { ...targetInput(t), name: `${t.name} (copy)` };
+}
+
 export interface SeriesPoint {
   t: string;
   run_id: number | null;
