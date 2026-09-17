@@ -6,11 +6,11 @@ This guide describes the current MTR Tracker interface. Start with the [README](
 
 The top summary shows target health counts, mean latency from targets' latest available runs, and route changes over the last 24 hours. Pending appears in the health summary when at least one target has not completed its first run. These totals cover all targets, including when a search filter is active.
 
-Below the summary, search by name, host, description or tag. Choose **Cards** or **Table**, and sort by **Status**, **Name**, **Latency**, **Loss** or **Hops**. Status sorting puts down and degraded targets first. Click or tap a target's name to open it; a card's sparkline also opens the target page.
+The **Latency across targets · 24h** chart sits near the top of the dashboard, directly below the health summary and above the filters and target list. Use **Collapse** or **Expand** to control its visibility. Select a legend label to hide or show that target's series. The comparison uses all targets returned by the overview endpoint; the search field filters the cards/table, not this chart.
+
+Below the chart, search by name, host, description or tag. Choose **Cards** or **Table**, and sort by **Status**, **Name**, **Latency**, **Loss** or **Hops**. Status sorting puts down and degraded targets first. Click or tap a target's name to open it; a card's sparkline also opens the target page.
 
 Cards emphasize the latest measurement and a sparkline that fills the available width. They also show 24-hour availability, a status timeline, the probe schedule and tags. HTTP, TCP and DNS targets show pass/fail and use **Response**, **Connect** or **Lookup** for the main timing metric. Packet-based probes show loss.
-
-The **Latency across targets · 24h** chart sits below the target list. Use **Collapse** or **Expand** to control its visibility. Select a legend label to hide or show that target's series. The comparison uses all targets returned by the overview endpoint; the search field filters the cards/table, not this chart.
 
 ## Target actions
 

@@ -4,7 +4,7 @@
 
 Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rather than a single ping.
 
-The dashboard puts target health and live measurements first, with the comparison chart below the target list. Target pages show charts and detailed data together: **Current path**, **Path history**, **Path summary**, **Runs** and **Events** sit below the charts for local MTR and Globalping MTR/traceroute targets. Other probes offer **Runs** and **Events**. Hop tables show all original metrics by default.
+The dashboard shows target health first, followed by the **Latency across targets** comparison chart above the filters and target list. Target pages show charts and detailed data together: **Current path**, **Path history**, **Path summary**, **Runs** and **Events** sit below the charts for local MTR and Globalping MTR/traceroute targets. Other probes offer **Runs** and **Events**. Hop tables show all original metrics by default.
 
 See the [interface guide](docs/interface.md) for the current navigation, target actions, chart legends and phone controls. The [archived screenshots](docs/screenshots.md) show an earlier interface and are retained for reference.
 
@@ -21,7 +21,7 @@ See the [interface guide](docs/interface.md) for the current navigation, target 
 - **Health-first dashboard.** Counts of up, degraded, down, paused and pending targets, mean latency and 24-hour route changes. Filter targets by name, host, description or tag, choose **Cards** or **Table**, and sort by status, name, latency, loss or hop count.
 - **Time-series views.** Round-trip time with best–worst band, packet loss and jitter charts over 1h to 30d, automatically aggregated for long ranges. Click a point to open the underlying run.
 - **Status timeline** on every dashboard card and target page: 48 half-hour cells for the last 24 h coloured up / degraded / down, Uptime Kuma style.
-- **Latency across targets**: a collapsible 24-hour chart below the target list. Toggle individual series through the legend to compare targets; labels distinguish round-trip latency, HTTP response time, TCP connect time and DNS lookup time elsewhere in the UI.
+- **Latency across targets**: a collapsible 24-hour chart near the top of the dashboard, above the filters and target list. Toggle individual series through the legend to compare targets; labels distinguish round-trip latency, HTTP response time, TCP connect time and DNS lookup time elsewhere in the UI.
 - **Path profile**: latency and loss per hop for the latest run or averaged over the range, showing exactly where delay is added along the path.
 - **Latency distribution** histogram with p50 / p95 / p99 markers, and an **hour-by-day heatmap** of latency, loss or jitter that exposes recurring congestion.
 - **Route timeline**: which distinct path was in use when, with share and hop count per route, one click from any segment to its run.

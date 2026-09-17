@@ -2,7 +2,7 @@
 
 These screenshots predate the GUI refresh in [commit 1067993](https://github.com/smf13/MTR-test/commit/106799350e718baffc9050db8af92a1d3c2e1f8b). They are historical references, not screenshots of the current interface. Use the [interface guide](interface.md) for current navigation and controls, or return to the [README](../README.md).
 
-The original detailed hop tables and combined data tabs below the target charts have been restored. The current dashboard still puts target cards/table above the comparison chart, uses a three-dot menu for secondary target actions and has updated styling. Those changes are not reflected in the captures below.
+The original detailed hop tables, combined data tabs below the target charts and dashboard comparison chart above the target list have been restored. The current interface uses a three-dot menu for secondary target actions and has updated styling. Those changes are not reflected in the captures below.
 
 ## Dashboard before the refresh
 

@@ -196,6 +196,24 @@ export function Dashboard() {
 
       {targets.error && <ErrorBanner message={`Could not load targets: ${targets.error}`} />}
 
+      {overview.data && overview.data.targets.length > 0 && (
+        <div className="card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="chart-heading"><LineChart size={15} /> Latency across targets · 24h</h2>
+              <p className="chart-caption">Destination latency · {fmtDuration(overview.data.bucket_sec)} averages</p>
+            </div>
+            <div className="flex items-center gap-1"><HelpTip label="latency across targets">Compare destinations over the last 24 hours. Each point averages runs in a {fmtDuration(overview.data.bucket_sec)} bucket. Select a legend label to hide or show a target.</HelpTip><button className="btn btn-ghost btn-sm" aria-expanded={showOverview} onClick={() => setShowOverview(!showOverview)}>{showOverview ? <><ChevronUp size={14} /> Collapse</> : <><ChevronDown size={14} /> Expand</>}</button></div>
+          </div>
+          {showOverview && (
+            <div className="mt-2">
+              <Suspense fallback={<div style={{ height: 240 }} />}>
+                <OverviewChart data={overview.data} />
+              </Suspense>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
@@ -248,26 +266,6 @@ export function Dashboard() {
           <TargetTable list={list} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onRun={runNow} />
         </div>
       )}
-
-      {overview.data && overview.data.targets.length > 0 && (
-        <div className="card p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="chart-heading"><LineChart size={15} /> Latency across targets · 24h</h2>
-              <p className="chart-caption">Destination latency · {fmtDuration(overview.data.bucket_sec)} averages</p>
-            </div>
-            <div className="flex items-center gap-1"><HelpTip label="latency across targets">Compare destinations over the last 24 hours. Each point averages runs in a {fmtDuration(overview.data.bucket_sec)} bucket. Select a legend label to hide or show a target.</HelpTip><button className="btn btn-ghost btn-sm" aria-expanded={showOverview} onClick={() => setShowOverview(!showOverview)}>{showOverview ? <><ChevronUp size={14} /> Collapse</> : <><ChevronDown size={14} /> Expand</>}</button></div>
-          </div>
-          {showOverview && (
-            <div className="mt-2">
-              <Suspense fallback={<div style={{ height: 240 }} />}>
-                <OverviewChart data={overview.data} />
-              </Suspense>
-            </div>
-          )}
-        </div>
-      )}
-
 
       <TargetForm open={formOpen} initial={editing} prefill={prefill} title={formTitle} submitLabel={formTitle ? "Create clone" : undefined} onClose={closeForm} onSubmit={submit} submitting={saving} />
       <ConfirmDialog
