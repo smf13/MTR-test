@@ -20,13 +20,13 @@ export function StatTile({
   return (
     <div className={classNames("card px-4 py-3 min-w-0", className)}>
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-muted truncate">{label}</div>
+        <div className="text-xs font-medium text-muted truncate">{label}</div>
         {icon && <span className="text-faint">{icon}</span>}
       </div>
       <div className="num mt-1 text-2xl font-semibold leading-tight truncate" style={{ color }}>
         {value}
       </div>
-      {sub && <div className="mt-0.5 text-xs text-faint truncate">{sub}</div>}
+      {sub && <div className="mt-0.5 text-xs text-muted truncate">{sub}</div>}
     </div>
   );
 }

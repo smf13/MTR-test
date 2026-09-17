@@ -9,7 +9,7 @@ export function PathSummary({ summary, dstIp }: { summary: HopSummary; dstIp?: s
   const maxAvg = useMemo(() => Math.max(1, ...summary.hops.map((h) => h.primary.worst_ms ?? h.primary.avg_ms ?? 0)), [summary]);
   if (!summary.hops.length) return <div className="px-3 py-8 text-center text-sm text-faint">No completed runs in this range.</div>;
   return (
-    <div className="overflow-x-auto">
+    <div className="table-scroll">
       <table className="table num">
         <thead>
           <tr>
@@ -69,7 +69,7 @@ function Row({ hop, entry, alt, altCount, expanded, onToggle, maxAvg, isDst }: {
                 </span>
               )}
             </div>
-            {entry.hostname && entry.ip && <div className="font-mono text-[11px] text-faint">{entry.ip}</div>}
+            {entry.hostname && entry.ip && <div className="font-mono text-xs text-faint">{entry.ip}</div>}
           </div>
         </div>
       </td>

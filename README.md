@@ -4,6 +4,13 @@
 
 Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rather than a single ping.
 
+The dashboard puts target health and live measurements first, with the comparison chart below the target list. Target pages group their data into **Overview**, **Path analysis**, **Runs**, and **Events**. Hop tables open with key metrics and offer an **All metrics** view.
+
+<details>
+<summary>Earlier interface screenshots</summary>
+
+These captures show the interface before the navigation and visual refinements described above.
+
 ![Dashboard](docs/dashboard.png)
 
 | Target detail | Path profile, distribution, hour-by-day |
@@ -13,6 +20,8 @@ Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rath
 ![Path history](docs/path-history.png)
 
 ![Probe types](docs/probe-types.png)
+
+</details>
 
 ## Features
 
@@ -245,6 +254,7 @@ cd frontend
 npm install
 npm run dev        # http://localhost:5173, proxies /api to :8899
 npm run build      # writes dist/, which the backend serves automatically
+npm test           # component interactions and navigation regressions
 ```
 
 Running real probes outside Docker requires the `mtr` binary (`apt install mtr-tiny`, which gives `mtr-packet` the `cap_net_raw` capability) and `iputils-ping`. Root is only needed for probe intervals below one second.

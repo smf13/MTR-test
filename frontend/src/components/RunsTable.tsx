@@ -5,7 +5,7 @@ import { fmtDateTime, fmtNum, lossColor, relTime } from "../utils";
 export function RunsTable({ runs, onOpen, now }: { runs: Run[]; onOpen: (id: number) => void; now: number }) {
   if (!runs.length) return <div className="px-3 py-8 text-center text-sm text-faint">No runs match.</div>;
   return (
-    <div className="overflow-x-auto">
+    <div className="table-scroll">
       <table className="table num">
         <thead>
           <tr>
@@ -30,7 +30,7 @@ export function RunsTable({ runs, onOpen, now }: { runs: Run[]; onOpen: (id: num
                 <td>
                   <div className="leading-tight">
                     <div>{fmtDateTime(r.started_at)}</div>
-                    <div className="text-[11px] text-faint">{relTime(r.started_at, now)}</div>
+                    <div className="text-xs text-faint">{relTime(r.started_at, now)}</div>
                   </div>
                 </td>
                 <td className="font-sans">
@@ -39,11 +39,11 @@ export function RunsTable({ runs, onOpen, now }: { runs: Run[]; onOpen: (id: num
                     {r.status !== "ok" ? "Error" : r.reached ? "Reached" : "Unreachable"}
                   </span>
                   {r.route_changed && (
-                    <span className="ml-2 inline-flex items-center gap-1 text-[11px]" style={{ color: "var(--chart-jitter)" }}>
+                    <span className="ml-2 inline-flex items-center gap-1 text-xs" style={{ color: "var(--chart-jitter)" }}>
                       <GitBranch size={11} /> route change
                     </span>
                   )}
-                  {r.error && <div className="max-w-[320px] truncate text-[11px] text-faint" title={r.error}>{r.error}</div>}
+                  {r.error && <div className="max-w-[320px] truncate text-xs text-faint" title={r.error}>{r.error}</div>}
                 </td>
                 <td className="text-right">{r.hop_count || "–"}</td>
                 <td className="text-right">

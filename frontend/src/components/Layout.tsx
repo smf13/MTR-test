@@ -49,7 +49,7 @@ export function Layout({ children }: { children: ReactNode }) {
         >
           <n.icon size={17} />
           {n.label}
-          {n.to === "/events" && s && s.events_24h > 0 && <span className="ml-auto rounded-full px-1.5 text-[10px] font-semibold" style={{ background: "var(--paused-soft)", color: "var(--text-muted)" }}>{s.events_24h}</span>}
+          {n.to === "/events" && s && s.events_24h > 0 && <span className="ml-auto rounded-full px-1.5 text-xs font-semibold" style={{ background: "var(--paused-soft)", color: "var(--text-muted)" }}>{s.events_24h}</span>}
         </NavLink>
       ))}
     </nav>
@@ -138,10 +138,10 @@ function Brand({ compact }: { compact?: boolean }) {
     <Link to="/" className="flex items-center gap-2.5">
       <span className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: "var(--accent)" }}>
         <svg viewBox="0 0 64 64" width="20" height="20">
-          <circle cx="14" cy="44" r="7" fill="#fff" />
-          <circle cx="32" cy="24" r="7" fill="#fff" />
-          <circle cx="50" cy="38" r="7" fill="#fff" />
-          <path d="M14 44 L32 24 L50 38" stroke="#fff" strokeWidth="5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="14" cy="44" r="7" fill="var(--accent-fg)" />
+          <circle cx="32" cy="24" r="7" fill="var(--accent-fg)" />
+          <circle cx="50" cy="38" r="7" fill="var(--accent-fg)" />
+          <path d="M14 44 L32 24 L50 38" stroke="var(--accent-fg)" strokeWidth="5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </span>
       <span className={classNames("font-semibold tracking-tight", compact ? "text-base" : "text-lg")}>MTR Tracker</span>

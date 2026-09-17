@@ -1,8 +1,10 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Plus, Search, Play, Pause, Pencil, Trash2, Copy, Clock, GitBranch, Activity, ShieldCheck, ShieldAlert, ShieldOff, RefreshCw, ChevronDown, ChevronUp, LineChart } from "lucide-react";
+import { Plus, Search, Play, Clock, GitBranch, Activity, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, LineChart } from "lucide-react";
 import { api, cloneInput, type Target, type TargetInput } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
+import { TargetActions } from "../components/TargetActions";
+import { HelpTip } from "../components/Popover";
 import { StatusBadge } from "../components/StatusBadge";
 import { StatTile } from "../components/StatTile";
 import { Sparkline } from "../components/Sparkline";
@@ -157,8 +159,8 @@ export function Dashboard() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted">Continuous MTR monitoring · {total} target{total === 1 ? "" : "s"}</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+          <p className="text-sm text-muted">Live network monitoring · {total} target{total === 1 ? "" : "s"}</p>
         </div>
         <div className="flex items-center gap-2">
           <button className="btn" onClick={() => targets.refresh()} title="Refresh">
@@ -176,52 +178,37 @@ export function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <StatTile label="Up" value={counts.up} tone="up" icon={<ShieldCheck size={16} />} />
-        <StatTile label="Degraded" value={counts.degraded} tone={counts.degraded ? "degraded" : undefined} icon={<ShieldAlert size={16} />} />
-        <StatTile label="Down" value={counts.down} tone={counts.down ? "down" : undefined} icon={<ShieldOff size={16} />} />
-        <StatTile label="Paused" value={counts.paused} tone="muted" icon={<Pause size={16} />} />
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-[2fr_1fr_1fr]">
+        <div className="card col-span-2 px-4 py-3 xl:col-span-1">
+          <div className="flex items-center gap-2 text-xs font-medium text-muted"><ShieldCheck size={15} /> Target health</div>
+          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+            {(["up", "degraded", "down", "paused", ...(counts.pending ? ["pending"] : [])] as (keyof typeof counts)[]).map((key) => (
+              <div key={key}>
+                <div className="num text-2xl font-semibold leading-tight" style={{ color: counts[key] ? statusColor(key) : "var(--text-muted)" }}>{counts[key]}</div>
+                <div className="mt-1 text-xs capitalize text-muted">{key}</div>
+              </div>
+            ))}
+          </div>
+        </div>
         <StatTile label="Mean latency" value={activeAvg !== null ? `${fmtNum(activeAvg)} ms` : "–"} sub="latest run, all targets" icon={<Activity size={16} />} />
         <StatTile label="Route changes" value={(targets.data ?? []).reduce((a, t) => a + t.stats_24h.route_changes, 0)} sub="last 24 hours" icon={<GitBranch size={16} />} />
       </div>
 
       {targets.error && <ErrorBanner message={`Could not load targets: ${targets.error}`} />}
 
-      {overview.data && overview.data.targets.length > 0 && (
-        <div className="card p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="flex items-center gap-2 text-sm font-semibold"><LineChart size={15} /> Latency across targets · 24h</h2>
-              <p className="text-xs text-faint">Average round-trip time to each destination in {fmtDuration(overview.data.bucket_sec)} buckets. Click a name to hide or show it.</p>
-            </div>
-            <button className="btn btn-ghost btn-sm" onClick={() => setShowOverview(!showOverview)}>{showOverview ? <><ChevronUp size={14} /> Collapse</> : <><ChevronDown size={14} /> Expand</>}</button>
-          </div>
-          {showOverview && (
-            <div className="mt-2">
-              <Suspense fallback={<div style={{ height: 240 }} />}>
-                <OverviewChart data={overview.data} />
-              </Suspense>
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" />
-          <input className="input pl-9" placeholder="Filter by name, host or tag" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className="input pl-9" aria-label="Filter targets" placeholder="Filter by name, host or tag" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-        <Segmented<SortKey>
-          value={sort}
-          onChange={setSort}
-          options={[
-            { value: "status", label: "By status" },
-            { value: "name", label: "Name" },
-            { value: "latency", label: "Latency" },
-            { value: "loss", label: "Loss" },
-            { value: "hops", label: "Hops" },
-          ]}
-        />
+        <label className="flex items-center gap-2 text-sm text-muted">
+          Sort
+          <select className="input w-auto" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+            <option value="status">Status</option><option value="name">Name</option><option value="latency">Latency</option><option value="loss">Loss</option><option value="hops">Hops</option>
+          </select>
+        </label>
+        <div className="sm:ml-auto">
         <Segmented<View>
           value={view}
           onChange={setView}
@@ -230,6 +217,7 @@ export function Dashboard() {
             { value: "table", label: "Table" },
           ]}
         />
+        </div>
       </div>
 
       {!targets.loading && total === 0 && (
@@ -247,6 +235,8 @@ export function Dashboard() {
         </div>
       )}
 
+      {total > 0 && !list.length && <div className="card"><EmptyState title="No matching targets" body="Try a different name, host, or tag." action={<button className="btn" onClick={() => setQuery("")}>Clear filter</button>} /></div>}
+
       {view === "cards" ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {list.map((t) => (
@@ -258,6 +248,26 @@ export function Dashboard() {
           <TargetTable list={list} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onRun={runNow} />
         </div>
       )}
+
+      {overview.data && overview.data.targets.length > 0 && (
+        <div className="card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="chart-heading"><LineChart size={15} /> Latency across targets · 24h</h2>
+              <p className="chart-caption">Destination latency · {fmtDuration(overview.data.bucket_sec)} averages</p>
+            </div>
+            <div className="flex items-center gap-1"><HelpTip label="latency across targets">Compare destinations over the last 24 hours. Each point averages runs in a {fmtDuration(overview.data.bucket_sec)} bucket. Select a legend label to hide or show a target.</HelpTip><button className="btn btn-ghost btn-sm" aria-expanded={showOverview} onClick={() => setShowOverview(!showOverview)}>{showOverview ? <><ChevronUp size={14} /> Collapse</> : <><ChevronDown size={14} /> Expand</>}</button></div>
+          </div>
+          {showOverview && (
+            <div className="mt-2">
+              <Suspense fallback={<div style={{ height: 240 }} />}>
+                <OverviewChart data={overview.data} />
+              </Suspense>
+            </div>
+          )}
+        </div>
+      )}
+
 
       <TargetForm open={formOpen} initial={editing} prefill={prefill} title={formTitle} submitLabel={formTitle ? "Create clone" : undefined} onClose={closeForm} onSubmit={submit} submitting={saving} />
       <ConfirmDialog
@@ -279,65 +289,57 @@ function TargetCard({ t, now, onEdit, onClone, onDelete, onToggle, onRun }: { t:
   const loss = run?.loss_pct ?? null;
   const { colors: tagColors } = useTagColors();
   return (
-    <div className="card fade-in group relative overflow-hidden p-4" style={{ borderLeft: `3px solid ${statusColor(status)}` }}>
+    <article className="card fade-in min-w-0 p-4" aria-label={t.name}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <Link to={`/targets/${t.id}`} className="block truncate text-base font-semibold hover:text-accent">
-            {t.name}
-          </Link>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
-            <TypeBadge type={t.type} />
-            <span className="font-mono truncate max-w-[260px]" title={t.host}>{hostLabel(t.host)}</span>
-            {run?.dst_ip && run.dst_ip !== t.host && t.type !== "http" && <span className="font-mono text-faint">{run.dst_ip}</span>}
-            {t.type === "mtr" && <><span className="text-faint">·</span><span className="uppercase">{t.protocol}{t.port ? `/${t.port}` : ""}</span></>}
-            {t.type === "tcp" && <span className="font-mono">:{t.port}</span>}
-            {t.type === "dns" && <span className="font-mono">{String(t.options.record_type ?? "A")}{t.options.random_prefix ? " · uncached" : ""}</span>}
-            {t.type === "globalping" && <span>{String(t.options.measurement ?? "ping")} from {String(t.options.location ?? "world")}</span>}
-          </div>
+          <Link to={`/targets/${t.id}`} className="block truncate text-base font-semibold hover:text-accent">{t.name}</Link>
+          <div className="mt-1 flex items-center gap-2 text-xs text-muted"><TypeBadge type={t.type} /><span className="truncate font-mono" title={t.host}>{hostLabel(t.host)}</span></div>
         </div>
         <StatusBadge status={status} running={t.running} />
       </div>
 
-      <div className="mt-3 grid grid-cols-4 gap-2">
-        <Metric label={latencyLabel(t.type, t.options)} value={run?.reached ? fmtNum(run.avg_ms) : "–"} unit="ms" />
-        {isPacketProbe(t.type, t.options) ? (
-          <Metric label="Loss" value={fmtNum(loss)} unit="%" color={loss && loss > 0 ? lossColor(loss) : undefined} />
-        ) : (
-          <Metric label="Check" value={run ? (run.reached ? "pass" : "fail") : "–"} color={run ? (run.reached ? "var(--up)" : "var(--down)") : undefined} />
-        )}
-        <ThirdMetric t={t} />
-        <Metric label="Avail 24h" value={t.stats_24h.availability_pct !== null ? fmtNum(t.stats_24h.availability_pct, t.stats_24h.availability_pct === 100 ? 0 : 1) : "–"} unit="%" />
-      </div>
-
-      <div className="mt-3">
-        <StatusStrip buckets={t.timeline.buckets} bucketSec={t.timeline.bucket_sec} since={t.timeline.since} />
-      </div>
-
-      <div className="mt-2 flex items-end justify-between gap-3">
-        <Link to={`/targets/${t.id}`} className="block min-w-0 flex-1" title="Latency of the last runs">
-          <div className="w-full">
-            <Sparkline points={t.sparkline} width={300} height={40} color={statusColor(status === "paused" || status === "pending" ? "up" : status)} />
-          </div>
+      <div className="mt-5 grid grid-cols-2 items-center gap-4">
+        <div>
+          <div className="text-xs font-medium text-muted">{latencyLabel(t.type, t.options)}</div>
+          <div className="num mt-1 text-3xl font-semibold tracking-tight">{run?.reached ? fmtNum(run.avg_ms) : "–"}{run?.reached && <span className="ml-1 text-sm font-normal text-muted">ms</span>}</div>
+        </div>
+        <Link to={`/targets/${t.id}`} className="block min-w-0" aria-label={`View latency for ${t.name}`}>
+          <Sparkline points={t.sparkline} width={300} height={48} fluid />
         </Link>
       </div>
 
-      <div className="mt-3 flex items-center justify-between border-t border-border pt-2.5 text-[11px] text-faint">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="inline-flex items-center gap-1">
-            <Clock size={11} /> every {fmtDuration(t.interval_sec)}
-          </span>
-          <span>{run ? `last ${relTime(run.started_at, now)}` : "not yet run"}</span>
-          <TagList tags={t.tags} colors={tagColors} max={3} size="xs" />
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        {isPacketProbe(t.type, t.options) ? (
+          <Metric label="Loss" value={fmtNum(loss)} unit="%" color={loss && loss > 0 ? lossColor(loss) : undefined} />
+        ) : (
+          <Metric label="Check" value={run ? (run.reached ? "Pass" : "Fail") : "–"} color={run && !run.reached ? "var(--down)" : undefined} />
+        )}
+        <Metric label="Avail. · 24h" value={t.stats_24h.availability_pct !== null ? fmtNum(t.stats_24h.availability_pct, t.stats_24h.availability_pct === 100 ? 0 : 1) : "–"} unit="%" />
+        <ThirdMetric t={t} />
+      </div>
+      <div className="mt-4">
+        <div className="mb-1.5 flex justify-between text-xs text-muted"><span>Status · last 24h</span><span>Now</span></div>
+        <StatusStrip buckets={t.timeline.buckets} bucketSec={t.timeline.bucket_sec} since={t.timeline.since} height={10} />
+      </div>
+      <div className="mt-4 border-t border-border pt-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+          <span className="inline-flex items-center gap-1"><Clock size={12} /> Every {fmtDuration(t.interval_sec)}</span>
+          <span>{run ? `Last ${relTime(run.started_at, now)}` : "Waiting for first run"}</span>
+          {t.type === "mtr" && <span className="uppercase">{t.protocol}{t.port ? `/${t.port}` : ""}</span>}
+          {run?.dst_ip && run.dst_ip !== t.host && t.type !== "http" && <span className="break-all font-mono" title="Resolved destination">{run.dst_ip}</span>}
+          {t.type === "tcp" && <span>Port {t.port}</span>}
+          {t.type === "dns" && <span>{String(t.options.record_type ?? "A")}{t.options.random_prefix ? " · uncached" : ""}</span>}
+          {t.type === "globalping" && <span>{String(t.options.measurement ?? "ping")} · {String(t.options.location ?? "world")}</span>}
         </div>
-        <div className="flex items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100">
-          <IconBtn title="Run now" onClick={onRun}><Play size={13} /></IconBtn>
-          <IconBtn title={t.enabled ? "Pause" : "Resume"} onClick={onToggle}>{t.enabled ? <Pause size={13} /> : <Play size={13} />}</IconBtn>
-          <IconBtn title="Edit" onClick={onEdit}><Pencil size={13} /></IconBtn>
-          <IconBtn title="Clone" onClick={onClone}><Copy size={13} /></IconBtn>
-          <IconBtn title="Delete" onClick={onDelete} danger><Trash2 size={13} /></IconBtn>
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <div className="min-w-0"><TagList tags={t.tags} colors={tagColors} max={2} size="xs" /></div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button className="btn btn-ghost btn-sm" disabled={t.running} onClick={onRun}><Play size={14} />{t.running ? "Probing…" : "Run now"}</button>
+            <TargetActions name={t.name} enabled={t.enabled} onEdit={onEdit} onClone={onClone} onDelete={onDelete} onToggle={onToggle} />
+          </div>
         </div>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -372,8 +374,8 @@ function ThirdMetric({ t }: { t: Target }) {
 function Metric({ label, value, unit, color }: { label: string; value: string; unit?: string; color?: string }) {
   return (
     <div className="min-w-0">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-faint">{label}</div>
-      <div className="num truncate text-lg font-semibold leading-tight" style={{ color }}>
+      <div className="text-xs font-medium text-muted">{label}</div>
+      <div className="num truncate text-base font-semibold leading-tight" style={{ color }}>
         {value}
         {unit && value !== "–" && <span className="ml-0.5 text-xs font-normal text-faint">{unit}</span>}
       </div>
@@ -391,19 +393,19 @@ export function IconBtn({ title, onClick, children, danger }: { title: string; o
 
 function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onRun }: { list: Target[]; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onRun: (t: Target) => void }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="table-scroll">
       <table className="table num">
         <thead>
           <tr>
             <th>Target</th>
             <th>Status</th>
-            <th className="text-right">Latency</th>
-            <th className="text-right">Best</th>
-            <th className="text-right">Worst</th>
+            <th className="text-right">Latency (ms)</th>
+            <th className="text-right">Best (ms)</th>
+            <th className="text-right">Worst (ms)</th>
             <th className="text-right">Loss</th>
             <th className="text-right">Hops / HTTP</th>
             <th className="text-right">Avail 24h</th>
-            <th className="text-right">Avg 24h</th>
+            <th className="text-right">Avg 24h (ms)</th>
             <th>Trend</th>
             <th className="w-40">Status 24h</th>
             <th>Interval</th>
@@ -421,7 +423,7 @@ function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onRun }: 
                   <Link to={`/targets/${t.id}`} className="font-semibold hover:text-accent">
                     {t.name}
                   </Link>
-                  <div className="flex items-center gap-1.5 font-mono text-[11px] text-faint"><TypeBadge type={t.type} /><span className="truncate max-w-[220px]" title={t.host}>{hostLabel(t.host)}</span></div>
+                  <div className="flex items-center gap-1.5 font-mono text-xs text-faint"><TypeBadge type={t.type} /><span className="truncate max-w-[220px]" title={t.host}>{hostLabel(t.host)}</span></div>
                 </td>
                 <td><StatusBadge status={status} running={t.running} /></td>
                 <td className="text-right font-semibold">{run?.reached ? fmtNum(run.avg_ms) : "–"}</td>
@@ -431,17 +433,14 @@ function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onRun }: 
                 <td className="text-right">{isPathProbe(t.type, t.options) ? run?.hop_count || "–" : latencyLabel(t.type, t.options) === "Response" ? String((run?.details as Record<string, unknown> | null)?.status ?? "–") : "–"}</td>
                 <td className="text-right">{fmtPct(t.stats_24h.availability_pct)}</td>
                 <td className="text-right text-muted">{fmtNum(t.stats_24h.avg_ms)}</td>
-                <td><Sparkline points={t.sparkline} width={120} height={26} color={statusColor(status === "paused" || status === "pending" ? "up" : status)} /></td>
+                <td><Sparkline points={t.sparkline} width={120} height={26}  /></td>
                 <td><StatusStrip buckets={t.timeline.buckets} bucketSec={t.timeline.bucket_sec} since={t.timeline.since} height={10} className="w-36" /></td>
                 <td className="text-muted">{fmtDuration(t.interval_sec)}</td>
                 <td className="text-muted">{run ? relTime(run.started_at, now) : "–"}</td>
                 <td>
-                  <div className="flex items-center">
-                    <IconBtn title="Run now" onClick={() => onRun(t)}><Play size={13} /></IconBtn>
-                    <IconBtn title={t.enabled ? "Pause" : "Resume"} onClick={() => onToggle(t)}>{t.enabled ? <Pause size={13} /> : <Play size={13} />}</IconBtn>
-                    <IconBtn title="Edit" onClick={() => onEdit(t)}><Pencil size={13} /></IconBtn>
-                    <IconBtn title="Clone" onClick={() => onClone(t)}><Copy size={13} /></IconBtn>
-                    <IconBtn title="Delete" onClick={() => onDelete(t)} danger><Trash2 size={13} /></IconBtn>
+                  <div className="flex items-center gap-1">
+                    <button className="btn btn-ghost btn-sm" disabled={t.running} onClick={() => onRun(t)}><Play size={14} />Run now</button>
+                    <TargetActions name={t.name} enabled={t.enabled} onEdit={() => onEdit(t)} onClone={() => onClone(t)} onDelete={() => onDelete(t)} onToggle={() => onToggle(t)} />
                   </div>
                 </td>
               </tr>

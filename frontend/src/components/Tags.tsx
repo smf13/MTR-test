@@ -39,7 +39,7 @@ export function TagChip({ tag, color, size = "sm", count, title, onClick, classN
   const hex = color || autoTagColor(tag);
   const cls = classNames(
     "inline-flex max-w-full items-center gap-1 rounded border font-medium leading-none",
-    size === "xs" ? "px-1.5 py-[3px] text-[11px]" : "px-2 py-1 text-xs",
+    size === "xs" ? "px-1.5 py-[3px] text-xs" : "px-2 py-1 text-xs",
     onClick && "cursor-pointer transition-[filter] hover:brightness-110",
     className,
   );
@@ -76,7 +76,7 @@ export function TagList({ tags, colors, max, size = "sm", className }: { tags: s
         <TagChip key={tag} tag={tag} color={colors?.[tag]} size={size} />
       ))}
       {rest > 0 && (
-        <span className="text-[11px] text-faint" title={sorted.slice(shown.length).join(", ")}>
+        <span className="text-xs text-faint" title={sorted.slice(shown.length).join(", ")}>
           +{rest}
         </span>
       )}
@@ -118,7 +118,7 @@ export function TagColorPicker({ tag, value, count, onChange }: { tag: string; v
       <TagChip tag={tag} color={effective} count={count} title={`${value ? "Custom" : "Automatic"} colour · click to change`} onClick={() => setOpen((o) => !o)} />
       {open && (
         <div className="card absolute left-0 top-full z-50 mt-1 w-60 p-2.5 shadow-lg" style={{ borderColor: "var(--border-strong)" }} role="dialog" aria-label={`Colour for tag ${tag}`}>
-          <div className="mb-2 flex items-center justify-between gap-2 text-[11px]">
+          <div className="mb-2 flex items-center justify-between gap-2 text-xs">
             <span className="truncate font-semibold text-muted">
               Colour for <span className="font-mono text-text">{tag}</span>
             </span>

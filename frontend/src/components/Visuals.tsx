@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Area, Bar, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
 import type { Hop, HopSummary, HourlyBucket, OverviewSeries, Routes, SeriesPoint } from "../api";
+import { HeatLegend } from "./HopHeatmap";
 import { Sized } from "./Charts";
 import { fmtNum, fmtTime, fmtDateTime, latencyColor, lossColor, percentile, seriesColor, classNames } from "../utils";
 
@@ -39,8 +40,8 @@ export function OverviewChart({ data, height = 240 }: { data: OverviewSeries; he
         {(width) => (
           <ComposedChart width={width} height={height} data={rows} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-            <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tick} tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} minTickGap={48} />
-            <YAxis tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} width={44} domain={[0, "auto"]} />
+            <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tick} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={48} />
+            <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
             <Tooltip
               isAnimationActive={false}
               cursor={{ stroke: "var(--border-strong)" }}
@@ -48,7 +49,7 @@ export function OverviewChart({ data, height = 240 }: { data: OverviewSeries; he
                 if (!active || !payload?.length) return null;
                 const items = payload.filter((p) => p.value !== null && p.value !== undefined).sort((a, b) => Number(b.value) - Number(a.value));
                 return (
-                  <div className="card px-3 py-2 text-xs" style={{ borderColor: "var(--border-strong)" }}>
+                  <div className="chart-tooltip">
                     <div className="mb-1 font-semibold">{fmtTime(new Date(Number(label)).toISOString(), { date: data.range_sec > 86400 })}</div>
                     <div className="num grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
                       {items.map((p) => (
@@ -62,21 +63,21 @@ export function OverviewChart({ data, height = 240 }: { data: OverviewSeries; he
                 );
               }}
             />
-            {targets.map((t, i) => (
-              <Line key={t.id} name={t.name} dataKey={`v${t.id}`} type="monotone" stroke={seriesColor(i)} strokeWidth={1.6} dot={false} isAnimationActive={false} connectNulls={false} hide={hidden.has(t.id)} activeDot={{ r: 3 }} />
+            {targets.map((t) => (
+              <Line key={t.id} name={t.name} dataKey={`v${t.id}`} type="monotone" stroke={seriesColor(t.id)} strokeWidth={1.6} dot={false} isAnimationActive={false} connectNulls={false} hide={hidden.has(t.id)} activeDot={{ r: 3 }} />
             ))}
           </ComposedChart>
         )}
       </Sized>
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 px-1">
-        {targets.map((t, i) => (
+        {targets.map((t) => (
           <button
             key={t.id}
             className={classNames("inline-flex items-center gap-1.5 rounded px-1 text-xs transition-opacity", hidden.has(t.id) ? "opacity-40" : "opacity-100")}
             onClick={() => setHidden((h) => { const n = new Set(h); if (n.has(t.id)) n.delete(t.id); else n.add(t.id); return n; })}
             title={hidden.has(t.id) ? "Show" : "Hide"}
           >
-            <span className="inline-block h-2 w-2 rounded-full" style={{ background: seriesColor(i) }} />
+            <span className="inline-block h-2 w-2 rounded-full" style={{ background: seriesColor(t.id) }} />
             <span className={classNames(hidden.has(t.id) && "line-through")}>{t.name}</span>
           </button>
         ))}
@@ -133,9 +134,9 @@ export function PathProfileChart({ rows, height = 240 }: { rows: ProfileRow[]; h
             </linearGradient>
           </defs>
           <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-          <XAxis dataKey="hop" tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} />
-          <YAxis yAxisId="ms" tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} width={44} domain={[0, "auto"]} />
-          <YAxis yAxisId="loss" orientation="right" domain={[0, 100]} ticks={[0, 50, 100]} tickFormatter={(v: number) => `${v}%`} tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} width={40} />
+          <XAxis dataKey="hop" tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} />
+          <YAxis yAxisId="ms" tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
+          <YAxis yAxisId="loss" orientation="right" domain={[0, 100]} ticks={[0, 50, 100]} tickFormatter={(v: number) => `${v}%`} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={40} />
           <Tooltip
             isAnimationActive={false}
             cursor={{ fill: "var(--surface-2)" }}
@@ -143,7 +144,7 @@ export function PathProfileChart({ rows, height = 240 }: { rows: ProfileRow[]; h
               if (!active || !payload?.length) return null;
               const r = payload[0].payload as ProfileRow;
               return (
-                <div className="card px-3 py-2 text-xs" style={{ borderColor: "var(--border-strong)" }}>
+                <div className="chart-tooltip">
                   <div className="font-semibold">Hop {r.hop} · <span className="font-mono font-normal">{r.label}</span></div>
                   <div className="num mt-1 grid grid-cols-[auto_1fr] gap-x-3">
                     <span className="text-muted">Avg</span><span className="text-right">{r.avg !== null ? `${fmtNum(r.avg)} ms` : "–"}</span>
@@ -181,8 +182,8 @@ interface PercentileMarker {
 /** Y axis width + margins of the histogram; needed to estimate where the markers land in pixels. */
 const HIST_Y_AXIS_W = 44;
 const HIST_MARGIN_RIGHT = 16;
-const HIST_LABEL_ROW_H = 12;
-const HIST_LABEL_FONT = 10;
+const HIST_LABEL_ROW_H = 15;
+const HIST_LABEL_FONT = 12;
 
 function percentileMarkers(p50: number | null, p95: number | null, p99: number | null): PercentileMarker[] {
   const out: PercentileMarker[] = [];
@@ -257,8 +258,8 @@ export function LatencyHistogram({ points, height = 220, bins = 30 }: { points: 
           return (
           <ComposedChart width={width} height={height} data={rows} margin={{ top: 6 + rowCount * HIST_LABEL_ROW_H, right: HIST_MARGIN_RIGHT, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-            <XAxis dataKey="x" type="number" domain={edges} tickFormatter={(v: number) => fmtNum(v, 0)} tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} unit=" ms" />
-            <YAxis tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} width={HIST_Y_AXIS_W} allowDecimals={false} />
+            <XAxis dataKey="x" type="number" domain={edges} tickFormatter={(v: number) => fmtNum(v, 0)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} unit=" ms" />
+            <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={HIST_Y_AXIS_W} allowDecimals={false} />
             <Tooltip
               isAnimationActive={false}
               cursor={{ fill: "var(--surface-2)" }}
@@ -266,7 +267,7 @@ export function LatencyHistogram({ points, height = 220, bins = 30 }: { points: 
                 if (!active || !payload?.length) return null;
                 const r = payload[0].payload as { label: string; n: number };
                 return (
-                  <div className="card px-3 py-2 text-xs" style={{ borderColor: "var(--border-strong)" }}>
+                  <div className="chart-tooltip">
                     <div className="font-semibold">{r.label}</div>
                     <div className="num text-muted">{r.n} run{r.n === 1 ? "" : "s"} · {((100 * r.n) / count).toFixed(1)}%</div>
                   </div>
@@ -297,7 +298,7 @@ export function LatencyHistogram({ points, height = 220, bins = 30 }: { points: 
           );
         }}
       </Sized>
-      <div className="num mt-1 flex flex-wrap gap-x-4 px-1 text-[11px] text-faint">
+      <div className="num mt-1 flex flex-wrap gap-x-4 px-1 text-xs text-faint">
         <span>{count} runs</span>
         <span>bin {fmtNum(binWidth, 2)} ms</span>
         <span style={{ color: "var(--up)" }}>p50 {fmtNum(p50)} ms</span>
@@ -332,16 +333,18 @@ export function HourlyHeatmap({ hours, metric }: { hours: HourlyBucket[]; metric
   }, [hours, metric]);
   if (!days.length) return <div className="flex h-32 items-center justify-center text-sm text-faint">No runs in this range.</div>;
   const cellW = 34;
-  const cellH = 16;
+  const cellH = 20;
   const labelW = 104;
   const width = labelW + 24 * (cellW + 1);
   const height = days.length * (cellH + 1) + 18;
   const valueOf = (b: HourlyBucket) => (metric === "avg" ? b.avg : metric === "jitter" ? b.jitter : b.loss);
   return (
-    <div className="relative overflow-x-auto">
+    <div>
+      <HeatLegend metric={metric} max={max} />
+      <div className="relative overflow-x-auto">
       <svg width={width} height={height} className="block select-none" onMouseLeave={() => setHover(null)}>
         {Array.from({ length: 24 }, (_, h) => (
-          <text key={h} x={labelW + h * (cellW + 1) + cellW / 2} y={11} fontSize={10} textAnchor="middle" fill="var(--text-faint)">
+          <text key={h} x={labelW + h * (cellW + 1) + cellW / 2} y={11} fontSize={12} textAnchor="middle" fill="var(--text-faint)">
             {h % 3 === 0 ? `${String(h).padStart(2, "0")}` : ""}
           </text>
         ))}
@@ -350,7 +353,7 @@ export function HourlyHeatmap({ hours, metric }: { hours: HourlyBucket[]; metric
           const d = new Date(`${day}T00:00:00`);
           return (
             <g key={day}>
-              <text x={labelW - 8} y={y + cellH - 4} fontSize={10} textAnchor="end" fill="var(--text-muted)">
+              <text x={labelW - 8} y={y + cellH - 4} fontSize={12} textAnchor="end" fill="var(--text-muted)">
                 {d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })}
               </text>
               {grid.get(day)!.map((b, h) => {
@@ -381,6 +384,7 @@ export function HourlyHeatmap({ hours, metric }: { hours: HourlyBucket[]; metric
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -425,7 +429,7 @@ export function RouteTimeline({ routes, onOpenRun }: { routes: Routes; onOpenRun
           );
         })}
       </div>
-      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs">
         {routes.routes.slice(0, 12).map((r) => (
           <button key={r.hash} className={classNames("inline-flex items-center gap-1.5 rounded px-1 transition-opacity", hover !== null && hover !== r.index && "opacity-40")} onMouseEnter={() => setHover(r.index)} onMouseLeave={() => setHover(null)} onClick={() => onOpenRun?.(r.example_run_id)} title={`First seen ${fmtDateTime(r.first_seen)} · last seen ${fmtDateTime(r.last_seen)} · reached ${r.reached}/${r.runs}`}>
             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: seriesColor(r.index) }} />

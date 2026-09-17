@@ -95,9 +95,7 @@ export function lossColor(loss: number | null | undefined, alpha = 1): string {
 export function latencyColor(ms: number | null | undefined, max: number): string {
   if (ms === null || ms === undefined) return "rgba(148,163,184,0.25)";
   const r = Math.min(1, Math.max(0, max > 0 ? ms / max : 0));
-  // blue (fast) -> amber -> red (slow)
-  const hue = 200 - r * 200;
-  return `hsl(${hue} 80% ${52 - r * 8}%)`;
+  return `color-mix(in srgb, var(--heat-low), var(--heat-high) ${r * 100}%)`;
 }
 
 export const RANGES: { value: string; label: string }[] = [

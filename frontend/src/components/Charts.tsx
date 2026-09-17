@@ -73,7 +73,7 @@ function TooltipBox({ active, payload, rangeSec, bucketSec }: { active?: boolean
   if (!active || !payload?.length) return null;
   const r = payload[0].payload;
   return (
-    <div className="card px-3 py-2 text-xs shadow-lg" style={{ borderColor: "var(--border-strong)" }}>
+    <div className="chart-tooltip">
       <div className="mb-1 font-semibold">
         {fmtTime(new Date(r.t).toISOString(), { seconds: !bucketSec, date: rangeSec > 86400 })}
         {bucketSec ? <span className="ml-1 font-normal text-faint">({r.n} runs)</span> : null}
@@ -130,8 +130,8 @@ export function LatencyChart({ points, rangeSec, bucketSec, height = 260, onPoin
           </linearGradient>
         </defs>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-        <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} minTickGap={48} />
-        <YAxis tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} width={44} tickFormatter={(v: number) => `${v}`} unit="" domain={[0, "auto"]} />
+        <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={48} />
+        <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
         <Tooltip content={<TooltipBox rangeSec={rangeSec} bucketSec={bucketSec} />} cursor={{ stroke: "var(--border-strong)" }} isAnimationActive={false} />
         {routeChanges.map((r) => (
           <ReferenceLine key={r.t} x={r.t} stroke="var(--chart-jitter)" strokeDasharray="3 3" strokeOpacity={0.7} />
@@ -154,8 +154,8 @@ export function LossChart({ points, rangeSec, bucketSec, height = 120 }: { point
       {(width) => (
       <ComposedChart width={width} height={height} data={rows} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-        <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} minTickGap={48} />
-        <YAxis tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} width={44} domain={[0, 100]} ticks={[0, 50, 100]} tickFormatter={(v: number) => `${v}%`} />
+        <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={48} />
+        <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={44} domain={[0, 100]} ticks={[0, 50, 100]} tickFormatter={(v: number) => `${v}%`} />
         <Tooltip content={<TooltipBox rangeSec={rangeSec} bucketSec={bucketSec} />} cursor={{ fill: "var(--surface-2)" }} isAnimationActive={false} />
         <Bar dataKey="maxLoss" barSize={barSize} isAnimationActive={false} minPointSize={1}>
           {rows.map((r) => (
@@ -177,8 +177,8 @@ export function JitterChart({ points, rangeSec, bucketSec, height = 120 }: { poi
       {(width) => (
       <ComposedChart width={width} height={height} data={rows} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-        <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} minTickGap={48} />
-        <YAxis tick={{ fontSize: 11, fill: "var(--text-faint)" }} axisLine={false} tickLine={false} width={44} domain={[0, "auto"]} />
+        <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={48} />
+        <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
         <Tooltip content={<TooltipBox rangeSec={rangeSec} bucketSec={bucketSec} />} cursor={{ stroke: "var(--border-strong)" }} isAnimationActive={false} />
         <Line type="monotone" dataKey="jitter" stroke="var(--chart-jitter)" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
       </ComposedChart>
