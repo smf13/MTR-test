@@ -9,9 +9,10 @@ from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_va
 
 Protocol = Literal["icmp", "udp", "tcp"]
 IpVersion = Literal["auto", "4", "6"]
-ProbeType = Literal["mtr", "ping", "http", "tcp", "dns"]
+ProbeType = Literal["mtr", "ping", "http", "tcp", "dns", "globalping"]
 HttpMethod = Literal["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 DnsRecordType = Literal["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV"]
+GlobalpingMeasurement = Literal["ping", "mtr"]
 
 
 class HttpOptions(BaseModel):
@@ -27,6 +28,7 @@ class HttpOptions(BaseModel):
     verify_tls: bool = True
     follow_redirects: bool = True
     tls_warn_days: int = Field(default=14, ge=0, le=365, description="warn (degraded) when the certificate expires within N days; 0 disables")
+    tls_info: bool = Field(default=True, description="record the certificate (subject, issuer, validity, names, protocol) with every run")
 
     @field_validator("expected_status")
     @classmethod
@@ -51,9 +53,30 @@ class DnsOptions(BaseModel):
     resolver: str = Field(default="", max_length=253, description="IP or hostname of the server to query; empty = system resolver")
     expected: str = Field(default="", max_length=500, description="substring that must appear in one of the answers")
     timeout_sec: float = Field(default=5.0, ge=0.5, le=60)
+    random_prefix: bool = Field(
+        default=False,
+        description="query a random label under the name on every run so no cache can answer; the resolver has to ask the "
+        "authoritative servers, and NXDOMAIN then counts as a successful lookup (the timing is what matters)",
+    )
 
 
-OPTION_MODELS: dict[str, type[BaseModel]] = {"http": HttpOptions, "ping": PingOptions, "tcp": TcpOptions, "dns": DnsOptions}
+class GlobalpingOptions(BaseModel):
+    measurement: GlobalpingMeasurement = "ping"
+    location: str = Field(
+        default="world",
+        max_length=200,
+        description="Globalping 'magic' location: country, city, continent, region, ASN, network or cloud region, "
+        "e.g. 'Germany', 'Frankfurt', 'EU', 'AS3320', 'aws-eu-west-1'; 'world' picks any probe",
+    )
+    probes: int = Field(default=1, ge=1, le=10, description="probes to use at that location (ping only; mtr always uses one)")
+
+    @field_validator("location")
+    @classmethod
+    def _location(cls, v: str) -> str:
+        return v.strip() or "world"
+
+
+OPTION_MODELS: dict[str, type[BaseModel]] = {"http": HttpOptions, "ping": PingOptions, "tcp": TcpOptions, "dns": DnsOptions, "globalping": GlobalpingOptions}
 
 
 def validate_options(kind: str, options: dict[str, Any] | None) -> dict[str, Any]:
@@ -138,7 +161,7 @@ class TargetBase(_TargetValidators):
     alert_latency_ms: float = Field(default=200.0, ge=0, description="0 disables")
 
 
-LATENCY_ALERT_DEFAULT: dict[str, float] = {"mtr": 200.0, "ping": 200.0, "http": 1500.0, "tcp": 500.0, "dns": 500.0}
+LATENCY_ALERT_DEFAULT: dict[str, float] = {"mtr": 200.0, "ping": 200.0, "http": 1500.0, "tcp": 500.0, "dns": 500.0, "globalping": 200.0}
 
 
 class TargetCreate(TargetBase):
@@ -189,6 +212,7 @@ class SettingsUpdate(BaseModel):
     base_url: str | None = Field(default=None, max_length=2048)
     site_name: str | None = Field(default=None, max_length=60)
     tag_colors: dict[str, str] | None = Field(default=None, description="tag -> #rrggbb; tags without an entry get an automatic colour")
+    globalping_token: str | None = Field(default=None, max_length=200, description="optional Globalping API token for higher rate limits")
 
     @field_validator("tag_colors")
     @classmethod
@@ -205,7 +229,7 @@ class SettingsUpdate(BaseModel):
             raise ValueError(f"{info.field_name} must start with http:// or https://")
         return v.rstrip("/") if info.field_name == "base_url" else v
 
-    @field_validator("pushover_user_key", "pushover_api_token", "pushover_device", "pushover_sound")
+    @field_validator("pushover_user_key", "pushover_api_token", "pushover_device", "pushover_sound", "globalping_token")
     @classmethod
     def _strip(cls, v: str | None) -> str | None:
         return None if v is None else v.strip()

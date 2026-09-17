@@ -55,7 +55,7 @@ export function RunView() {
         <StatTile label="StDev / Jitter" value={ok ? `${fmtNum(r.stdev_ms)} / ${fmtNum(r.jitter_avg_ms)}` : "–"} sub={ok ? `jitter max ${fmtNum(r.jitter_max_ms)} ms` : undefined} />
       </div>
 
-      {r.target_type === "mtr" ? (
+      {r.target_type === "mtr" || r.hop_count > 0 ? (
         <div className="card overflow-hidden">
           <div className="border-b border-border px-4 py-2.5 text-sm font-semibold">All hops</div>
           <HopTable hops={r.hops} dstIp={r.dst_ip} />

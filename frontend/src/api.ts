@@ -3,9 +3,10 @@
 export type Status = "up" | "degraded" | "down" | "pending" | "paused";
 export type Protocol = "icmp" | "udp" | "tcp";
 export type IpVersion = "auto" | "4" | "6";
-export type ProbeType = "mtr" | "ping" | "http" | "tcp" | "dns";
+export type ProbeType = "mtr" | "ping" | "http" | "tcp" | "dns" | "globalping";
 export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
 export type DnsRecordType = "A" | "AAAA" | "CNAME" | "MX" | "NS" | "TXT" | "SOA" | "PTR" | "SRV";
+export type GlobalpingMeasurement = "ping" | "mtr";
 
 export interface HttpOptions {
   method: HttpMethod;
@@ -20,24 +21,74 @@ export interface HttpOptions {
   verify_tls: boolean;
   follow_redirects: boolean;
   tls_warn_days: number;
+  /** Record the certificate (subject, issuer, validity, names, protocol) with every run. */
+  tls_info: boolean;
 }
 export interface PingOptions { timeout_sec: number }
 export interface TcpOptions { timeout_sec: number }
-export interface DnsOptions { record_type: DnsRecordType; resolver: string; expected: string; timeout_sec: number }
-export type ProbeOptions = Partial<HttpOptions & PingOptions & TcpOptions & DnsOptions>;
+export interface DnsOptions {
+  record_type: DnsRecordType;
+  resolver: string;
+  expected: string;
+  timeout_sec: number;
+  /** Query a random label under the name each run, so no cache can answer (measures the uncached lookup). */
+  random_prefix: boolean;
+}
+export interface GlobalpingOptions {
+  measurement: GlobalpingMeasurement;
+  /** Globalping "magic" location: country, city, continent, region, ASN, network or cloud region; "world" = any probe. */
+  location: string;
+  /** Probes to use at that location (ping only; mtr always uses one). */
+  probes: number;
+}
+export type ProbeOptions = Partial<HttpOptions & PingOptions & TcpOptions & DnsOptions & GlobalpingOptions>;
 
-export const PROBE_TYPE_LABEL: Record<ProbeType, string> = { mtr: "MTR", ping: "Ping", http: "HTTP(S)", tcp: "TCP port", dns: "DNS" };
+export const PROBE_TYPE_LABEL: Record<ProbeType, string> = { mtr: "MTR", ping: "Ping", http: "HTTP(S)", tcp: "TCP port", dns: "DNS", globalping: "Globalping" };
 
 export const DEFAULT_OPTIONS: Record<ProbeType, ProbeOptions> = {
   mtr: {},
   ping: { timeout_sec: 2 },
-  http: { method: "GET", expected_status: "200-299", keyword: "", keyword_absent: false, json_path: "", json_expected: "", headers: {}, body: "", timeout_sec: 10, verify_tls: true, follow_redirects: true, tls_warn_days: 14 },
+  http: { method: "GET", expected_status: "200-299", keyword: "", keyword_absent: false, json_path: "", json_expected: "", headers: {}, body: "", timeout_sec: 10, verify_tls: true, follow_redirects: true, tls_warn_days: 14, tls_info: true },
   tcp: { timeout_sec: 5 },
-  dns: { record_type: "A", resolver: "", expected: "", timeout_sec: 5 },
+  dns: { record_type: "A", resolver: "", expected: "", timeout_sec: 5, random_prefix: false },
+  globalping: { measurement: "ping", location: "world", probes: 1 },
 };
 
 /** Per-type default latency alert threshold (ms); mirrors LATENCY_ALERT_DEFAULT in backend/app/models.py. */
-export const LATENCY_ALERT_DEFAULT: Record<ProbeType, number> = { mtr: 200, ping: 200, http: 1500, tcp: 500, dns: 500 };
+export const LATENCY_ALERT_DEFAULT: Record<ProbeType, number> = { mtr: 200, ping: 200, http: 1500, tcp: 500, dns: 500, globalping: 200 };
+
+/** Certificate details recorded by an HTTP(S) check (details.tls). */
+export interface TlsInfo {
+  subject: string | null;
+  subject_org: string | null;
+  issuer: string | null;
+  issuer_cn: string | null;
+  not_before: string | null;
+  not_after: string | null;
+  days_left: number | null;
+  san: string[];
+  serial: string | null;
+  protocol: string | null;
+  cipher: string | null;
+}
+
+/** One remote probe of a Globalping ping run (details.probes[]). */
+export interface GlobalpingProbe {
+  label: string;
+  country: string | null;
+  city: string | null;
+  asn: number | null;
+  network: string | null;
+  status: string | null;
+  resolved: string | null;
+  sent: number | null;
+  received: number | null;
+  loss: number | null;
+  min: number | null;
+  avg: number | null;
+  max: number | null;
+  rtts: number[];
+}
 
 export interface Run {
   id: number;
@@ -308,6 +359,8 @@ export interface Settings {
   site_name: string;
   /** tag -> #rrggbb; tags without an entry get an automatic colour (see autoTagColor in utils.ts). */
   tag_colors: Record<string, string>;
+  /** Optional Globalping API token (raises the rate limits for the globalping probe type). */
+  globalping_token: string;
 }
 
 export interface TagInfo {

@@ -17,7 +17,7 @@ import { useToast } from "../components/Toast";
 
 // Recharts only loads when the overview chart is actually shown.
 const OverviewChart = lazy(() => import("../components/Visuals").then((m) => ({ default: m.OverviewChart })));
-import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe } from "../utils";
+import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe, isPacketProbe } from "../utils";
 
 type SortKey = "name" | "status" | "latency" | "loss" | "hops";
 type View = "cards" | "table";
@@ -275,7 +275,8 @@ function TargetCard({ t, now, onEdit, onDelete, onToggle, onRun }: { t: Target; 
             {run?.dst_ip && run.dst_ip !== t.host && t.type !== "http" && <span className="font-mono text-faint">{run.dst_ip}</span>}
             {t.type === "mtr" && <><span className="text-faint">·</span><span className="uppercase">{t.protocol}{t.port ? `/${t.port}` : ""}</span></>}
             {t.type === "tcp" && <span className="font-mono">:{t.port}</span>}
-            {t.type === "dns" && <span className="font-mono">{String(t.options.record_type ?? "A")}</span>}
+            {t.type === "dns" && <span className="font-mono">{String(t.options.record_type ?? "A")}{t.options.random_prefix ? " · uncached" : ""}</span>}
+            {t.type === "globalping" && <span>{String(t.options.measurement ?? "ping")} from {String(t.options.location ?? "world")}</span>}
           </div>
         </div>
         <StatusBadge status={status} running={t.running} />
@@ -283,7 +284,7 @@ function TargetCard({ t, now, onEdit, onDelete, onToggle, onRun }: { t: Target; 
 
       <div className="mt-3 grid grid-cols-4 gap-2">
         <Metric label={t.type === "http" ? "Response" : t.type === "tcp" ? "Connect" : t.type === "dns" ? "Lookup" : "Latency"} value={run?.reached ? fmtNum(run.avg_ms) : "–"} unit="ms" />
-        {isPathProbe(t.type) || t.type === "ping" ? (
+        {isPacketProbe(t.type, t.options) ? (
           <Metric label="Loss" value={fmtNum(loss)} unit="%" color={loss && loss > 0 ? lossColor(loss) : undefined} />
         ) : (
           <Metric label="Check" value={run ? (run.reached ? "pass" : "fail") : "–"} color={run ? (run.reached ? "var(--up)" : "var(--down)") : undefined} />
@@ -335,6 +336,11 @@ function ThirdMetric({ t }: { t: Target }) {
       return <Metric label="Answers" value={Array.isArray(d.answers) ? String((d.answers as unknown[]).length) : "–"} />;
     case "ping":
       return <Metric label="Jitter" value={run?.reached ? fmtNum(run.jitter_avg_ms) : "–"} unit="ms" />;
+    case "globalping": {
+      if (isPathProbe(t.type, t.options)) return <Metric label="Hops" value={run?.hop_count ? String(run.hop_count) : "–"} />;
+      const first = (Array.isArray(d.probes) ? d.probes[0] : undefined) as { city?: string | null; country?: string | null } | undefined;
+      return <Metric label="From" value={first ? [first.city, first.country].filter(Boolean).join(", ") || "–" : "–"} />;
+    }
     default:
       return <Metric label="Hops" value={run?.hop_count ? String(run.hop_count) : "–"} />;
   }
@@ -399,7 +405,7 @@ function TargetTable({ list, now, onEdit, onDelete, onToggle, onRun }: { list: T
                 <td className="text-right text-muted">{run?.reached ? fmtNum(run.best_ms) : "–"}</td>
                 <td className="text-right text-muted">{run?.reached ? fmtNum(run.worst_ms) : "–"}</td>
                 <td className="text-right font-semibold" style={{ color: (run?.loss_pct ?? 0) > 0 ? lossColor(run?.loss_pct) : undefined }}>{fmtPct(run?.loss_pct)}</td>
-                <td className="text-right">{t.type === "mtr" ? run?.hop_count || "–" : t.type === "http" ? String((run?.details as Record<string, unknown> | null)?.status ?? "–") : "–"}</td>
+                <td className="text-right">{isPathProbe(t.type, t.options) ? run?.hop_count || "–" : t.type === "http" ? String((run?.details as Record<string, unknown> | null)?.status ?? "–") : "–"}</td>
                 <td className="text-right">{fmtPct(t.stats_24h.availability_pct)}</td>
                 <td className="text-right text-muted">{fmtNum(t.stats_24h.avg_ms)}</td>
                 <td><Sparkline points={t.sparkline} width={120} height={26} color={statusColor(status === "paused" || status === "pending" ? "up" : status)} /></td>

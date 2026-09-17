@@ -8,7 +8,40 @@ import httpx
 import pytest
 
 from app import probes
-from app.probes import json_matches, json_path, ping_payload_bytes, run_http, run_tcp, status_allowed
+from app.probes import certificate_details, json_matches, json_path, ping_payload_bytes, run_dns, run_http, run_tcp, status_allowed
+
+
+def test_certificate_details_from_peer_cert() -> None:
+    class FakeSSL:
+        def getpeercert(self) -> dict:
+            return {
+                "subject": ((("commonName", "portal.example.com"),), (("organizationName", "Example Corp"),)),
+                "issuer": ((("countryName", "US"),), (("organizationName", "Let's Encrypt"),), (("commonName", "R11"),)),
+                "notBefore": "Jun  1 00:00:00 2026 GMT",
+                "notAfter": "Aug 30 23:59:59 2026 GMT",
+                "serialNumber": "04AB",
+                "subjectAltName": (("DNS", "portal.example.com"), ("DNS", "www.example.com"), ("IP Address", "192.0.2.1")),
+            }
+
+        def cipher(self) -> tuple:
+            return ("TLS_AES_256_GCM_SHA384", "TLSv1.3", 256)
+
+        def version(self) -> str:
+            return "TLSv1.3"
+
+    info = certificate_details(FakeSSL())
+    assert info is not None
+    assert info["subject"] == "portal.example.com" and info["subject_org"] == "Example Corp"
+    assert info["issuer"] == "Let's Encrypt" and info["issuer_cn"] == "R11"
+    assert info["not_before"] == "2026-06-01T00:00:00Z" and info["not_after"] == "2026-08-30T23:59:59Z" and isinstance(info["days_left"], int)
+    assert info["san"] == ["portal.example.com", "www.example.com"] and info["serial"] == "04AB"
+    assert info["protocol"] == "TLSv1.3" and info["cipher"] == "TLS_AES_256_GCM_SHA384"
+
+    class Unverified:
+        def getpeercert(self) -> dict:
+            return {}  # what getpeercert() returns when the certificate was not validated
+
+    assert certificate_details(Unverified()) is None
 
 
 def test_ping_payload_matches_mtr_packet_size() -> None:
@@ -78,6 +111,37 @@ async def test_run_http_caps_the_body_it_keeps(live: None, monkeypatch: pytest.M
     o = await run_http({"host": "http://svc.test/big", "type": "http"}, {"keyword": "needle"})
     assert o.reached and o.details["keyword_found"] is True
     assert o.details["truncated"] is True and o.details["bytes"] == len(big)
+
+
+async def test_run_dns_random_prefix_measures_uncached_lookups(live: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    import dns.asyncresolver
+    import dns.resolver
+
+    queried: list[str] = []
+
+    class FakeResolver:
+        def __init__(self, configure: bool = True) -> None:
+            self.nameservers: list[str] = []
+            self.lifetime = self.timeout = 0.0
+
+        async def resolve(self, name: str, rtype: str) -> None:
+            queried.append(name)
+            raise dns.resolver.NXDOMAIN()
+
+    monkeypatch.setattr(dns.asyncresolver, "Resolver", FakeResolver)
+    target = {"host": "example.test", "type": "dns"}
+
+    o = await run_dns(target, {"random_prefix": True})
+    assert o.ok and o.reached and o.loss_pct == 0.0 and o.avg_ms is not None
+    assert o.details["rcode"] == "NXDOMAIN" and o.details["random_prefix"] is True and o.details["answers"] == []
+    assert queried[0].endswith(".example.test") and len(queried[0]) > len("example.test") + 1 and o.details["queried_name"] == queried[0]
+    again = await run_dns(target, {"random_prefix": True})
+    assert again.details["queried_name"] != o.details["queried_name"]  # a fresh label every run
+
+    strict = await run_dns(target, {"random_prefix": True, "expected": "192.0.2"})
+    assert strict.ok and not strict.reached  # an expected answer still has to be present
+    plain = await run_dns(target, {})
+    assert plain.ok and not plain.reached and "NXDOMAIN" in (plain.error or "") and queried[-1] == "example.test"
 
 
 async def test_run_tcp_local(live: None) -> None:

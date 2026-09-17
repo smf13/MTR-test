@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload, Tags as TagsIcon } from "lucide-react";
+import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload, Tags as TagsIcon, Globe } from "lucide-react";
 import { api, getApiToken, setApiToken, type Settings as SettingsT, type TargetInput } from "../api";
 import { usePoll } from "../hooks";
 import { useToast } from "../components/Toast";
@@ -273,6 +273,14 @@ export function Settings() {
                     <div className="help">Route changes can be noisy on paths with load balancing; they are off by default.</div>
                   </div>
                 </div>
+              </section>
+
+              <section className="card p-5">
+                <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold"><Globe size={15} /> Globalping</h2>
+                <p className="mb-3 text-xs text-faint">Targets of type Globalping run ping or MTR from remote probes of the globalping.io network. Without a token the API allows 250 measurements per hour per address; a free token from globalping.io raises the limit.</p>
+                <label className="label">API token (optional)</label>
+                <input className="input font-mono" type="password" value={form.globalping_token ?? ""} onChange={(e) => setForm({ ...form, globalping_token: e.target.value })} spellCheck={false} autoComplete="new-password" placeholder="leave empty for anonymous use" />
+                <div className="help">Sent as a bearer token with every Globalping request. Shown masked to readers without the API token of this server.</div>
               </section>
 
               <div className="flex justify-end">

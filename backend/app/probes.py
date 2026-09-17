@@ -15,8 +15,9 @@ import shutil
 import ssl
 import statistics
 import time
+import string
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -226,39 +227,93 @@ def json_matches(value: Any, expected: str) -> bool:
     return str(value) == expected
 
 
+_CERT_DATE = "%b %d %H:%M:%S %Y %Z"
+
+
+def _cert_datetime(value: Any) -> datetime | None:
+    try:
+        return datetime.strptime(str(value), _CERT_DATE).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
 def cert_days_left(cert: dict[str, Any] | None) -> tuple[int | None, str | None]:
     """Days until a peer certificate (as returned by getpeercert()) expires, or (None, reason)."""
     if not cert or "notAfter" not in cert:
         return None, "no certificate"
-    try:
-        not_after = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
-    except ValueError:
+    not_after = _cert_datetime(cert["notAfter"])
+    if not_after is None:
         return None, f"unreadable expiry date {cert['notAfter']!r}"
     return int((not_after - datetime.now(timezone.utc)).total_seconds() // 86400), None
 
 
-def cert_days_from_response(resp: httpx.Response) -> tuple[int | None, str | None] | None:
-    """Certificate expiry read off the TLS connection that served this response, or None when unavailable
+def _rdn(sequence: Any) -> dict[str, str]:
+    """getpeercert() encodes subject/issuer as a tuple of RDNs, each a tuple of (type, value) pairs."""
+    out: dict[str, str] = {}
+    for rdn in sequence or ():
+        for pair in rdn:
+            if len(pair) == 2 and pair[0] not in out:
+                out[str(pair[0])] = str(pair[1])
+    return out
+
+
+def certificate_details(ssl_obj: Any) -> dict[str, Any] | None:
+    """Subject, issuer, validity, alternative names and the negotiated protocol of a verified peer certificate.
+
+    Returns None when the connection was not verified (getpeercert() is empty then) or exposes no certificate.
+    """
+    try:
+        cert = ssl_obj.getpeercert() or {}
+    except Exception:  # noqa: BLE001
+        return None
+    if not cert:
+        return None
+    subject = _rdn(cert.get("subject"))
+    issuer = _rdn(cert.get("issuer"))
+    not_before = _cert_datetime(cert.get("notBefore"))
+    not_after = _cert_datetime(cert.get("notAfter"))
+    days, _ = cert_days_left(cert)
+    try:
+        cipher = ssl_obj.cipher()
+        protocol = ssl_obj.version()
+    except Exception:  # noqa: BLE001
+        cipher, protocol = None, None
+    return {
+        "subject": subject.get("commonName"),
+        "subject_org": subject.get("organizationName"),
+        "issuer": issuer.get("organizationName") or issuer.get("commonName"),
+        "issuer_cn": issuer.get("commonName"),
+        "not_before": not_before.isoformat().replace("+00:00", "Z") if not_before else None,
+        "not_after": not_after.isoformat().replace("+00:00", "Z") if not_after else None,
+        "days_left": days,
+        "san": [str(v) for kind, v in cert.get("subjectAltName", ()) if kind == "DNS"][:25],
+        "serial": cert.get("serialNumber"),
+        "protocol": protocol,
+        "cipher": cipher[0] if cipher else None,
+    }
+
+
+def tls_from_response(resp: httpx.Response) -> dict[str, Any] | None:
+    """Certificate details read off the TLS connection that served this response, or None when unavailable
     (plain HTTP, mocked transports, or a stream that exposes no ssl object)."""
     try:
         stream = resp.extensions.get("network_stream")
         ssl_obj = stream.get_extra_info("ssl_object") if stream is not None else None
-        cert = ssl_obj.getpeercert() if ssl_obj is not None else None
     except Exception:  # noqa: BLE001
         return None
-    return cert_days_left(cert) if cert else None
+    return certificate_details(ssl_obj) if ssl_obj is not None else None
 
 
-async def tls_expiry_days(host: str, port: int, timeout: float = 5.0) -> tuple[int | None, str | None]:
-    """Days until the server certificate expires, via a dedicated connection; or (None, reason)."""
+async def tls_details(host: str, port: int, timeout: float = 5.0) -> tuple[dict[str, Any] | None, str | None]:
+    """Certificate details via a dedicated connection, or (None, reason)."""
     ctx = ssl.create_default_context()
     try:
         _, writer = await asyncio.wait_for(asyncio.open_connection(host, port, ssl=ctx, server_hostname=host), timeout=timeout)
     except (OSError, ssl.SSLError, asyncio.TimeoutError) as exc:
         return None, str(exc) or exc.__class__.__name__
     try:
-        ssl_obj = writer.get_extra_info("ssl_object")
-        return cert_days_left(ssl_obj.getpeercert() if ssl_obj else None)
+        info = certificate_details(writer.get_extra_info("ssl_object"))
+        return (info, None) if info else (None, "no certificate")
     finally:
         writer.close()
         try:
@@ -286,14 +341,15 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     jpath = (opts.get("json_path") or "").strip()
     jexpected = opts.get("json_expected")
     tls_warn_days = int(opts.get("tls_warn_days") or 0)
+    tls_info = bool(opts.get("tls_info", True))
 
     if _sim():
-        return _simulate_http(started, url, keyword, jpath, tls_warn_days)
+        return _simulate_http(started, url, keyword, jpath, tls_warn_days, tls_info)
 
     parts = urlsplit(url)
-    want_tls = parts.scheme == "https" and verify and tls_warn_days > 0
+    want_tls = parts.scheme == "https" and verify and (tls_warn_days > 0 or tls_info)
     details: dict[str, Any] = {"url": url, "method": method}
-    tls: tuple[int | None, str | None] | None = None
+    tls: dict[str, Any] | None = None
     try:
         async with httpx.AsyncClient(timeout=timeout, verify=verify, follow_redirects=follow, headers=headers, transport=_HTTP_TRANSPORT) as client:
             t0 = time.perf_counter()
@@ -301,7 +357,7 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
             # bytes are needed for the keyword and JSON checks.
             async with client.stream(method, url, content=body.encode() if isinstance(body, str) and body else None) as resp:
                 if want_tls:
-                    tls = cert_days_from_response(resp)
+                    tls = tls_from_response(resp)
                 chunks: list[bytes] = []
                 received = 0
                 truncated = False
@@ -370,12 +426,15 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     warnings: list[str] = []
     if want_tls:
         # Prefer the certificate of the connection just used; open a second one only when the stream did not expose it.
-        days, why = tls if tls is not None else await tls_expiry_days(parts.hostname or "", parts.port or 443)
+        info, why = (tls, None) if tls is not None else await tls_details(parts.hostname or "", parts.port or 443)
+        days = info.get("days_left") if info else None
         details["tls_expires_in_days"] = days
         details["tls_warn_days"] = tls_warn_days
-        if days is None and why:
+        if info is None and why:
             details["tls_error"] = why
-        elif days is not None and days <= tls_warn_days:
+        if info and tls_info:
+            details["tls"] = info
+        if days is not None and tls_warn_days > 0 and days <= tls_warn_days:
             warnings.append(f"TLS certificate expires in {days} day{'s' if days != 1 else ''}")
 
     o = ProbeOutcome(True, not failures, started, finished, dst_ip=None, sent=1, details=details, warnings=warnings, command=f"{method} {url}")
@@ -386,12 +445,20 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     return o
 
 
-def _simulate_http(started: float, url: str, keyword: str, jpath: str, tls_warn_days: int = 14) -> ProbeOutcome:
+def _simulate_http(started: float, url: str, keyword: str, jpath: str, tls_warn_days: int = 14, tls_info: bool = True) -> ProbeOutcome:
     rng = random.Random()
     elapsed = max(20.0, rng.gauss(180, 40))
     fail = rng.random() < 0.03
-    details = {"url": url, "method": "GET", "status": 503 if fail else 200, "reason": "Service Unavailable" if fail else "OK", "bytes": 15234, "content_type": "text/html; charset=utf-8",
-               "server": "simulator", "final_url": url, "redirects": 0, "http_version": "HTTP/1.1", "status_ok": not fail, "tls_expires_in_days": 61, "tls_warn_days": tls_warn_days}
+    details: dict[str, Any] = {"url": url, "method": "GET", "status": 503 if fail else 200, "reason": "Service Unavailable" if fail else "OK", "bytes": 15234, "content_type": "text/html; charset=utf-8",
+                               "server": "simulator", "final_url": url, "redirects": 0, "http_version": "HTTP/1.1", "status_ok": not fail, "tls_expires_in_days": 61, "tls_warn_days": tls_warn_days}
+    if tls_info and url.lower().startswith("https://"):
+        host = urlsplit(url).hostname or "example.test"
+        now = datetime.now(timezone.utc)
+        details["tls"] = {
+            "subject": host, "subject_org": None, "issuer": "Simulated CA", "issuer_cn": "Simulated CA R1",
+            "not_before": (now - timedelta(days=29)).isoformat().replace("+00:00", "Z"), "not_after": (now + timedelta(days=61)).isoformat().replace("+00:00", "Z"),
+            "days_left": 61, "san": [host, f"www.{host}"], "serial": "0A1B2C3D4E5F", "protocol": "TLSv1.3", "cipher": "TLS_AES_256_GCM_SHA384",
+        }
     if keyword:
         details.update({"keyword": keyword, "keyword_found": not fail})
     if jpath:
@@ -449,10 +516,16 @@ async def run_tcp(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
 DNS_RECORD_TYPES = ("A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV")
 
 
+def random_dns_label() -> str:
+    """A label no resolver can have cached, so the query has to travel to the authoritative servers."""
+    return "".join(random.choices(string.ascii_lowercase + string.digits, k=12))
+
+
 async def run_dns(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     import dns.asyncresolver
     import dns.exception
     import dns.rdatatype
+    import dns.resolver
 
     started = time.time()
     name = t["host"].strip().rstrip(".")
@@ -460,12 +533,23 @@ async def run_dns(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     server = (opts.get("resolver") or "").strip()
     expected = (opts.get("expected") or "").strip()
     timeout = float(opts.get("timeout_sec") or 5.0)
+    random_prefix = bool(opts.get("random_prefix", False))
+    # With the random prefix the answer is normally NXDOMAIN (unless the zone has a wildcard); the point is the
+    # time the resolver needs to go and ask, not the answer itself.
+    qname = f"{random_dns_label()}.{name}" if random_prefix else name
+    command = f"dns {rtype} {qname}" + (f" @{server}" if server else "")
+    details: dict[str, Any] = {"record_type": rtype, "resolver": server or "system", "queried_name": qname, "random_prefix": random_prefix}
 
     if _sim():
         rng = random.Random()
-        answers = ["192.0.2.10"] if rtype == "A" else [f"{name}."]
-        o = ProbeOutcome(True, True, started, time.time() + 0.01, sent=1, details={"record_type": rtype, "resolver": server or "system", "answers": answers, "ttl": 300}, command=f"[simulated] dns {rtype} {name}")
-        _apply_stats(o, [max(1.0, rng.gauss(18, 4))])
+        if random_prefix:
+            answers: list[str] = []
+            details.update({"answers": answers, "rcode": "NXDOMAIN"})
+        else:
+            answers = ["192.0.2.10"] if rtype == "A" else [f"{name}."]
+            details.update({"answers": answers, "ttl": 300, "rcode": "NOERROR"})
+        o = ProbeOutcome(True, True, started, time.time() + 0.01, sent=1, details=details, command=f"[simulated] {command}")
+        _apply_stats(o, [max(1.0, rng.gauss(45 if random_prefix else 18, 8))])
         if expected and not any(expected.lower() in a.lower() for a in answers):
             o.reached, o.loss_pct, o.error = False, 100.0, f"expected '{expected}' not in answers"
         return o
@@ -478,16 +562,26 @@ async def run_dns(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
             return ProbeOutcome(False, False, started, time.time(), error=f"resolver: {exc}", loss_pct=100.0)
     resolver.lifetime = timeout
     resolver.timeout = timeout
-    details: dict[str, Any] = {"record_type": rtype, "resolver": server or "system"}
     t0 = time.perf_counter()
     try:
-        answer = await resolver.resolve(name, rtype)
+        answer = await resolver.resolve(qname, rtype)
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as exc:
+        elapsed = (time.perf_counter() - t0) * 1000.0
+        details.update({"answers": [], "rcode": "NXDOMAIN" if isinstance(exc, dns.resolver.NXDOMAIN) else "NOANSWER"})
+        if random_prefix and not expected:
+            # An authoritative "no such name" is exactly what an uncached query for a random label yields: the lookup worked.
+            o = ProbeOutcome(True, True, started, time.time(), sent=1, details=details, command=command)
+            _apply_stats(o, [elapsed])
+            return o
+        o = ProbeOutcome(True, False, started, time.time(), error=f"{exc.__class__.__name__}: {exc}", sent=1, loss_pct=100.0, details=details, command=command)
+        _apply_stats(o, [elapsed])
+        return o
     except dns.exception.DNSException as exc:
-        return ProbeOutcome(True, False, started, time.time(), error=f"{exc.__class__.__name__}: {exc}", sent=1, loss_pct=100.0, details=details, command=f"dns {rtype} {name}")
+        return ProbeOutcome(True, False, started, time.time(), error=f"{exc.__class__.__name__}: {exc}", sent=1, loss_pct=100.0, details=details, command=command)
     elapsed = (time.perf_counter() - t0) * 1000.0
     answers = sorted(r.to_text() for r in answer)
-    details.update({"answers": answers, "ttl": answer.rrset.ttl if answer.rrset is not None else None, "nameserver": getattr(answer, "nameserver", None)})
-    o = ProbeOutcome(True, True, started, time.time(), sent=1, details=details, command=f"dns {rtype} {name}" + (f" @{server}" if server else ""))
+    details.update({"answers": answers, "ttl": answer.rrset.ttl if answer.rrset is not None else None, "nameserver": getattr(answer, "nameserver", None), "rcode": "NOERROR"})
+    o = ProbeOutcome(True, True, started, time.time(), sent=1, details=details, command=command)
     _apply_stats(o, [elapsed])
     if expected and not any(expected.lower() in a.lower() for a in answers):
         o.reached, o.loss_pct, o.error = False, 100.0, f"expected '{expected}' not in answers {answers}"
@@ -497,19 +591,30 @@ async def run_dns(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
 RUNNERS = {"ping": run_ping, "http": run_http, "tcp": run_tcp, "dns": run_dns}
 
 
-async def run_probe(t: dict[str, Any]) -> ProbeOutcome:
-    kind = t.get("type") or "mtr"
-    runner = RUNNERS.get(kind)
-    if runner is None:
-        now = time.time()
-        return ProbeOutcome(False, False, now, now, error=f"unknown probe type {kind}", loss_pct=100.0)
+def target_options(t: dict[str, Any]) -> dict[str, Any]:
+    """The target's per-type options, whether they arrive parsed or as the JSON text stored in the database."""
     opts = t.get("options") or {}
     if isinstance(opts, str):
         try:
             opts = json.loads(opts)
         except json.JSONDecodeError:
             opts = {}
+    return opts if isinstance(opts, dict) else {}
+
+
+async def run_probe(t: dict[str, Any], settings: dict[str, Any] | None = None) -> ProbeOutcome:
+    kind = t.get("type") or "mtr"
+    opts = target_options(t)
     try:
+        if kind == "globalping":
+            # Imported here: globalping builds on ProbeOutcome, so a top-level import would be circular.
+            from .globalping import run_globalping
+
+            return await run_globalping(t, opts, settings or {})
+        runner = RUNNERS.get(kind)
+        if runner is None:
+            now = time.time()
+            return ProbeOutcome(False, False, now, now, error=f"unknown probe type {kind}", loss_pct=100.0)
         return await runner(t, opts)
     except Exception as exc:  # noqa: BLE001
         now = time.time()

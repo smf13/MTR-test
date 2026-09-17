@@ -7,14 +7,18 @@ import json
 import logging
 import sqlite3
 import time
-from typing import Any, Iterable
+from typing import Any, Awaitable, Callable, Iterable
 
 from .config import config
 from .db import Database
+from .globalping import run_globalping_mtr
 from .mtr import HopResult, MtrResult, route_signature, routes_equivalent, run_mtr
 from .notify import dispatch_event, target_url
-from .probes import run_probe
+from .probes import run_probe, target_options
 from .resolver import resolve_host, reverse_lookup_many
+
+# Produces the path for a target: the local mtr binary, or a remote Globalping probe.
+PathRunner = Callable[[dict[str, Any], dict[str, Any]], Awaitable[MtrResult]]
 
 log = logging.getLogger("mtr-tracker.scheduler")
 
@@ -196,23 +200,23 @@ class Scheduler:
         await self._apply_status(t, run_id, "down", settings, error=str(exc))
 
     async def _execute(self, t: dict[str, Any], settings: dict[str, Any]) -> None:
-        if (t.get("type") or "mtr") != "mtr":
+        kind = t.get("type") or "mtr"
+        if kind == "mtr":
+            await self._execute_path(t, settings, self._run_local_mtr, local_names=True)
+        elif kind == "globalping" and str(target_options(t).get("measurement") or "ping") == "mtr":
+            # A remote mtr comes back as hops too, so it takes the same path pipeline as the local binary.
+            await self._execute_path(t, settings, lambda tt, s: run_globalping_mtr(tt, target_options(tt), s), local_names=False)
+        else:
             await self._execute_probe(t, settings)
-            return
+
+    @staticmethod
+    async def _run_local_mtr(t: dict[str, Any], settings: dict[str, Any]) -> MtrResult:
         started = time.time()
         try:
             dst_ip = await resolve_host(t["host"], t["ip_version"])
         except ValueError as exc:
-            finished = time.time()
-            run_id = await self.db.execute(
-                "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, reached, hop_count, loss_pct) "
-                "VALUES (?, ?, ?, ?, 'error', ?, 0, 0, 100)",
-                (t["id"], started, finished, (finished - started) * 1000, str(exc)),
-            )
-            await self._apply_status(t, run_id, "down", settings, error=str(exc))
-            return
-
-        result: MtrResult = await run_mtr(
+            return MtrResult(False, started, time.time(), "", error=str(exc))
+        result = await run_mtr(
             dst_ip=dst_ip,
             count=int(t["count"]),
             probe_interval=float(t["probe_interval"]),
@@ -223,18 +227,28 @@ class Scheduler:
             ip_version=t["ip_version"],
             asn_lookup=bool(settings.get("asn_lookup", True)),
         )
+        if result.dst_ip is None:
+            result.dst_ip = dst_ip
+        return result
+
+    async def _execute_path(self, t: dict[str, Any], settings: dict[str, Any], runner: PathRunner, *, local_names: bool) -> None:
+        """Run a path measurement, store its hops, judge reachability and route changes, apply the status."""
+        result = await runner(t, settings)
+        details_json = json.dumps(result.details) if result.details else None
 
         if not result.ok:
             run_id = await self.db.execute(
-                "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, src, dst_ip, reached, hop_count, loss_pct, command) "
-                "VALUES (?, ?, ?, ?, 'error', ?, ?, ?, 0, 0, 100, ?)",
-                (t["id"], result.started_at, result.finished_at, result.duration_ms, result.error, result.src, dst_ip, result.command),
+                "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, src, dst_ip, reached, hop_count, loss_pct, command, details) "
+                "VALUES (?, ?, ?, ?, 'error', ?, ?, ?, 0, 0, 100, ?, ?)",
+                (t["id"], result.started_at, result.finished_at, result.duration_ms, result.error, result.src, result.dst_ip, result.command or None, details_json),
             )
             await self._apply_status(t, run_id, "down", settings, error=result.error)
             return
 
         hops = result.hops
-        if settings.get("reverse_dns", True):
+        dst_ip = result.dst_ip
+        # A remote probe reports the names it saw; only local runs get local reverse lookups.
+        if local_names and settings.get("reverse_dns", True):
             names = await reverse_lookup_many([h.ip for h in hops])
             for h in hops:
                 h.hostname = names.get(h.ip or "")
@@ -264,12 +278,12 @@ class Scheduler:
         async with self.db.transaction() as tx:
             run_id = await tx.execute(
                 "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, src, dst_ip, reached, hop_count, sent, "
-                "loss_pct, last_ms, avg_ms, best_ms, worst_ms, stdev_ms, jitter_avg_ms, jitter_max_ms, route_hash, route_changed, command) "
-                "VALUES (?, ?, ?, ?, 'ok', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "loss_pct, last_ms, avg_ms, best_ms, worst_ms, stdev_ms, jitter_avg_ms, jitter_max_ms, route_hash, route_changed, command, details) "
+                "VALUES (?, ?, ?, ?, 'ok', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     t["id"], result.started_at, result.finished_at, result.duration_ms, result.src, dst_ip, int(reached), len(hops),
                     final.sent, summary["loss_pct"], summary["last_ms"], summary["avg_ms"], summary["best_ms"], summary["worst_ms"],
-                    summary["stdev_ms"], summary["jitter_avg_ms"], summary["jitter_max_ms"], sig, int(route_changed), result.command,
+                    summary["stdev_ms"], summary["jitter_avg_ms"], summary["jitter_max_ms"], sig, int(route_changed), result.command, details_json,
                 ),
             )
             await tx.executemany(
@@ -299,8 +313,8 @@ class Scheduler:
         await self._apply_status(t, run_id, status, settings, summary=summary)
 
     async def _execute_probe(self, t: dict[str, Any], settings: dict[str, Any]) -> None:
-        """Ping / HTTP / TCP / DNS: one summary row per run, no hops."""
-        o = await run_probe(t)
+        """Ping / HTTP / TCP / DNS / Globalping ping: one summary row per run, no hops."""
+        o = await run_probe(t, settings)
         if not o.ok:
             run_id = await self.db.execute(
                 "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, dst_ip, reached, hop_count, sent, loss_pct, command, details) "

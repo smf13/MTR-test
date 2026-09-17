@@ -133,8 +133,14 @@ export function percentile(values: number[], p: number): number | null {
   return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (k - lo);
 }
 
-export function isPathProbe(type: string | undefined): boolean {
-  return !type || type === "mtr";
+/** Types whose runs carry a hop list: the local mtr, or a Globalping mtr measurement. */
+export function isPathProbe(type: string | undefined, options?: { measurement?: string } | null): boolean {
+  return !type || type === "mtr" || (type === "globalping" && options?.measurement === "mtr");
+}
+
+/** Types that send several packets and report packet loss, as opposed to one request per run. */
+export function isPacketProbe(type: string | undefined, options?: { measurement?: string } | null): boolean {
+  return isPathProbe(type, options) || type === "ping" || type === "globalping";
 }
 
 /** Short label for the host of a target: strips the scheme for http probes so cards stay compact. */

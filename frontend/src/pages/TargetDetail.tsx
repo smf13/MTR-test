@@ -21,7 +21,7 @@ import { ConfirmDialog } from "../components/Modal";
 import { ErrorBanner } from "../components/EmptyState";
 import { TagList, useTagColors } from "../components/Tags";
 import { useToast } from "../components/Toast";
-import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, classNames, hostLabel, isPathProbe } from "../utils";
+import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, classNames, hostLabel, isPathProbe, isPacketProbe } from "../utils";
 import { CheckDetails } from "../components/CheckDetails";
 import { PROBE_TYPE_LABEL } from "../api";
 
@@ -138,9 +138,9 @@ export function TargetDetail() {
 
   const run = t.latest_run;
   const latestRun = latest.data;
-  const pathProbe = isPathProbe(t.type);
+  const pathProbe = isPathProbe(t.type, t.options);
   const latencyWord = t.type === "http" ? "Response" : t.type === "tcp" ? "Connect" : t.type === "dns" ? "Lookup" : "Latency";
-  const singleSample = !pathProbe && t.type !== "ping";
+  const singleSample = !isPacketProbe(t.type, t.options);
   const latestDetails = (run?.details || {}) as Record<string, unknown>;
 
   return (
@@ -160,10 +160,11 @@ export function TargetDetail() {
             {run?.dst_ip && run.dst_ip !== t.host && t.type !== "http" && <span className="font-mono text-faint">→ {run.dst_ip}</span>}
             {pathProbe && <span className="uppercase">{t.protocol}{t.port ? ` :${t.port}` : ""}</span>}
             {t.type === "tcp" && <span className="font-mono">port {t.port}</span>}
-            {t.type === "dns" && <span className="font-mono">{String(t.options.record_type ?? "A")}{t.options.resolver ? ` @${t.options.resolver}` : ""}</span>}
+            {t.type === "dns" && <span className="font-mono">{String(t.options.record_type ?? "A")}{t.options.resolver ? ` @${t.options.resolver}` : ""}{t.options.random_prefix ? " · random subdomain (uncached)" : ""}</span>}
             {t.type === "http" && <span className="font-mono">{String(t.options.method ?? "GET")} · expect {String(t.options.expected_status ?? "200-299")}</span>}
+            {t.type === "globalping" && <span>{String(t.options.measurement ?? "ping")} via Globalping · from {String(t.options.location ?? "world")}{!pathProbe && (t.options.probes ?? 1) > 1 ? ` · ${t.options.probes} probes` : ""}</span>}
             <span className="inline-flex items-center gap-1"><Clock size={12} /> every {fmtDuration(t.interval_sec)}</span>
-            {(pathProbe || t.type === "ping") && <span>{t.count} probes × {t.probe_interval}s</span>}
+            {isPacketProbe(t.type, t.options) && <span>{t.count} {t.type === "globalping" ? "packets per probe" : `probes × ${t.probe_interval}s`}</span>}
             {t.ip_version !== "auto" && <span>IPv{t.ip_version}</span>}
             <TagList tags={t.tags} colors={tagColors} size="xs" />
           </div>
@@ -233,7 +234,7 @@ export function TargetDetail() {
         )}
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
           <div>
-            <h3 className="mb-1 text-xs font-semibold text-muted">{pathProbe || t.type === "ping" ? "Packet loss to destination" : "Failed checks (bar = check failed)"}</h3>
+            <h3 className="mb-1 text-xs font-semibold text-muted">{isPacketProbe(t.type, t.options) ? "Packet loss to destination" : "Failed checks (bar = check failed)"}</h3>
             <LossChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} />
           </div>
           {singleSample ? null : (
@@ -363,7 +364,7 @@ export function TargetDetail() {
         {tab === "runs" && (
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-              <Segmented value={runFilter} onChange={setRunFilter} options={[{ value: "", label: "All" }, { value: "ok", label: pathProbe || t.type === "ping" ? "Reached" : "Passed" }, { value: "failed", label: "Failed" }, ...(pathProbe ? [{ value: "route_change" as const, label: "Route changes" }] : [])]} />
+              <Segmented value={runFilter} onChange={setRunFilter} options={[{ value: "", label: "All" }, { value: "ok", label: isPacketProbe(t.type, t.options) ? "Reached" : "Passed" }, { value: "failed", label: "Failed" }, ...(pathProbe ? [{ value: "route_change" as const, label: "Route changes" }] : [])]} />
               <Pager page={runPage} pageSize={RUN_PAGE} total={runs.data?.total ?? 0} onChange={setRunPage} />
             </div>
             <RunsTable runs={(runs.data?.items ?? []) as Run[]} now={now} onOpen={(rid) => navigate(`/runs/${rid}`)} />

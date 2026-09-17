@@ -62,6 +62,8 @@ class MtrResult:
     hops: list[HopResult] = field(default_factory=list)
     error: str | None = None
     raw: dict[str, Any] | None = None
+    # Free-form extras stored in runs.details (used by the Globalping runner for the probe's location).
+    details: dict[str, Any] | None = None
 
     @property
     def duration_ms(self) -> float:

@@ -137,6 +137,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "site_name": "MTR Tracker",
     # tag -> "#rrggbb"; tags without an entry get an automatic colour in the UI.
     "tag_colors": {},
+    # Optional Globalping API token (globalping.io); raises the rate limits for the globalping probe type.
+    "globalping_token": "",
 }
 
 

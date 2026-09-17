@@ -82,7 +82,7 @@ def is_authenticated(request: Request) -> bool:
 
 
 SECRET_MASK = "********"
-_SECRET_KEYS = ("pushover_api_token", "pushover_user_key")
+_SECRET_KEYS = ("pushover_api_token", "pushover_user_key", "globalping_token")
 
 
 def _mask_token(value: str) -> str:

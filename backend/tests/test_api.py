@@ -137,6 +137,7 @@ async def test_probe_types_end_to_end(client: AsyncClient) -> None:
         {"name": "HTTP demo", "host": "https://status.example.test/health", "type": "http", "interval_sec": 60, "options": {"keyword": "ok", "json_path": "status", "json_expected": "ok"}},
         {"name": "TCP demo", "host": "192.0.2.41", "type": "tcp", "port": 443, "interval_sec": 60},
         {"name": "DNS demo", "host": "example.test", "type": "dns", "interval_sec": 60, "options": {"record_type": "A", "expected": "192.0.2"}},
+        {"name": "DNS uncached", "host": "example.test", "type": "dns", "interval_sec": 60, "options": {"record_type": "A", "random_prefix": True}},
     ]
     ids = []
     for spec in specs:
@@ -153,10 +154,13 @@ async def test_probe_types_end_to_end(client: AsyncClient) -> None:
             assert "samples_ms" in run["details"]
         if spec["type"] == "http":
             assert run["details"]["status"] in (200, 503) and run["details"]["keyword"] == "ok"
+            assert run["details"]["tls"]["issuer"] == "Simulated CA" and run["details"]["tls"]["subject"] == "status.example.test" and run["details"]["tls"]["days_left"] == 61
         if spec["type"] == "tcp":
             assert run["details"]["port"] == 443
-        if spec["type"] == "dns":
-            assert run["details"]["record_type"] == "A" and run["details"]["answers"]
+        if spec["type"] == "dns" and spec["options"].get("random_prefix"):
+            assert run["reached"] and run["details"]["rcode"] == "NXDOMAIN" and run["details"]["queried_name"].endswith(".example.test")
+        elif spec["type"] == "dns":
+            assert run["details"]["record_type"] == "A" and run["details"]["answers"] and run["details"]["queried_name"] == "example.test"
 
     listing = {t["id"]: t for t in (await client.get("/api/targets")).json()}
     assert listing[ids[1]]["alert_latency_ms"] == 1500 and listing[ids[0]]["alert_latency_ms"] == 200

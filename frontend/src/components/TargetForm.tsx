@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, DEFAULT_OPTIONS, LATENCY_ALERT_DEFAULT, PROBE_TYPE_LABEL, type DnsRecordType, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
+import { api, DEFAULT_OPTIONS, LATENCY_ALERT_DEFAULT, PROBE_TYPE_LABEL, type DnsRecordType, type GlobalpingMeasurement, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
 import { Modal } from "./Modal";
 import { NumberInput } from "./NumberInput";
+import { Segmented } from "./RangePicker";
 import { TagColorPicker, useTagColors } from "./Tags";
 import { useToast } from "./Toast";
 import { classNames, sortTags } from "../utils";
@@ -107,7 +108,8 @@ export function TargetForm({
       host: f.type === "http" && type !== "http" ? hostFromUrl(f.host) : f.host,
       options: { ...DEFAULT_OPTIONS[type] },
       port: type === "tcp" ? (f.port ?? 443) : f.port,
-      count: type === "ping" && f.count === 10 ? 5 : f.count,
+      // Sensible packet counts per type: Globalping allows at most 16 packets per probe.
+      count: type === "ping" && f.count === 10 ? 5 : type === "globalping" && (f.count === 10 || f.count > 16) ? 4 : f.count,
       // Keep a user-edited threshold; only swap the per-type default.
       alert_latency_ms: f.alert_latency_ms === LATENCY_ALERT_DEFAULT[f.type] ? LATENCY_ALERT_DEFAULT[type] : f.alert_latency_ms,
     }));
@@ -116,9 +118,12 @@ export function TargetForm({
   const isHttp = form.type === "http";
   const isTcp = form.type === "tcp";
   const isDns = form.type === "dns";
-  const usesProbes = isMtr || isPing;
-  // mtr sends one probe cycle per probe interval, then waits roughly 5 s for late replies; ping waits up to its timeout.
-  const runDuration = isMtr ? Math.round(form.count * form.probe_interval + 5) : isPing ? Math.round(form.count * form.probe_interval + (form.options.timeout_sec ?? 2)) : Math.round(form.options.timeout_sec ?? 10);
+  const isGlobalping = form.type === "globalping";
+  const gpMtr = isGlobalping && (form.options.measurement ?? "ping") === "mtr";
+  const usesProbes = isMtr || isPing || isGlobalping;
+  // mtr sends one probe cycle per probe interval, then waits roughly 5 s for late replies; ping waits up to its
+  // timeout; a Globalping measurement adds the API round trip and the probe's own schedule.
+  const runDuration = isMtr ? Math.round(form.count * form.probe_interval + 5) : isPing ? Math.round(form.count * form.probe_interval + (form.options.timeout_sec ?? 2)) : isGlobalping ? Math.round(form.count + 15) : Math.round(form.options.timeout_sec ?? 10);
   const durationWarn = runDuration > form.interval_sec * 0.9;
 
   /** Tag colours are global settings, so they are written after the target itself has been saved. */
@@ -202,6 +207,7 @@ export function TargetForm({
             {isHttp && "Fetch a URL and check the status code, and optionally a keyword or a JSON value. Warns before the TLS certificate expires."}
             {isTcp && "Open a TCP connection to a port and measure connect time. Good for services that do not answer ping."}
             {isDns && "Resolve a name and check the answer, optionally against a specific resolver."}
+            {isGlobalping && "Ping or MTR run from a remote Globalping probe (globalping.io): pick a country, city, network or ASN and watch the path from there."}
           </div>
         </div>
         <div>
@@ -217,6 +223,27 @@ export function TargetForm({
             <label className="label">Port</label>
             <NumberInput className="input num" min={1} max={65535} nullable value={form.port} onChange={(v) => set("port", v)} placeholder="443" />
           </div>
+        )}
+        {isGlobalping && (
+          <>
+            <div>
+              <label className="label">Measurement</label>
+              <Segmented<GlobalpingMeasurement> value={(form.options.measurement ?? "ping") as GlobalpingMeasurement} onChange={(v) => setOpt("measurement", v)} options={[{ value: "ping", label: "Ping" }, { value: "mtr", label: "MTR (path)" }]} />
+              <div className="help">{gpMtr ? "The full path from the remote probe; hops are stored like a local MTR run." : "Round-trip time and loss as seen from the remote probe(s)."}</div>
+            </div>
+            <div>
+              <label className="label">Location</label>
+              <input className="input font-mono" value={form.options.location ?? "world"} onChange={(e) => setOpt("location", e.target.value)} placeholder="world" spellCheck={false} />
+              <div className="help">Country, city, continent, region, ASN, network or cloud region: Germany, Frankfurt, EU, AS3320, aws-eu-west-1. "world" picks any probe.</div>
+            </div>
+            {!gpMtr && (
+              <div>
+                <label className="label">Probes at that location</label>
+                <NumberInput className="input num" min={1} max={10} value={form.options.probes ?? 1} onChange={(v) => setOpt("probes", v ?? 1)} />
+                <div className="help">Results are aggregated; every probe is listed in the run details.</div>
+              </div>
+            )}
+          </>
         )}
         {isHttp && (
           <>
@@ -257,6 +284,13 @@ export function TargetForm({
             </div>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.options.verify_tls ?? true} onChange={(e) => setOpt("verify_tls", e.target.checked)} /> Verify TLS certificate</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.options.follow_redirects ?? true} onChange={(e) => setOpt("follow_redirects", e.target.checked)} /> Follow redirects</label>
+            <label className="flex items-start gap-2 text-sm sm:col-span-2">
+              <input type="checkbox" className="mt-0.5" checked={form.options.tls_info ?? true} onChange={(e) => setOpt("tls_info", e.target.checked)} />
+              <span>
+                Record certificate details
+                <div className="help">Issuer, subject, validity period, alternative names and the negotiated protocol are shown with each run (verified HTTPS connections only).</div>
+              </span>
+            </label>
             <div className="sm:col-span-2">
               <label className="label">Headers (optional, one per line as Name: value)</label>
               <textarea className="input font-mono" rows={2} value={headersText} onChange={(e) => setHeadersText(e.target.value)} placeholder={"Authorization: Bearer …\nAccept: application/json"} spellCheck={false} />
@@ -289,6 +323,13 @@ export function TargetForm({
               <label className="label">Timeout (s)</label>
               <NumberInput className="input num" min={0.5} max={60} step={0.5} value={form.options.timeout_sec ?? 5} onChange={(v) => setOpt("timeout_sec", v ?? 5)} />
             </div>
+            <label className="flex items-start gap-2 text-sm sm:col-span-2">
+              <input type="checkbox" className="mt-0.5" checked={!!form.options.random_prefix} onChange={(e) => setOpt("random_prefix", e.target.checked)} />
+              <span>
+                Query a random subdomain each run (uncached lookup time)
+                <div className="help">A random label under the name is looked up, so no resolver can answer from its cache and the time reflects a real recursive lookup. NXDOMAIN counts as success; the expected-answer check then only makes sense for zones with a wildcard.</div>
+              </span>
+            </label>
           </>
         )}
         {(isTcp || isPing) && (
@@ -331,10 +372,14 @@ export function TargetForm({
         </div>
         {usesProbes ? (
           <div>
-            <label className="label">{isMtr ? "Probes per hop" : "Pings per run"}</label>
-            <NumberInput className="input num" min={1} max={200} value={form.count} onChange={(v) => set("count", v ?? form.count)} />
+            <label className="label">{isMtr ? "Probes per hop" : isGlobalping ? "Packets per probe" : "Pings per run"}</label>
+            <NumberInput className="input num" min={1} max={isGlobalping ? 16 : 200} value={form.count} onChange={(v) => set("count", v ?? form.count)} />
             <div className={classNames("help", durationWarn && "!text-degraded")}>
-              {isMtr ? `Each run sends ${form.count} probes per hop and takes about ${runDuration}s including mtr's final wait.` : `Each run sends ${form.count} pings and takes about ${runDuration}s.`}
+              {isMtr
+                ? `Each run sends ${form.count} probes per hop and takes about ${runDuration}s including mtr's final wait.`
+                : isGlobalping
+                  ? `Each run sends ${form.count} packets from the remote probe (max 16) and takes about ${runDuration}s including the API round trip.`
+                  : `Each run sends ${form.count} pings and takes about ${runDuration}s.`}
             </div>
           </div>
         ) : (
@@ -365,7 +410,7 @@ export function TargetForm({
         )}
         {usesProbes && advanced && (
           <>
-            {isMtr && (
+            {(isMtr || gpMtr) && (
               <>
                 <div>
                   <label className="label">Protocol</label>
@@ -389,15 +434,19 @@ export function TargetForm({
                 <option value="6">IPv6 only</option>
               </select>
             </div>
-            <div>
-              <label className="label">Probe interval (s)</label>
-              <NumberInput className="input num" min={0.1} max={10} step={0.1} value={form.probe_interval} onChange={(v) => set("probe_interval", v ?? form.probe_interval)} />
-              <div className="help">Delay between probes ({isMtr ? "mtr -i" : "ping -i"}).{isMtr ? " Below 1 s only works when mtr runs as root; otherwise the server uses 1 s." : ""}</div>
-            </div>
-            <div>
-              <label className="label">Packet size (bytes)</label>
-              <NumberInput className="input num" min={28} max={1500} value={form.packet_size} onChange={(v) => set("packet_size", v ?? form.packet_size)} />
-            </div>
+            {(isMtr || isPing) && (
+              <>
+                <div>
+                  <label className="label">Probe interval (s)</label>
+                  <NumberInput className="input num" min={0.1} max={10} step={0.1} value={form.probe_interval} onChange={(v) => set("probe_interval", v ?? form.probe_interval)} />
+                  <div className="help">Delay between probes ({isMtr ? "mtr -i" : "ping -i"}).{isMtr ? " Below 1 s only works when mtr runs as root; otherwise the server uses 1 s." : ""}</div>
+                </div>
+                <div>
+                  <label className="label">Packet size (bytes)</label>
+                  <NumberInput className="input num" min={28} max={1500} value={form.packet_size} onChange={(v) => set("packet_size", v ?? form.packet_size)} />
+                </div>
+              </>
+            )}
             {isMtr && (
               <div>
                 <label className="label">Max hops</label>

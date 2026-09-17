@@ -1,13 +1,15 @@
-import { CheckCircle2, XCircle, ShieldAlert, ShieldCheck } from "lucide-react";
-import type { Run, ProbeType } from "../api";
-import { fmtNum, lossColor } from "../utils";
+import { CheckCircle2, XCircle, ShieldAlert, ShieldCheck, ExternalLink } from "lucide-react";
+import type { GlobalpingProbe, Run, ProbeType, TlsInfo } from "../api";
+import { fmtDateTime, fmtNum, lossColor } from "../utils";
 
-/** Human-friendly rendering of a non-MTR run's `details` (ping samples, HTTP status, TLS, DNS answers…). */
+/** Human-friendly rendering of a non-MTR run's `details` (ping samples, HTTP status, TLS, DNS answers, remote probes…). */
 export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
   const d = (run.details || {}) as Record<string, unknown>;
   const ok = run.status === "ok" && run.reached;
   // The threshold the probe applied is stored with the run, so old runs keep the warning they were judged by.
   const tlsSoon = Number(d.tls_expires_in_days) <= Number(d.tls_warn_days ?? 14);
+  const tls = (d.tls && typeof d.tls === "object" ? d.tls : null) as TlsInfo | null;
+  const probes = (Array.isArray(d.probes) ? d.probes : []) as GlobalpingProbe[];
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -44,6 +46,30 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
                 }
               />
             )}
+            {tls && (
+              <>
+                <Row k="Issued to" v={<>{tls.subject ?? "–"}{tls.subject_org ? <span className="text-muted"> · {tls.subject_org}</span> : null}</>} />
+                <Row k="Issued by" v={<>{tls.issuer ?? "–"}{tls.issuer_cn && tls.issuer_cn !== tls.issuer ? <span className="text-muted"> · {tls.issuer_cn}</span> : null}</>} />
+                <Row k="Valid" v={<>{fmtDateTime(tls.not_before)} <span className="text-faint">to</span> <span style={{ color: tlsSoon ? "var(--degraded)" : undefined }}>{fmtDateTime(tls.not_after)}</span></>} />
+                <Row k="Protocol" v={`${tls.protocol ?? "–"}${tls.cipher ? ` · ${tls.cipher}` : ""}`} mono />
+                {tls.san.length > 0 && <Row k="Names" v={<span className="break-all">{tls.san.slice(0, 8).join(", ")}{tls.san.length > 8 ? ` +${tls.san.length - 8} more` : ""}</span>} mono wide />}
+                {tls.serial && <Row k="Serial" v={tls.serial} mono />}
+              </>
+            )}
+          </>
+        )}
+        {type === "globalping" && (
+          <>
+            <Row k="Measurement" v={`${String(d.measurement ?? "ping")} from ${String(d.location ?? "world")}`} />
+            <Row k="Probes" v={`${probes.length}${probes.length ? ` (${probes.filter((p) => p.status === "finished").length} finished)` : ""}`} />
+            <Row k="Loss" v={<span style={{ color: (run.loss_pct ?? 0) > 0 ? lossColor(run.loss_pct) : undefined }}>{fmtNum(run.loss_pct)}%</span>} />
+            <Row k="Avg / best / worst" v={`${fmtNum(run.avg_ms)} / ${fmtNum(run.best_ms)} / ${fmtNum(run.worst_ms)} ms`} />
+            {typeof d.url === "string" && d.url.startsWith("https://") && (
+              <Row k="Report" v={<a className="inline-flex items-center gap-1 text-accent hover:underline" href={d.url} target="_blank" rel="noreferrer">Open on globalping.io <ExternalLink size={12} /></a>} />
+            )}
+            {d.rate_limit !== undefined && d.rate_limit !== null && typeof d.rate_limit === "object" && "remaining" in (d.rate_limit as object) && (
+              <Row k="API quota" v={`${String((d.rate_limit as { remaining?: string }).remaining)} of ${String((d.rate_limit as { limit?: string }).limit ?? "?")} left this hour`} />
+            )}
           </>
         )}
         {type === "tcp" && (
@@ -57,8 +83,10 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
         {type === "dns" && (
           <>
             <Row k="Record" v={String(d.record_type ?? "A")} mono />
+            {d.random_prefix === true && <Row k="Queried name" v={<>{String(d.queried_name ?? "–")} <span className="font-sans text-faint">(random label, uncached)</span></>} mono wide />}
             <Row k="Resolver" v={String(d.nameserver ?? d.resolver ?? "system")} mono />
             <Row k="Lookup time" v={run.avg_ms !== null ? `${fmtNum(run.avg_ms)} ms` : "–"} />
+            {d.rcode !== undefined && <Row k="Result" v={<>{String(d.rcode)}{d.rcode === "NXDOMAIN" && d.random_prefix === true ? <span className="text-faint"> · expected for a random label; the timing is the measurement</span> : null}</>} mono={false} />}
             <Row k="TTL" v={d.ttl !== undefined && d.ttl !== null ? `${d.ttl}s` : "–"} />
             {Array.isArray(d.answers) && <Row k="Answers" v={<span className="whitespace-pre-wrap break-all">{(d.answers as string[]).join("\n") || "(none)"}</span>} mono wide />}
           </>
@@ -74,15 +102,50 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
           </>
         )}
       </dl>
+      {type === "globalping" && probes.length > 0 && <ProbeTable probes={probes} />}
       {run.command && <div className="font-mono text-[11px] text-faint">{run.command}</div>}
     </div>
   );
 }
 
+function ProbeTable({ probes }: { probes: GlobalpingProbe[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="table num">
+        <thead>
+          <tr>
+            <th>Probe</th>
+            <th>Resolved</th>
+            <th className="text-right">Sent / rcvd</th>
+            <th className="text-right">Loss</th>
+            <th className="text-right">Min</th>
+            <th className="text-right">Avg</th>
+            <th className="text-right">Max</th>
+          </tr>
+        </thead>
+        <tbody>
+          {probes.map((p, i) => (
+            <tr key={i}>
+              <td className="font-sans">{p.label}{p.status && p.status !== "finished" ? <span className="ml-1.5 text-[11px] text-down">{p.status}</span> : null}</td>
+              <td className="font-mono text-xs text-muted">{p.resolved ?? "–"}</td>
+              <td className="text-right text-muted">{p.sent ?? "–"} / {p.received ?? "–"}</td>
+              <td className="text-right" style={{ color: (p.loss ?? 0) > 0 ? lossColor(p.loss) : undefined }}>{fmtNum(p.loss)}%</td>
+              <td className="text-right">{fmtNum(p.min)}</td>
+              <td className="text-right font-semibold">{fmtNum(p.avg)}</td>
+              <td className="text-right">{fmtNum(p.max)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Row({ k, v, mono, wide }: { k: string; v: React.ReactNode; mono?: boolean; wide?: boolean }) {
+  // A wide row starts a fresh line so its value can span the remaining three columns instead of wrapping under the label.
   return (
     <>
-      <dt className="text-muted">{k}</dt>
+      <dt className={`text-muted ${wide ? "sm:col-start-1" : ""}`}>{k}</dt>
       <dd className={`${mono ? "font-mono text-xs" : ""} ${wide ? "sm:col-span-3" : ""} min-w-0 break-words`}>{v}</dd>
     </>
   );
