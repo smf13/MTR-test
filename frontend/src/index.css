@@ -183,16 +183,6 @@ body {
 .chart-heading { @apply flex items-center gap-2 text-sm font-semibold; }
 .chart-caption { @apply mt-1 text-xs leading-relaxed text-muted; }
 .chart-tooltip { @apply rounded-xl border border-border-strong bg-surface px-3 py-2 text-xs shadow-lg; }
-.table-scroll { @apply isolate max-h-[65vh] overflow-auto; }
-.table-scroll .table thead th { @apply sticky top-0 z-20 bg-surface; }
-.table-scroll .table tr { background: var(--surface); }
-.table-scroll .table tbody tr:hover { background: var(--surface-2); }
-.table-scroll .table th:first-child, .table-scroll .table td:first-child { position: sticky; left: 0; background: inherit; z-index: 10; }
-.table-scroll .table th:first-child { z-index: 30; background: var(--surface); }
-.hop-table th:first-child, .hop-table td:first-child { min-width: 3rem; width: 3rem; }
-.table-scroll .hop-table th:nth-child(2), .table-scroll .hop-table td:nth-child(2) { position: sticky; left: 3rem; background: inherit; z-index: 10; }
-.table-scroll .hop-table th:nth-child(2) { z-index: 30; background: var(--surface); }
-.hop-host { @apply block max-w-[9rem] truncate sm:max-w-[16rem]; }
 .recharts-tooltip-wrapper { outline: none; }
 :where(button, a, summary, select, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 640px) {

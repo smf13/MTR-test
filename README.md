@@ -4,7 +4,7 @@
 
 Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rather than a single ping.
 
-The dashboard puts target health and live measurements first, with the comparison chart below the target list. Target pages group their data into **Overview**, **Runs**, and **Events**, plus **Path analysis** for local MTR and Globalping MTR/traceroute targets. Hop tables open with key metrics and offer an **All metrics** view.
+The dashboard puts target health and live measurements first, with the comparison chart below the target list. Target pages show charts and detailed data together: **Current path**, **Path history**, **Path summary**, **Runs** and **Events** sit below the charts for local MTR and Globalping MTR/traceroute targets. Other probes offer **Runs** and **Events**. Hop tables show all original metrics by default.
 
 See the [interface guide](docs/interface.md) for the current navigation, target actions, chart legends and phone controls. The [archived screenshots](docs/screenshots.md) show an earlier interface and are retained for reference.
 
@@ -26,7 +26,7 @@ See the [interface guide](docs/interface.md) for the current navigation, target 
 - **Latency distribution** histogram with p50 / p95 / p99 markers, and an **hour-by-day heatmap** of latency, loss or jitter that exposes recurring congestion.
 - **Route timeline**: which distinct path was in use when, with share and hop count per route, one click from any segment to its run.
 - **Path history heatmap.** Hop-by-run grid coloured by loss, latency or jitter, with numeric legends. Latency and jitter use a sequential scale; no response and no data are identified separately.
-- **Compact hop tables.** Start with host, loss, average/worst latency and average jitter. Switch to **All metrics** for ASN, packet counts, last/best latency, standard deviation, maximum jitter and latency bars. Column headings and hop identity stay visible while scrolling.
+- **Detailed hop tables.** See full hostnames and IP addresses, ASN, loss, sent/received counts, last/average/best/worst latency, standard deviation, average/maximum jitter and latency bars immediately. Tables show their full height and scroll horizontally on narrow screens.
 - **Path summary.** Per-hop statistics aggregated over the selected range, including alternate addresses seen at each hop (ECMP or reroutes) with how often each was observed.
 - **Route change detection** with a hop-by-hop diff, and detection of destination IP changes for DNS-based targets.
 - **Alerting.** Per-target loss and latency thresholds produce up / degraded / down state transitions, an event log, and notifications via **Pushover** and generic JSON **webhooks** (n8n, Zapier, custom receivers), each with its own event selection and a one-click test.
@@ -280,7 +280,7 @@ Running real probes outside Docker requires the `mtr` binary (`apt install mtr-t
 Simulation produces synthetic measurements, but local MTR/ping/TCP hostname resolution, local MTR reverse DNS and configured notifications can still access the network. For an isolated UI demo, use IP-literal targets, disable reverse DNS and leave notification channels disabled.
 
 - **Backend tests:** `backend/tests`; `conftest.py` provides `client` (open instance), `protected_client` (with an API token) and `static_client` (with a stub frontend build), all built by `helpers.app_client`.
-- **Frontend tests:** `frontend/tests`, using Vitest, jsdom and Testing Library. Coverage includes target action menus, keyboard navigation, tab/probe compatibility, compact/full hop tables, help popovers, heatmap legends, dashboard filtering and clone prefill. API calls and browser-only sizing are mocked; these are component tests, not screenshot tests.
+- **Frontend tests:** `frontend/tests`, using Vitest, jsdom and Testing Library. Coverage includes target action menus, keyboard navigation, tab/probe compatibility, all hop metrics, path-summary alternate addresses, run pagination/filtering, help popovers, heatmap legends, dashboard filtering and clone prefill. API calls and browser-only sizing are mocked; these are component tests, not screenshot tests.
 - **CI:** pushes to `main` and pull requests run backend tests plus the frontend production build and component tests. A Docker build runs after both jobs pass; CI does not publish the image.
 
 ## Project layout
@@ -302,7 +302,7 @@ backend/tests/   pytest API, scheduler and probe regressions
 frontend/src/
   pages/         Dashboard, TargetDetail, RunView, Events, Settings, QuickTrace
   components/    charts, heatmaps, tables, forms, tags, Tabs, TargetActions, Popover, Layout
-  index.css      theme tokens, shared controls and scrolling tables
+  index.css      theme tokens and shared controls
 frontend/tests/  Vitest component interactions with Testing Library
 docs/            interface guide and archived screenshots
 .github/workflows/ci.yml  backend tests, frontend build/tests, Docker build

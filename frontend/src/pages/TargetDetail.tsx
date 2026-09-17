@@ -28,8 +28,7 @@ import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, hos
 import { CheckDetails } from "../components/CheckDetails";
 import { PROBE_TYPE_LABEL } from "../api";
 
-type Tab = "path" | "history" | "summary";
-type DetailView = "overview" | "path" | "runs" | "events";
+type Tab = "path" | "history" | "summary" | "runs" | "events";
 const RUN_PAGE = 25;
 
 export function TargetDetail() {
@@ -40,8 +39,7 @@ export function TargetDetail() {
   const now = useNow();
   const { colors: tagColors } = useTagColors();
   const [range, setRange] = useLocalStorage("mtr-tracker.range", "24h");
-  const [tab, setTab] = useLocalStorage<Tab>("mtr-tracker.path-tab", "path");
-  const [view, setView] = useLocalStorage<DetailView>("mtr-tracker.detail-view", "overview");
+  const [tab, setTab] = useLocalStorage<Tab>("mtr-tracker.tab", "path");
   const [heatMetric, setHeatMetric] = useState<HeatMetric>("loss");
   const [profileSource, setProfileSource] = useState<"latest" | "range">("latest");
   const [hourlyMetric, setHourlyMetric] = useState<HourlyMetric>("avg");
@@ -161,7 +159,7 @@ export function TargetDetail() {
   const run = t.latest_run;
   const latestRun = latest.data;
   const pathProbe = isPathProbe(t.type, t.options);
-  const activeView = view === "path" && !pathProbe ? "overview" : view;
+  const activeTab = !pathProbe && tab !== "runs" && tab !== "events" ? "runs" : tab;
   const latencyWord = latencyLabel(t.type, t.options);
   const singleSample = !isPacketProbe(t.type, t.options);
   const latestDetails = (run?.details || {}) as Record<string, unknown>;
@@ -207,14 +205,6 @@ export function TargetDetail() {
         </div>
       </div>
 
-      <Tabs<DetailView> label="Target views" value={activeView} onChange={setView} options={[
-        { value: "overview", label: "Overview" },
-        ...(pathProbe ? [{ value: "path" as const, label: "Path analysis" }] : []),
-        { value: "runs", label: "Runs" },
-        { value: "events", label: `Events${events.data?.length ? ` (${events.data.length})` : ""}` },
-      ]} />
-
-      {activeView === "overview" && <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatTile label={`${latencyWord} now`} value={run?.reached ? `${fmtNum(run.avg_ms)} ms` : run ? "unreachable" : "–"} sub={run?.reached ? `best ${fmtNum(run.best_ms)} · worst ${fmtNum(run.worst_ms)}` : run?.error ?? undefined} tone={status === "down" ? "down" : status === "degraded" ? "degraded" : undefined} icon={<Gauge size={15} />} />
         <StatTile label={`Avg · ${range}`} value={stats?.avg_ms !== null && stats?.avg_ms !== undefined ? `${fmtNum(stats.avg_ms)} ms` : "–"} sub={stats?.p95_ms !== null && stats?.p95_ms !== undefined ? `p95 ${fmtNum(stats.p95_ms)} · p99 ${fmtNum(stats.p99_ms)}` : undefined} icon={<Activity size={15} />} />
@@ -275,14 +265,63 @@ export function TargetDetail() {
         </div>
       </div>
 
-      </>}
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        {pathProbe ? (
+          <div className="card p-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="chart-heading"><Route size={15} /> Path profile<HelpTip label="path profile">Average round-trip latency at each hop, with a best-to-worst band and loss bars. Intermediate-hop loss alone does not establish loss at the destination.</HelpTip></h2>
+                <p className="chart-caption">Latency and loss at each hop</p>
+              </div>
+              <Segmented value={profileSource} onChange={setProfileSource} options={[{ value: "latest", label: "Latest run" }, { value: "range", label: `Avg · ${range}` }]} />
+            </div>
+            <PathProfileChart rows={profileSource === "latest" ? (latestRun ? profileFromHops(latestRun.hops) : []) : summary.data ? profileFromSummary(summary.data) : []} />
+          </div>
+        ) : (
+          <div className="card p-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="flex items-center gap-2 text-sm font-semibold"><Route size={15} /> Latest check · {PROBE_TYPE_LABEL[t.type]}</h2>
+                <p className="text-xs text-faint">{latestRun ? <>Run <Link to={`/runs/${latestRun.id}`} className="text-accent hover:underline">#{latestRun.id}</Link> · {fmtDateTime(latestRun.started_at)}</> : "Waiting for the first run…"}</p>
+              </div>
+            </div>
+            {latestRun ? <CheckDetails run={latestRun} type={t.type} /> : null}
+          </div>
+        )}
+        <div className="card p-4">
+          <div className="mb-2">
+            <h2 className="chart-heading"><BarChart3 size={15} /> Latency distribution · {range}<HelpTip label="latency distribution">Each bar counts samples in a latency interval. Percentile markers show p50, p95, and p99. A long tail indicates occasional slower samples.</HelpTip></h2>
+            <p className="chart-caption">{series.data?.bucket_sec ? `Distribution of ${fmtDuration(series.data.bucket_sec)} averages` : "Distribution of reachable runs"}</p>
+          </div>
+          <LatencyHistogram points={series.data?.points ?? []} />
+        </div>
+      </div>
 
-      {activeView !== "overview" && <div className="card overflow-hidden">
-        {activeView === "path" && <Tabs<Tab> label="Path views" value={tab} onChange={setTab} options={[
-          { value: "path", label: "Current path" }, { value: "history", label: "Path history" }, { value: "summary", label: `Summary · ${range}` },
-        ]} />}
+      <div className="card p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="chart-heading"><CalendarDays size={15} /> Hour by day · {range}<HelpTip label="hourly heatmap">Each cell represents one hour in your local time. The numerical legend uses the selected metric and this range. Red means no successful responses; empty cells have no runs.</HelpTip></h2>
+            <p className="chart-caption">Hourly patterns · local time</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Segmented<HourlyMetric> value={hourlyMetric} onChange={setHourlyMetric} options={[{ value: "avg", label: "Latency" }, { value: "loss", label: "Loss" }, { value: "jitter", label: "Jitter" }]} />
+          </div>
+        </div>
+        {hourly.data ? <HourlyHeatmap hours={hourly.data.hours} metric={hourlyMetric} /> : <div className="py-10 text-center text-sm text-faint">Loading…</div>}
+      </div>
 
-        {activeView === "path" && pathProbe && tab === "path" && (
+      <div className="card overflow-hidden">
+        <Tabs<Tab> label="Target data" value={activeTab} onChange={setTab} options={[
+          ...(pathProbe ? [
+            { value: "path" as const, label: "Current path" },
+            { value: "history" as const, label: "Path history" },
+            { value: "summary" as const, label: `Path summary · ${range}` },
+          ] : []),
+          { value: "runs", label: "Runs" },
+          { value: "events", label: `Events${events.data?.length ? ` (${events.data.length})` : ""}` },
+        ]} />
+
+        {pathProbe && activeTab === "path" && (
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-xs text-muted">
               {latestRun ? (
@@ -302,7 +341,7 @@ export function TargetDetail() {
           </div>
         )}
 
-        {activeView === "path" && pathProbe && tab === "history" && (
+        {pathProbe && activeTab === "history" && (
           <div className="p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs text-muted">One column per run<HelpTip label="path history">Rows are hops; runs progress from left to right. Hover for metrics or select a column to open the underlying run.</HelpTip></div>
@@ -320,14 +359,14 @@ export function TargetDetail() {
           </div>
         )}
 
-        {activeView === "path" && pathProbe && tab === "summary" && (
+        {pathProbe && activeTab === "summary" && (
           <div>
             <div className="px-4 py-2.5 text-xs text-muted">Per-hop statistics aggregated over {summary.data?.total_runs ?? 0} runs in the selected range. Expand a hop to see alternate addresses observed at that position (load balancing or reroutes).</div>
             {summary.data ? <PathSummary summary={summary.data} dstIp={run?.dst_ip} /> : <div className="py-10 text-center text-sm text-faint">Loading…</div>}
           </div>
         )}
 
-        {activeView === "runs" && (
+        {activeTab === "runs" && (
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
               <Segmented value={runFilter} onChange={setRunFilter} options={[{ value: "", label: "All" }, { value: "ok", label: isPacketProbe(t.type, t.options) ? "Reached" : "Passed" }, { value: "failed", label: "Failed" }, ...(pathProbe ? [{ value: "route_change" as const, label: "Route changes" }] : [])]} />
@@ -337,53 +376,8 @@ export function TargetDetail() {
           </div>
         )}
 
-        {activeView === "events" && <EventsList events={events.data ?? []} now={now} showTarget={false} />}
-      </div>}
-
-      {(activeView === "overview" || activeView === "path") && <div className="grid grid-cols-1 gap-5">
-        {activeView === "path" && pathProbe ? (
-          <div className="card p-4">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="chart-heading"><Route size={15} /> Path profile<HelpTip label="path profile">Average round-trip latency at each hop, with a best-to-worst band and loss bars. Intermediate-hop loss alone does not establish loss at the destination.</HelpTip></h2>
-                <p className="chart-caption">Latency and loss at each hop</p>
-              </div>
-              <Segmented value={profileSource} onChange={setProfileSource} options={[{ value: "latest", label: "Latest run" }, { value: "range", label: `Avg · ${range}` }]} />
-            </div>
-            <PathProfileChart rows={profileSource === "latest" ? (latestRun ? profileFromHops(latestRun.hops) : []) : summary.data ? profileFromSummary(summary.data) : []} />
-          </div>
-        ) : !pathProbe && activeView === "overview" ? (
-          <div className="card p-4">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="flex items-center gap-2 text-sm font-semibold"><Route size={15} /> Latest check · {PROBE_TYPE_LABEL[t.type]}</h2>
-                <p className="text-xs text-faint">{latestRun ? <>Run <Link to={`/runs/${latestRun.id}`} className="text-accent hover:underline">#{latestRun.id}</Link> · {fmtDateTime(latestRun.started_at)}</> : "Waiting for the first run…"}</p>
-              </div>
-            </div>
-            {latestRun ? <CheckDetails run={latestRun} type={t.type} /> : null}
-          </div>
-        ) : null}
-        {activeView === "overview" && <div className="card p-4">
-          <div className="mb-2">
-            <h2 className="chart-heading"><BarChart3 size={15} /> Latency distribution · {range}<HelpTip label="latency distribution">Each bar counts samples in a latency interval. Percentile markers show p50, p95, and p99. A long tail indicates occasional slower samples.</HelpTip></h2>
-            <p className="chart-caption">{series.data?.bucket_sec ? `Distribution of ${fmtDuration(series.data.bucket_sec)} averages` : "Distribution of reachable runs"}</p>
-          </div>
-          <LatencyHistogram points={series.data?.points ?? []} />
-        </div>}
-      </div>}
-
-      {activeView === "overview" && <div className="card p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="chart-heading"><CalendarDays size={15} /> Hour by day · {range}<HelpTip label="hourly heatmap">Each cell represents one hour in your local time. The numerical legend uses the selected metric and this range. Red means no successful responses; empty cells have no runs.</HelpTip></h2>
-            <p className="chart-caption">Hourly patterns · local time</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Segmented<HourlyMetric> value={hourlyMetric} onChange={setHourlyMetric} options={[{ value: "avg", label: "Latency" }, { value: "loss", label: "Loss" }, { value: "jitter", label: "Jitter" }]} />
-          </div>
-        </div>
-        {hourly.data ? <HourlyHeatmap hours={hourly.data.hours} metric={hourlyMetric} /> : <div className="py-10 text-center text-sm text-faint">Loading…</div>}
-      </div>}
+        {activeTab === "events" && <EventsList events={events.data ?? []} now={now} showTarget={false} />}
+      </div>
 
       <TargetForm
         open={editing || cloning}

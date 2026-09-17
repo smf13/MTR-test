@@ -393,7 +393,7 @@ export function IconBtn({ title, onClick, children, danger }: { title: string; o
 
 function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onRun }: { list: Target[]; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onRun: (t: Target) => void }) {
   return (
-    <div className="table-scroll">
+    <div className="overflow-x-auto">
       <table className="table num">
         <thead>
           <tr>

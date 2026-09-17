@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { api, type Hop, type Target, type RunDetail, type ProbeType, type ProbeOptions } from "../src/api";
+import { api, type Hop, type HopSummaryEntry, type Target, type RunDetail, type ProbeType, type ProbeOptions } from "../src/api";
 import { TargetActions } from "../src/components/TargetActions";
 import { HelpTip } from "../src/components/Popover";
 import { HopTable } from "../src/components/HopTable";
@@ -48,7 +48,7 @@ function mockDetail(t: Target = target) {
   vi.spyOn(api, "hourly").mockResolvedValue({ hours: [], range_sec: 86400 });
 }
 function renderDetail() {
-  return render(<MemoryRouter initialEntries={["/targets/1"]}><Routes><Route path="/targets/:id" element={<TargetDetail />} /></Routes></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={["/targets/1"]}><Routes><Route path="/targets/:id" element={<TargetDetail />} /><Route path="/runs/:id" element={<div>Run inspection opened</div>} /></Routes></MemoryRouter>);
 }
 
 describe("target actions", () => {
@@ -87,19 +87,18 @@ describe("target actions", () => {
 });
 
 describe("hop inspection", () => {
-  it("keeps key metrics and destination visible, with persistent access to every metric", async () => {
-    const user = userEvent.setup();
-    const view = render(<HopTable hops={[hop]} dstIp={hop.ip} />);
-    expect(screen.getAllByRole("columnheader").map((h) => h.textContent?.trim())).toEqual(["#", "Host", "Loss", "Avg (ms)", "Worst (ms)", "Jitter (ms)"]);
+  it("shows every original metric immediately even with a saved compact preference", () => {
+    localStorage.setItem("mtr-tracker.hop-columns", JSON.stringify("compact"));
+    const detailedHop = { ...hop, hostname: "long-router-name.branch-office.network.example", loss_pct: 5, sent: 20, received: 19, last_ms: 13, jitter_avg_ms: 2.5 };
+    render(<HopTable hops={[detailedHop]} dstIp={hop.ip} />);
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent?.trim())).toEqual(["#", "Host", "ASN", "Loss", "Snt", "Rcv", "Last", "Avg", "Best", "Wrst", "StDev", "Jitter", "Jmax", "Latency"]);
+    const cells = within(screen.getAllByRole("row")[1]).getAllByRole("cell");
+    expect(within(cells[1]).getByText(detailedHop.hostname)).toBeTruthy();
+    expect(within(cells[1]).getByText(hop.ip!)).toBeTruthy();
+    expect(cells.slice(2, 13).map((cell) => cell.textContent)).toEqual(["AS64500", "5.0%", "20", "19", "13.0", "12.0", "10.0", "15.0", "2.0", "2.5", "3.0"]);
+    expect(within(cells[13]).getByTitle("best 10.0 · avg 12.0 · worst 15.0 ms")).toBeTruthy();
     expect(screen.getByText("dst")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "All metrics" }));
-    expect(screen.getByRole("columnheader", { name: "ASN" })).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "Jmax (ms)" })).toBeTruthy();
-    view.unmount();
-    render(<HopTable hops={[hop]} />);
-    expect(screen.getByRole("columnheader", { name: "ASN" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Compact" }));
-    expect(screen.queryByRole("columnheader", { name: "ASN" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "All metrics" })).toBeNull();
   });
 
   it("shows a numerical scale in the metric's units", () => {
@@ -123,25 +122,77 @@ describe("hop inspection", () => {
 });
 
 describe("detail navigation", () => {
-  it("opens path data before its chart and keeps Runs and Events independent of overview charts", async () => {
+  it("restores the original data tabs below the charts with the full current path open", async () => {
     const user = userEvent.setup();
+    localStorage.setItem("mtr-tracker.detail-view", JSON.stringify("overview"));
+    localStorage.setItem("mtr-tracker.hop-columns", JSON.stringify("compact"));
     mockDetail();
     renderDetail();
-    const navigation = await screen.findByRole("tablist", { name: "Target views" });
-    const overview = within(navigation).getByRole("tab", { name: "Overview" });
-    expect(overview.getAttribute("aria-selected")).toBe("true");
-    await user.click(within(navigation).getByRole("tab", { name: "Path analysis" }));
+    const navigation = await screen.findByRole("tablist", { name: "Target data" });
+    expect(within(navigation).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Current path", "Path history", "Path summary · 24h", "Runs", "Events"]);
+    const currentPath = within(navigation).getByRole("tab", { name: "Current path" });
+    expect(currentPath.getAttribute("aria-selected")).toBe("true");
     const table = await screen.findByRole("table");
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(14);
     const profile = screen.getByRole("heading", { name: /Path profile/ });
-    expect(table.compareDocumentPosition(profile) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: /Latency distribution/ })).toBeNull();
+    expect(profile.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /Hour by day/ }).compareDocumentPosition(navigation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(within(navigation).getByRole("tab", { name: "Path history" }));
+    expect(screen.getByText("One column per run")).toBeTruthy();
+    await user.keyboard("{ArrowRight}");
+    expect(within(navigation).getByRole("tab", { name: "Path summary · 24h" }).getAttribute("aria-selected")).toBe("true");
     await user.click(within(navigation).getByRole("tab", { name: "Runs" }));
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent?.trim())).toEqual(["Started", "Result", "Hops", "Loss", "Avg", "Best", "Wrst", "StDev", "Jitter", "Duration", ""]);
     expect(screen.getByRole("button", { name: "Route changes" })).toBeTruthy();
     await user.keyboard("{ArrowRight}");
     expect(within(navigation).getByRole("tab", { name: "Events" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.queryByRole("heading", { name: /Path profile/ })).toBeNull();
+    expect(screen.getByRole("heading", { name: /Path profile/ })).toBe(profile);
+    expect(screen.getByRole("heading", { name: /Latency distribution/ })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Round-trip time to destination" })).toBeTruthy();
     await user.keyboard("{Home}");
-    expect(overview.getAttribute("aria-selected")).toBe("true");
+    expect(currentPath.getAttribute("aria-selected")).toBe("true");
+    await user.keyboard("{End}{ArrowLeft}");
+    expect(within(navigation).getByRole("tab", { name: "Runs" }).getAttribute("aria-selected")).toBe("true");
+    expect(JSON.parse(localStorage.getItem("mtr-tracker.tab")!)).toBe("runs");
+  });
+
+  it("restores a remembered path summary with all metrics and expandable alternate addresses", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("mtr-tracker.tab", JSON.stringify("summary"));
+    mockDetail();
+    const primary: HopSummaryEntry = { ip: hop.ip, hostname: hop.hostname, asn: hop.asn, runs: 8, share_pct: 80, loss_pct: 1, max_loss_pct: 5, avg_ms: 12, best_ms: 10, worst_ms: 15, stdev_ms: 2, jitter_ms: 3, jitter_max_ms: 4 };
+    vi.mocked(api.hopSummary).mockResolvedValue({ total_runs: 10, hops: [{ hop: 1, primary, alternates: [{ ...primary, ip: "192.0.2.2", hostname: "alternate.example", asn: "AS64501", runs: 2, share_pct: 20 }] }] });
+    renderDetail();
+    const table = await screen.findByRole("table");
+    expect(screen.getByRole("tab", { name: "Path summary · 24h" }).getAttribute("aria-selected")).toBe("true");
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent?.trim())).toEqual(["#", "Host", "ASN", "Seen", "Loss", "Max loss", "Avg", "Best", "Wrst", "StDev", "Jitter", "Latency"]);
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "1 alternate address seen at this hop" }));
+    const rows = within(table).getAllByRole("row");
+    expect(rows).toHaveLength(3);
+    expect(within(rows[2]).getByText("alternate.example")).toBeTruthy();
+    expect(within(rows[2]).getByText("192.0.2.2")).toBeTruthy();
+    expect(within(rows[2]).getAllByRole("cell").slice(2, 11).map((cell) => cell.textContent)).toEqual(["AS64501", "20%", "1.0%", "5.0%", "12.0", "10.0", "15.0", "2.0", "3.0"]);
+    expect(screen.getByRole("heading", { name: /Path profile/ })).toBeTruthy();
+  });
+
+  it("keeps run pagination, filtering and opening a run available in the restored data tabs", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("mtr-tracker.tab", JSON.stringify("runs"));
+    mockDetail();
+    vi.mocked(api.runs).mockImplementation(async (_id, options) => options?.limit === 1
+      ? { total: 1, items: [run] }
+      : { total: 26, items: [{ ...run, id: options?.offset ? 11 : 10, route_changed: options?.status === "route_change" }] });
+    renderDetail();
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(api.runs).toHaveBeenCalledWith(1, { limit: 25, offset: 25, range: "24h", status: undefined }));
+    expect(await screen.findByText("26–26 of 26")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Route changes" }));
+    await waitFor(() => expect(api.runs).toHaveBeenCalledWith(1, { limit: 25, offset: 0, range: "24h", status: "route_change" }));
+    expect(await screen.findByText("1–25 of 26")).toBeTruthy();
+    await user.click(await within(screen.getByRole("table")).findByText("route change"));
+    expect(await screen.findByText("Run inspection opened")).toBeTruthy();
   });
 
   it.each<[ProbeType, ProbeOptions, boolean]>([
@@ -149,12 +200,13 @@ describe("detail navigation", () => {
     ["globalping", { measurement: "mtr" }, true], ["globalping", { measurement: "traceroute" }, true],
     ["globalping", { measurement: "http" }, false],
   ])("preserves applicable views for %s %j", async (type, options, path) => {
-    localStorage.setItem("mtr-tracker.detail-view", JSON.stringify("path"));
+    localStorage.setItem("mtr-tracker.tab", JSON.stringify("path"));
     mockDetail({ ...target, type, options, latest_run: null });
     renderDetail();
-    const navigation = await screen.findByRole("tablist", { name: "Target views" });
-    expect(!!within(navigation).queryByRole("tab", { name: "Path analysis" })).toBe(path);
-    expect(within(navigation).getByRole("tab", { name: path ? "Path analysis" : "Overview" }).getAttribute("aria-selected")).toBe("true");
+    const navigation = await screen.findByRole("tablist", { name: "Target data" });
+    expect(!!within(navigation).queryByRole("tab", { name: "Current path" })).toBe(path);
+    expect(within(navigation).getByRole("tab", { name: path ? "Current path" : "Runs" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("heading", { name: path ? /Path profile/ : /Latest check/ })).toBeTruthy();
   });
 });
 

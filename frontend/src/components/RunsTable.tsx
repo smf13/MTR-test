@@ -5,7 +5,7 @@ import { fmtDateTime, fmtNum, lossColor, relTime } from "../utils";
 export function RunsTable({ runs, onOpen, now }: { runs: Run[]; onOpen: (id: number) => void; now: number }) {
   if (!runs.length) return <div className="px-3 py-8 text-center text-sm text-faint">No runs match.</div>;
   return (
-    <div className="table-scroll">
+    <div className="overflow-x-auto">
       <table className="table num">
         <thead>
           <tr>

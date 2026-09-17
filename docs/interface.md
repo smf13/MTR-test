@@ -30,32 +30,39 @@ Cloning copies configuration, not monitoring history. **Add target** starts a ne
 
 The time-range selector offers **1h**, **6h**, **24h**, **7d** and **30d**. It controls historical statistics, charts, runs and events. The latest measurement/current path always comes from the newest run, and the status strip always covers the last 24 hours.
 
-| Tab | What it contains | Available for |
+Statistics and charts stay together on one page: current and range statistics, the 24-hour status strip, latency/loss charts, latency distribution and the hour-by-day heatmap. Packet probes also show jitter. Path probes show a route timeline and **Path profile**; other probes show **Latest check** details.
+
+The data tabs sit below the charts. Switching between them keeps the charts visible above.
+
+| Data tab | What it contains | Available for |
 | --- | --- | --- |
-| **Overview** | Current and range statistics, 24-hour status strip, latency/loss charts, latency distribution and the hour-by-day heatmap. Packet probes also show jitter; path probes show a route timeline; other probes show **Latest check** details. | Every target |
-| **Path analysis** | **Current path**, **Path history**, **Summary · [range]**, and the path profile chart. | Local MTR and Globalping MTR/traceroute |
+| **Current path** | The latest run's complete hop table and a **Text report** download. The destination row is highlighted and carries a **dst** marker. | Local MTR and Globalping MTR/traceroute |
+| **Path history** | One row per hop and one column per run. Choose **Loss**, **Latency** or **Jitter**; select a column to open that run. | Local MTR and Globalping MTR/traceroute |
+| **Path summary · [range]** | Aggregated per-hop statistics, including ASN, address frequency, average/maximum loss, latency, standard deviation and jitter. Expand a hop to inspect alternate addresses seen at that position. | Local MTR and Globalping MTR/traceroute |
 | **Runs** | Paginated run history with **All**, **Reached** or **Passed**, **Failed**, and **Route changes** where applicable. Select a run to inspect it. | Every target |
 | **Events** | This target's events in the selected range. The tab displays a count when events are present. | Every target |
 
-The browser remembers the last selected view. When a remembered **Path analysis** view does not apply to the next target, the page opens **Overview** instead.
+**Current path** is the initial data tab for path probes; other probes open **Runs**. The browser remembers the selected tab. When a remembered path tab does not apply to the next target, the page shows **Runs** instead.
 
-### Path analysis
-
-- **Current path** shows the latest run's hop table and a **Text report** download. The destination row is highlighted and carries a **dst** marker.
-- **Path history** shows one row per hop and one column per run. Choose **Loss**, **Latency** or **Jitter**. Click or tap a column to open that run; scroll horizontally when needed.
-- **Summary · [range]** aggregates hop statistics across the selected period. Expand a hop to inspect alternate addresses seen at that position.
-- **Path profile**, below these views, compares per-hop latency and loss. Switch between **Latest run** and **Avg · [range]**. Intermediate-hop loss alone does not establish loss at the destination.
+**Path profile**, above the data tabs, compares per-hop latency and loss. Switch between **Latest run** and **Avg · [range]**. Intermediate-hop loss alone does not establish loss at the destination.
 
 ### Hop table columns
 
-**Compact** is the initial view. The choice is remembered in this browser and shared across hop tables that offer the selector.
+Current path, individual run pages and quick trace show the complete hop table immediately. The original 14 columns are always available, without a column-mode selector.
 
-| View | Columns |
+| Column | Meaning |
 | --- | --- |
-| **Compact** | Hop number, host, loss, average latency, worst latency and average jitter |
-| **All metrics** | Compact columns plus ASN, sent/received counts, last/best latency, standard deviation, maximum jitter and a best–worst latency bar |
+| **#** | Hop number |
+| **Host** | Full hostname and IP address, or the IP when no hostname is available |
+| **ASN** | Autonomous system number, when available |
+| **Loss** | Packet loss percentage |
+| **Snt / Rcv** | Packets sent and received |
+| **Last / Avg / Best / Wrst** | Last, average, best and worst round-trip latency |
+| **StDev** | Latency standard deviation |
+| **Jitter / Jmax** | Average and maximum jitter |
+| **Latency** | Best-to-worst latency bar with an average marker |
 
-Timing columns use milliseconds and loss uses percent. Scroll inside the table to reach additional metrics; its header and hop number/host columns stay visible. “No response” means a hop did not report an address. A dash means the requested measurement is unavailable.
+Timing columns use milliseconds and loss uses percent. Tables show their full height; scroll horizontally to reach additional columns on narrow screens. Hostnames and IP addresses are not truncated. “No response” means a hop did not report an address. A dash means the requested measurement is unavailable. A previously saved compact-view preference does not hide any columns.
 
 ## Charts, scales and help
 
@@ -77,12 +84,12 @@ On narrow screens, open **Menu** in the sticky header for **Dashboard**, **Event
 
 Target tabs and wide data tables scroll horizontally when needed. The three-dot action menu opens over the page so it remains visible inside a scrolling table.
 
-With a keyboard, use Left/Right or Home/End in target/path tabs. In an action menu, use Up/Down or Home/End to select an item, Enter to activate it, and Escape to close it and return focus to the menu button.
+With a keyboard, use Left/Right or Home/End in the data tabs. In an action menu, use Up/Down or Home/End to select an item, Enter to activate it, and Escape to close it and return focus to the menu button.
 
 ## Settings and saved preferences
 
 **Settings** controls retention, name/ASN lookups, notification channels, public URL, Globalping credentials and tag colours. It also offers **Export JSON** and **Import JSON** for target definitions; these exports do not contain monitoring history. Import modes update by name, always create, or replace all targets.
 
-Theme, dashboard view/sort, comparison-chart visibility, detail/path tab, time range and hop-table columns are saved in browser storage. They are preferences for that browser, not global settings.
+Theme, dashboard view/sort, comparison-chart visibility, data tab and time range are saved in browser storage. They are preferences for that browser, not global settings.
 
 If the server requires an API token, enter it under **Settings → API access** or in the prompt after an unauthorized write. Save the token, then retry the action. The token is stored in this browser; reading the dashboard does not require it.
