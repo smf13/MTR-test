@@ -6,7 +6,39 @@ Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rath
 
 The dashboard shows target health first, followed by the **Latency across targets** comparison chart above the filters and target list. Target pages show charts and detailed data together: **Current path**, **Path history**, **Path summary**, **Runs** and **Events** sit below the charts for local MTR and Globalping MTR/traceroute targets. Other probes offer **Runs** and **Events**. Hop tables show all original metrics by default.
 
-See the [interface guide](docs/interface.md) for the current navigation, target actions, chart legends and phone controls. The [archived screenshots](docs/screenshots.md) show an earlier interface and are retained for reference.
+See the [interface guide](docs/interface.md) for the current navigation, target actions, chart legends and phone controls, and the [screenshot gallery](docs/screenshots.md) for every capture below plus the light and OLED themes, the table view, the target form and the phone layout.
+
+## Screenshots
+
+All captures show the current interface running in simulation mode with a week of seeded history.
+
+**Dashboard**: health summary, the latency comparison chart and target cards with sparkline, 24-hour status timeline, schedule and tags.
+
+![Dashboard with health summary, latency comparison chart and target cards](docs/dashboard.png)
+
+**Target page**: current and range statistics, the status strip, round-trip time with a route-change marker, the route timeline, packet loss and jitter.
+
+![Target page with statistics, latency chart, route timeline, loss and jitter](docs/target.png)
+
+**Path profile, latency distribution and hour-by-day heatmap**, followed by the **Current path** hop table with all fourteen columns.
+
+![Path profile, latency distribution and hourly heatmap](docs/target-visuals.png)
+
+![Current path hop table of the latest run](docs/current-path.png)
+
+| Path history | Path summary |
+| --- | --- |
+| ![Path history heatmap, one column per run](docs/path-history.png) | ![Path summary with an alternate address expanded](docs/path-summary.png) |
+
+**Other probe types**: an HTTP(S) target with the response and certificate details of the latest check, and a Globalping HTTP measurement listing each remote probe.
+
+| HTTP(S) check | Globalping HTTP from three probes |
+| --- | --- |
+| ![HTTP(S) target with latest check and certificate details](docs/http-check.png) | ![Globalping HTTP target with per-probe results](docs/globalping-check.png) |
+
+**Events**: state changes, threshold alerts and route changes across all targets, with a path diff for reroutes.
+
+![Events page](docs/events.png)
 
 ## Features
 
@@ -304,7 +336,7 @@ frontend/src/
   components/    charts, heatmaps, tables, forms, tags, Tabs, TargetActions, Popover, Layout
   index.css      theme tokens and shared controls
 frontend/tests/  Vitest component interactions with Testing Library
-docs/            interface guide and archived screenshots
+docs/            interface guide and screenshots
 .github/workflows/ci.yml  backend tests, frontend build/tests, Docker build
 docker-entrypoint.sh  fixes /data ownership as root, then drops to the unprivileged user
 ```

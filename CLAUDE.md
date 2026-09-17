@@ -25,7 +25,7 @@ frontend/src/       React 19 + TypeScript + Vite 8 + Tailwind 4 + Recharts 3
   pages/            Dashboard, TargetDetail, RunView, Events, Settings, QuickTrace
   components/       Charts (RTT/loss/jitter + Sized wrapper), Visuals (overview, path profile, histogram, hourly heatmap, route timeline), StatusStrip, HopHeatmap, HopTable, PathSummary, RunsTable, EventsList, TargetForm, TargetActions, Popover (HelpTip/ActionMenu), Tabs, Tags (colour provider, chips, picker), TypeBadge, Pager, Layout
 frontend/tests/     Vitest + jsdom + Testing Library component tests; setup.ts isolates localStorage, mocks ResizeObserver and rejects unexpected fetch calls
-docs/interface.md   Current UI navigation and control guide; docs/screenshots.md labels the older captures as archived
+docs/interface.md   Current UI navigation and control guide; docs/screenshots.md is the gallery of current captures (README embeds a subset)
 Dockerfile          Multi-stage: node build of frontend -> python:3.12-slim with mtr-tiny + iputils-ping + tini; unprivileged "mtr" user
 docker-entrypoint.sh  Runs as root only to chown /data, then setpriv to the mtr user (MTR_TRACKER_RUN_AS_ROOT=1 opts out)
 docker-compose.yml  Grants NET_RAW, persistent /data volume; the image's HEALTHCHECK on /healthz applies
