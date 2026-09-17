@@ -72,13 +72,38 @@ def _clean_host_value(v: str) -> str:
     return v
 
 
+def sort_tags(tags: list[str]) -> list[str]:
+    """Alphabetical, case-insensitive; exact-case variants keep a deterministic order (uppercase first)."""
+    return sorted(tags, key=lambda t: (t.casefold(), t))
+
+
 def _clean_tags_value(v: list[str]) -> list[str]:
     cleaned: list[str] = []
     for tag in v:
-        t = tag.strip()
+        t = tag.strip()[:40]
         if t and t not in cleaned:
-            cleaned.append(t[:40])
-    return cleaned[:20]
+            cleaned.append(t)
+    return sort_tags(cleaned[:20])
+
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-f]{6}$")
+MAX_TAG_COLORS = 500
+
+
+def clean_tag_colors(v: dict[str, str]) -> dict[str, str]:
+    """Normalise a tag -> colour map: keys are trimmed tags, values lower-case #rrggbb; empty values mean 'automatic' and are dropped."""
+    out: dict[str, str] = {}
+    for tag, color in v.items():
+        key = str(tag).strip()[:40]
+        value = (color or "").strip().lower()
+        if not key or not value:
+            continue
+        if not _HEX_COLOR_RE.match(value):
+            raise ValueError(f"colour for tag '{key}' must be a hex value like #38bdf8")
+        out[key] = value
+    if len(out) > MAX_TAG_COLORS:
+        raise ValueError(f"at most {MAX_TAG_COLORS} tag colours can be stored")
+    return out
 
 
 class _TargetValidators(BaseModel):
@@ -163,6 +188,12 @@ class SettingsUpdate(BaseModel):
     pushover_events: list[str] | None = None
     base_url: str | None = Field(default=None, max_length=2048)
     site_name: str | None = Field(default=None, max_length=60)
+    tag_colors: dict[str, str] | None = Field(default=None, description="tag -> #rrggbb; tags without an entry get an automatic colour")
+
+    @field_validator("tag_colors")
+    @classmethod
+    def _check_tag_colors(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        return None if v is None else clean_tag_colors(v)
 
     @field_validator("webhook_url", "base_url")
     @classmethod

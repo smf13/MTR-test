@@ -11,6 +11,7 @@ import { ConfirmDialog } from "../components/Modal";
 import { EmptyState, ErrorBanner } from "../components/EmptyState";
 import { Segmented } from "../components/RangePicker";
 import { OverviewChart, StatusStrip } from "../components/Visuals";
+import { TagList, useTagColors } from "../components/Tags";
 import { useToast } from "../components/Toast";
 import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe } from "../utils";
 
@@ -250,6 +251,7 @@ function TargetCard({ t, now, onEdit, onDelete, onToggle, onRun }: { t: Target; 
   const status = effectiveStatus(t);
   const run = t.latest_run;
   const loss = run?.loss_pct ?? null;
+  const { colors: tagColors } = useTagColors();
   return (
     <div className="card fade-in group relative overflow-hidden p-4" style={{ borderLeft: `3px solid ${statusColor(status)}` }}>
       <div className="flex items-start justify-between gap-3">
@@ -298,11 +300,7 @@ function TargetCard({ t, now, onEdit, onDelete, onToggle, onRun }: { t: Target; 
             <Clock size={11} /> every {fmtDuration(t.interval_sec)}
           </span>
           <span>{run ? `last ${relTime(run.started_at, now)}` : "not yet run"}</span>
-          {t.tags.slice(0, 3).map((tag) => (
-            <span key={tag} className="rounded px-1.5 py-px font-medium" style={{ background: "var(--paused-soft)", color: "var(--text-muted)" }}>
-              {tag}
-            </span>
-          ))}
+          <TagList tags={t.tags} colors={tagColors} max={3} size="xs" />
         </div>
         <div className="flex items-center gap-0.5 opacity-70 transition-opacity group-hover:opacity-100">
           <IconBtn title="Run now" onClick={onRun}><Play size={13} /></IconBtn>

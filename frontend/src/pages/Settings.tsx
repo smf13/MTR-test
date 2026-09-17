@@ -1,12 +1,20 @@
-import { useEffect, useState } from "react";
-import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload, Tags as TagsIcon } from "lucide-react";
 import { api, getApiToken, setApiToken, type Settings as SettingsT, type TargetInput } from "../api";
-import { useRef } from "react";
 import { usePoll } from "../hooks";
 import { useToast } from "../components/Toast";
 import { ErrorBanner } from "../components/EmptyState";
 import { NumberInput } from "../components/NumberInput";
-import { fmtBytes, fmtDuration } from "../utils";
+import { TagColorPicker, useTagColors } from "../components/Tags";
+import { fmtBytes, fmtDuration, sortTags } from "../utils";
+
+/** Copy of a tag colour map with one tag set (hex) or reset to automatic (null). */
+function withTagColor(map: Record<string, string>, tag: string, hex: string | null): Record<string, string> {
+  const next = { ...map };
+  if (hex) next[tag] = hex;
+  else delete next[tag];
+  return next;
+}
 
 const EVENT_OPTIONS = [
   { value: "down", label: "Target down" },
@@ -19,7 +27,17 @@ export function Settings() {
   const toast = useToast();
   const settings = usePoll(() => api.settings(), 60000);
   const status = usePoll(() => api.status(), 10000);
+  const tags = usePoll(() => api.tags(), 60000);
+  const { refresh: refreshTagColors } = useTagColors();
   const [form, setForm] = useState<SettingsT | null>(null);
+  // Tags in use (with counts) plus any tag that only has a stored colour left over, so it can be reset.
+  const tagRows = useMemo(() => {
+    const counts = new Map<string, number>((tags.data ?? []).map((t) => [t.name, t.count]));
+    Object.keys(form?.tag_colors ?? {}).forEach((name) => {
+      if (!counts.has(name)) counts.set(name, 0);
+    });
+    return sortTags([...counts.keys()]).map((name) => ({ name, count: counts.get(name) ?? 0 }));
+  }, [tags.data, form?.tag_colors]);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<"webhook" | "pushover" | null>(null);
   const [token, setToken] = useState(getApiToken());
@@ -84,6 +102,7 @@ export function Settings() {
     try {
       const updated = await api.updateSettings(form);
       setForm(updated);
+      void refreshTagColors();
       toast("Settings saved", "success");
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
@@ -139,6 +158,20 @@ export function Settings() {
                     </span>
                   </label>
                 </div>
+              </section>
+
+              <section className="card p-5">
+                <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold"><TagsIcon size={15} /> Tag colours</h2>
+                <p className="mb-3 text-xs text-faint">Tags are sorted alphabetically everywhere. Every tag gets an automatic colour; click one to choose a preset or a custom colour. A colour applies to every target that carries the tag and is stored with these settings.</p>
+                {tagRows.length ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {tagRows.map((t) => (
+                      <TagColorPicker key={t.name} tag={t.name} count={t.count} value={form.tag_colors[t.name] ?? null} onChange={(hex) => setForm((f) => f && { ...f, tag_colors: withTagColor(f.tag_colors, t.name, hex) })} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-faint">No tags yet. Tags added to targets appear here.</div>
+                )}
               </section>
 
               <section className="card p-5">

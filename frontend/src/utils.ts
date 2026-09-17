@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { Status, Target } from "./api";
 
 export function fmtMs(v: number | null | undefined, digits = 1): string {
@@ -149,4 +150,46 @@ export function isPathProbe(type: string | undefined): boolean {
 /** Short label for the host of a target: strips the scheme for http probes so cards stay compact. */
 export function hostLabel(host: string): string {
   return host.replace(/^https?:\/\//i, "");
+}
+
+/** Preset tag colours. One hex per preset works on light, dark and OLED because chips mix it with the theme colours. */
+export const TAG_PRESETS: { name: string; hex: string }[] = [
+  { name: "Slate", hex: "#64748b" },
+  { name: "Red", hex: "#ef4444" },
+  { name: "Orange", hex: "#f97316" },
+  { name: "Amber", hex: "#f59e0b" },
+  { name: "Lime", hex: "#84cc16" },
+  { name: "Green", hex: "#22c55e" },
+  { name: "Teal", hex: "#14b8a6" },
+  { name: "Sky", hex: "#0ea5e9" },
+  { name: "Blue", hex: "#3b82f6" },
+  { name: "Violet", hex: "#8b5cf6" },
+  { name: "Pink", hex: "#ec4899" },
+  { name: "Rose", hex: "#f43f5e" },
+];
+
+/** Same order as the backend (`models.sort_tags`): case-insensitive, exact string as the tie-break. */
+export function sortTags(tags: string[]): string[] {
+  return [...tags].sort((a, b) => {
+    const ka = a.toLowerCase();
+    const kb = b.toLowerCase();
+    if (ka !== kb) return ka < kb ? -1 : 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+}
+
+/** Deterministic preset for tags without a configured colour, so a tag looks the same on every page. */
+export function autoTagColor(tag: string): string {
+  let h = 0;
+  for (let i = 0; i < tag.length; i++) h = (h * 31 + tag.charCodeAt(i)) | 0;
+  return TAG_PRESETS[Math.abs(h) % TAG_PRESETS.length].hex;
+}
+
+/** Soft tinted chip that stays readable on every theme: the colour is mixed with the page text and made translucent. */
+export function tagChipStyle(hex: string): CSSProperties {
+  return {
+    background: `color-mix(in srgb, ${hex} 16%, transparent)`,
+    borderColor: `color-mix(in srgb, ${hex} 45%, transparent)`,
+    color: `color-mix(in srgb, ${hex} 70%, var(--text))`,
+  };
 }

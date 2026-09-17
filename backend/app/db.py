@@ -131,6 +131,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pushover_events": ["down", "recovered", "degraded"],
     "base_url": "",
     "site_name": "MTR Tracker",
+    # tag -> "#rrggbb"; tags without an entry get an automatic colour in the UI.
+    "tag_colors": {},
 }
 
 

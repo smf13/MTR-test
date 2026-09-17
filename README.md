@@ -33,6 +33,7 @@ Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rath
 - **Path summary.** Per-hop statistics aggregated over the selected range, including alternate addresses seen at each hop (ECMP or reroutes) with how often each was observed.
 - **Route change detection** with a hop-by-hop diff, and detection of destination IP changes for DNS-based targets.
 - **Alerting.** Per-target loss and latency thresholds produce up / degraded / down state transitions, an event log, and notifications via **Pushover** and generic JSON **webhooks** (n8n, Zapier, custom receivers), each with its own event selection and a one-click test.
+- **Tags** to group and filter targets, always sorted alphabetically, each with an automatic colour that can be replaced by a preset or a custom colour (from the target form or under Settings). A colour applies everywhere the tag is used.
 - **Quick trace.** Run a one-off MTR from the server without saving it, then add the host as a target in one click.
 - **Text report export** of any run in the familiar `mtr --report` layout.
 - **Retention** control, SQLite storage (WAL mode), dark, true-black OLED and light themes, responsive layout for phones and wall displays.
@@ -178,6 +179,7 @@ The UI is a thin client over a JSON API, documented live at `/api/docs`.
 | `GET` | `/api/status` | Engine status, counters, mtr version |
 | `GET` / `PUT` | `/api/settings` | Global settings |
 | `GET` / `POST` | `/api/targets` | List (with 24h stats, sparkline and status timeline) / create |
+| `GET` | `/api/tags` | Tags in use with target counts and configured colours (`settings.tag_colors`) |
 | `GET` | `/api/targets/export` | Portable target definitions (no runs) |
 | `POST` | `/api/targets/import` | Bulk create/update: `{ "mode": "upsert" \| "create" \| "replace", "targets": [...] }` |
 | `POST` | `/api/targets/bulk` | `{ "action": "pause" \| "resume" \| "run" \| "delete", "ids": [...] }` |

@@ -302,6 +302,14 @@ export interface Settings {
   pushover_events: string[];
   base_url: string;
   site_name: string;
+  /** tag -> #rrggbb; tags without an entry get an automatic colour (see autoTagColor in utils.ts). */
+  tag_colors: Record<string, string>;
+}
+
+export interface TagInfo {
+  name: string;
+  count: number;
+  color: string | null;
 }
 
 export interface SystemStatus {
@@ -397,6 +405,7 @@ export const api = {
     request<{ ok: boolean; channel: string }>("/api/notifications/test", { method: "POST", body: JSON.stringify({ channel, settings }) }),
 
   targets: () => request<Target[]>("/api/targets"),
+  tags: () => request<TagInfo[]>("/api/tags"),
   target: (id: number, range: string) => request<Target>(`/api/targets/${id}?range=${encodeURIComponent(range)}`),
   createTarget: (body: TargetInput) => request<Target>("/api/targets", { method: "POST", body: JSON.stringify(body) }),
   updateTarget: (id: number, patch: Partial<TargetInput>) =>

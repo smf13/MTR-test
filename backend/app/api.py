@@ -15,7 +15,7 @@ from fastapi.responses import PlainTextResponse
 from . import __version__
 from .config import config
 from .db import Database, rows_to_dicts
-from .models import BulkAction, NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, validate_options
+from .models import BulkAction, NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, validate_options
 from .mtr import mtr_version, run_mtr
 from .notify import NotifyError, format_pushover_text, send_pushover, send_webhook, target_url
 from .resolver import resolve_host, reverse_lookup_many
@@ -60,8 +60,9 @@ def _target_out(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     out["enabled"] = bool(out.get("enabled"))
     try:
-        out["tags"] = json.loads(out.get("tags") or "[]")
-    except json.JSONDecodeError:
+        # Sorted on the way out as well as on write, so rows saved before tags were sorted read the same.
+        out["tags"] = sort_tags([str(t) for t in json.loads(out.get("tags") or "[]")])
+    except (json.JSONDecodeError, TypeError):
         out["tags"] = []
     out["type"] = out.get("type") or "mtr"
     try:
@@ -272,6 +273,22 @@ async def list_targets(request: Request) -> list[dict[str, Any]]:
     rows = await db.fetchall("SELECT * FROM targets ORDER BY name COLLATE NOCASE")
     targets = [_target_out(dict(r)) for r in rows]
     return await _attach_summaries(db, targets)
+
+
+@router.get("/tags")
+async def list_tags(request: Request) -> list[dict[str, Any]]:
+    """Every tag in use, alphabetically, with how many targets carry it and its configured colour (null = automatic)."""
+    db = _db(request)
+    counts: dict[str, int] = {}
+    for row in await db.fetchall("SELECT tags FROM targets"):
+        try:
+            tags = json.loads(row["tags"] or "[]")
+        except json.JSONDecodeError:
+            continue
+        for tag in {str(t) for t in tags}:
+            counts[tag] = counts.get(tag, 0) + 1
+    colors = (await db.get_settings()).get("tag_colors") or {}
+    return [{"name": tag, "count": counts[tag], "color": colors.get(tag)} for tag in sort_tags(list(counts))]
 
 
 async def _insert_target(db: Database, data: dict[str, Any]) -> int:

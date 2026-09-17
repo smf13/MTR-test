@@ -28,6 +28,12 @@ export function Layout({ children }: { children: ReactNode }) {
     window.addEventListener(AUTH_REQUIRED_EVENT, onAuth);
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, onAuth);
   }, []);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
 
   const nav = (
     <nav className="flex flex-col gap-1">
@@ -87,21 +93,26 @@ export function Layout({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-border bg-bg-elev/90 px-4 py-2.5 backdrop-blur lg:hidden">
-          <button className="btn btn-ghost btn-sm" onClick={() => setOpen((o) => !o)} aria-label="Menu">
-            {open ? <X size={18} /> : <Menu size={18} />}
-          </button>
-          <Brand compact />
-          <button className="btn btn-ghost btn-sm ml-auto" onClick={cycleTheme} aria-label="Switch theme" title={`Theme: ${theme}`}>
-            {theme === "dark" ? <MoonStar size={16} /> : theme === "oled" ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
-        </header>
-        {open && (
-          <div className="border-b border-border bg-bg-elev px-4 py-3 lg:hidden">
-            {nav}
-            {s?.simulate && <div className="mt-2 text-xs font-medium text-degraded">Simulation mode: no real packets are sent.</div>}
+        {/* The menu panel is absolutely positioned inside the sticky header, so it opens right under the
+            bar wherever the page is scrolled instead of being inserted into the flow at the top of the page. */}
+        <header className="sticky top-0 z-30 border-b border-border bg-bg-elev/90 backdrop-blur lg:hidden">
+          <div className="flex items-center gap-3 px-4 py-2.5">
+            <button className="btn btn-ghost btn-sm" onClick={() => setOpen((o) => !o)} aria-label="Menu" aria-expanded={open}>
+              {open ? <X size={18} /> : <Menu size={18} />}
+            </button>
+            <Brand compact />
+            <button className="btn btn-ghost btn-sm ml-auto" onClick={cycleTheme} aria-label="Switch theme" title={`Theme: ${theme}`}>
+              {theme === "dark" ? <MoonStar size={16} /> : theme === "oled" ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
           </div>
-        )}
+          {open && (
+            <div className="absolute inset-x-0 top-full max-h-[calc(100vh-3.5rem)] overflow-y-auto border-b border-border bg-bg-elev px-4 py-3 shadow-lg">
+              {nav}
+              {s?.simulate && <div className="mt-2 text-xs font-medium text-degraded">Simulation mode: no real packets are sent.</div>}
+            </div>
+          )}
+        </header>
+        {open && <div className="fixed inset-0 z-20 bg-black/20 lg:hidden" onClick={() => setOpen(false)} aria-hidden="true" />}
         <main className="mx-auto w-full max-w-[1500px] flex-1 px-4 py-5 sm:px-6">{children}</main>
       </div>
       <Modal

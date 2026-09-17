@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
-import { DEFAULT_OPTIONS, PROBE_TYPE_LABEL, type DnsRecordType, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { api, DEFAULT_OPTIONS, PROBE_TYPE_LABEL, type DnsRecordType, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
 import { Modal } from "./Modal";
 import { NumberInput } from "./NumberInput";
-import { classNames } from "../utils";
+import { TagColorPicker, useTagColors } from "./Tags";
+import { useToast } from "./Toast";
+import { classNames, sortTags } from "../utils";
 
 const DEFAULTS: TargetInput = {
   name: "",
@@ -23,6 +25,16 @@ const DEFAULTS: TargetInput = {
   alert_loss_pct: 5,
   alert_latency_ms: 200,
 };
+
+/** Comma-separated text -> trimmed, de-duplicated tags (order as typed; sorted where displayed and stored). */
+function parseTags(text: string): string[] {
+  const out: string[] = [];
+  for (const raw of text.split(",")) {
+    const t = raw.trim();
+    if (t && !out.includes(t)) out.push(t);
+  }
+  return out;
+}
 
 const INTERVAL_PRESETS: { label: string; value: number }[] = [
   { label: "30s", value: 30 },
@@ -55,9 +67,15 @@ export function TargetForm({
   const [advanced, setAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [headersText, setHeadersText] = useState("");
+  const toast = useToast();
+  const { colors: tagColors, refresh: refreshTagColors } = useTagColors();
+  // Colour choices made in this form: tag -> hex, or null for "back to automatic". Saved once the target is saved.
+  const [colorDraft, setColorDraft] = useState<Record<string, string | null>>({});
+  const parsedTags = useMemo(() => sortTags(parseTags(tagText)), [tagText]);
 
   useEffect(() => {
     if (!open) return;
+    setColorDraft({});
     if (initial) {
       const { name, host, type, options, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, ip_version, max_hops, enabled, alert_loss_pct, alert_latency_ms } = initial;
       setForm({ name, host, type: type || "mtr", options: { ...DEFAULT_OPTIONS[type || "mtr"], ...(options || {}) }, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, ip_version, max_hops, enabled, alert_loss_pct, alert_latency_ms });
@@ -96,12 +114,29 @@ export function TargetForm({
   const runDuration = isMtr ? Math.round(form.count * form.probe_interval + 5) : isPing ? Math.round(form.count * form.probe_interval + (form.options.timeout_sec ?? 2)) : Math.round(form.options.timeout_sec ?? 10);
   const durationWarn = runDuration > form.interval_sec * 0.9;
 
+  /** Tag colours are global settings, so they are written after the target itself has been saved. */
+  const saveTagColors = async (tags: string[]) => {
+    const changes = Object.entries(colorDraft).filter(([tag, hex]) => tags.includes(tag) && hex !== (tagColors[tag] ?? null));
+    if (!changes.length) return;
+    try {
+      const next = { ...((await api.settings()).tag_colors ?? {}) };
+      for (const [tag, hex] of changes) {
+        if (hex) next[tag] = hex;
+        else delete next[tag];
+      }
+      await api.updateSettings({ tag_colors: next });
+      await refreshTagColors();
+    } catch (e) {
+      toast(`Target saved, but the tag colours were not: ${e instanceof Error ? e.message : String(e)}`, "error");
+    }
+  };
+
   const submit = async () => {
     setError(null);
     if (!form.name.trim()) return setError("Name is required.");
     if (!form.host.trim()) return setError("Host is required.");
     if (durationWarn) return setError(`A run takes about ${runDuration}s (probes × probe interval, plus mtr's final wait), which does not fit the ${form.interval_sec}s schedule. Increase the interval or lower the probe count.`);
-    const tags = tagText.split(",").map((t) => t.trim()).filter(Boolean);
+    const tags = parsedTags;
     if (isTcp && !form.port) return setError("TCP probes need a port.");
     const options: ProbeOptions = { ...form.options };
     if (isHttp) {
@@ -117,7 +152,9 @@ export function TargetForm({
       await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), tags, options, port: isMtr && form.protocol === "icmp" ? null : form.port });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      return;
     }
+    await saveTagColors(tags);
   };
 
   return (
@@ -260,6 +297,14 @@ export function TargetForm({
         <div className="sm:col-span-2">
           <label className="label">Tags (comma separated)</label>
           <input className="input" value={tagText} onChange={(e) => setTagText(e.target.value)} placeholder="wan, isp-a, critical" />
+          {parsedTags.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {parsedTags.map((tag) => (
+                <TagColorPicker key={tag} tag={tag} value={colorDraft[tag] !== undefined ? colorDraft[tag] : (tagColors[tag] ?? null)} onChange={(hex) => setColorDraft((d) => ({ ...d, [tag]: hex }))} />
+              ))}
+              <span className="text-[11px] text-faint">Sorted alphabetically. Click a tag to pick its colour; it applies wherever the tag is used.</span>
+            </div>
+          )}
         </div>
 
         <div>

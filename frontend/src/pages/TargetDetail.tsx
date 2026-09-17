@@ -16,6 +16,7 @@ import { StatusStrip, PathProfileChart, LatencyHistogram, HourlyHeatmap, RouteTi
 import { TargetForm } from "../components/TargetForm";
 import { ConfirmDialog } from "../components/Modal";
 import { ErrorBanner } from "../components/EmptyState";
+import { TagList, useTagColors } from "../components/Tags";
 import { useToast } from "../components/Toast";
 import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, classNames, hostLabel, isPathProbe } from "../utils";
 import { CheckDetails } from "../components/CheckDetails";
@@ -31,6 +32,7 @@ export function TargetDetail() {
   const navigate = useNavigate();
   const toast = useToast();
   const now = useNow();
+  const { colors: tagColors } = useTagColors();
   const [range, setRange] = useLocalStorage("mtr-tracker.range", "24h");
   const [tab, setTab] = useLocalStorage<Tab>("mtr-tracker.tab", "path");
   const [heatMetric, setHeatMetric] = useState<HeatMetric>("loss");
@@ -146,9 +148,7 @@ export function TargetDetail() {
             <span className="inline-flex items-center gap-1"><Clock size={12} /> every {fmtDuration(t.interval_sec)}</span>
             {(pathProbe || t.type === "ping") && <span>{t.count} probes × {t.probe_interval}s</span>}
             {t.ip_version !== "auto" && <span>IPv{t.ip_version}</span>}
-            {t.tags.map((tag) => (
-              <span key={tag} className="rounded px-1.5 py-px text-xs font-medium" style={{ background: "var(--paused-soft)", color: "var(--text-muted)" }}>{tag}</span>
-            ))}
+            <TagList tags={t.tags} colors={tagColors} size="xs" />
           </div>
           {t.description && <p className="mt-1 max-w-2xl text-sm text-muted">{t.description}</p>}
         </div>

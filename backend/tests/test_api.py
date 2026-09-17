@@ -230,6 +230,31 @@ async def test_export_import_bulk(client: AsyncClient) -> None:
     assert res["total"] == 1
 
 
+async def test_tags_are_sorted_and_tag_colours_validated(client: AsyncClient) -> None:
+    r = await client.post("/api/targets", json={"name": "Tagged", "host": "192.0.2.80", "interval_sec": 60, "enabled": False, "tags": ["zeta", "Alpha", " mid ", "zeta"]})
+    assert r.status_code == 201, r.text
+    tid = r.json()["id"]
+    assert r.json()["tags"] == ["Alpha", "mid", "zeta"]
+    r = await client.put(f"/api/targets/{tid}", json={"tags": ["c", "B", "a"]})
+    assert r.json()["tags"] == ["a", "B", "c"]
+
+    # Rows written before tags were sorted (or by hand) read back sorted too.
+    db = client._transport.app.state.db  # type: ignore[attr-defined]
+    await db.execute("UPDATE targets SET tags = ? WHERE id = ?", ('["b", "A", "c"]', tid))
+    assert (await client.get(f"/api/targets/{tid}")).json()["tags"] == ["A", "b", "c"]
+
+    s = (await client.put("/api/settings", json={"tag_colors": {"b": "#FF0000", " c ": "#00ff00", "A": ""}})).json()
+    assert s["tag_colors"] == {"b": "#ff0000", "c": "#00ff00"}
+    assert (await client.put("/api/settings", json={"tag_colors": {"b": "red"}})).status_code == 422
+    assert (await client.put("/api/settings", json={"tag_colors": {"b": "#12345"}})).status_code == 422
+
+    tags = (await client.get("/api/tags")).json()
+    assert tags == [{"name": "A", "count": 1, "color": None}, {"name": "b", "count": 1, "color": "#ff0000"}, {"name": "c", "count": 1, "color": "#00ff00"}]
+
+    assert (await client.put("/api/settings", json={"tag_colors": {}})).json()["tag_colors"] == {}
+    assert all(t["color"] is None for t in (await client.get("/api/tags")).json())
+
+
 @pytest.fixture
 async def protected_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("MTR_TRACKER_API_TOKEN", "s3cret")
