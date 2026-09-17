@@ -20,16 +20,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MTR_TRACKER_PORT=8899 \
     MTR_TRACKER_HOST=0.0.0.0
 
-# mtr-tiny and iputils-ping provide the probe binaries; tini reaps zombies from short-lived processes.
+# mtr-tiny and iputils-ping provide the probe binaries; tini reaps zombies from short-lived processes;
+# libcap2-bin supplies setcap/getcap. The cap_net_raw file capability lets mtr-packet and ping open raw
+# sockets without the process being root (Debian's packages set it too; repeating it makes it explicit).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends mtr-tiny iputils-ping tini ca-certificates curl \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends mtr-tiny iputils-ping tini ca-certificates curl libcap2-bin \
+ && rm -rf /var/lib/apt/lists/* \
+ && (setcap cap_net_raw+ep /usr/bin/mtr-packet && setcap cap_net_raw+ep "$(command -v ping)" \
+     || echo "warning: setcap failed; the entrypoint will keep running as root" >&2) \
+ && groupadd --gid 1000 mtr \
+ && useradd --uid 1000 --gid mtr --home-dir /app --no-create-home --shell /usr/sbin/nologin mtr
 
 WORKDIR /app
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
 COPY --from=ui /ui/dist ./static
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh && mkdir -p /data && chown mtr:mtr /app /data
 
 VOLUME ["/data"]
 EXPOSE 8899
@@ -37,7 +45,7 @@ EXPOSE 8899
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${MTR_TRACKER_PORT:-8899}/healthz" || exit 1
 
-# mtr needs raw sockets: run as root with CAP_NET_RAW (see docker-compose.yml).
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# The entrypoint fixes the ownership of /data as root and then drops to the "mtr" user (see docker-entrypoint.sh).
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 # app.main reads MTR_TRACKER_HOST / MTR_TRACKER_PORT, so overriding the port needs no CMD change.
 CMD ["python", "-m", "app.main"]

@@ -36,6 +36,9 @@ export const DEFAULT_OPTIONS: Record<ProbeType, ProbeOptions> = {
   dns: { record_type: "A", resolver: "", expected: "", timeout_sec: 5 },
 };
 
+/** Per-type default latency alert threshold (ms); mirrors LATENCY_ALERT_DEFAULT in backend/app/models.py. */
+export const LATENCY_ALERT_DEFAULT: Record<ProbeType, number> = { mtr: 200, ping: 200, http: 1500, tcp: 500, dns: 500 };
+
 export interface Run {
   id: number;
   target_id: number;
@@ -88,6 +91,7 @@ export interface Hop {
 export interface RunDetail extends Run {
   target_name: string;
   target_host: string;
+  target_type: ProbeType;
   hops: Hop[];
   prev_run_id: number | null;
   next_run_id: number | null;
@@ -320,11 +324,14 @@ export interface SystemStatus {
   simulate: boolean;
   mtr_version: string | null;
   mtr_binary: string;
+  /** Smallest probe interval mtr accepts for this server (1 s unless it runs as root). */
+  min_probe_interval: number;
   max_concurrent_runs: number;
   active_runs: number[];
   runs_completed_since_start: number;
   db_size_bytes: number;
-  db_path: string;
+  /** Only present when the request carried the API token (or no token is configured). */
+  db_path: string | null;
   targets: { total: number; enabled: number; up: number; degraded: number; down: number; pending: number };
   runs_24h: { total: number; ok: number };
   runs_total: number;

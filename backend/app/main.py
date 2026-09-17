@@ -7,14 +7,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-import hmac
-
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
-from .api import router
+from .api import is_authenticated, router
 from .config import config
 from .db import Database
 from .scheduler import Scheduler
@@ -51,11 +49,8 @@ def create_app() -> FastAPI:
         @app.middleware("http")
         async def require_token_for_writes(request: Request, call_next):  # type: ignore[no-untyped-def]
             """When MTR_TRACKER_API_TOKEN is set, every mutating /api call needs `Authorization: Bearer <token>`."""
-            if request.url.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-                auth = request.headers.get("authorization", "")
-                supplied = auth[7:].strip() if auth.lower().startswith("bearer ") else request.headers.get("x-api-token", "")
-                if not supplied or not hmac.compare_digest(supplied, config.api_token):
-                    return JSONResponse({"detail": "API token required for write operations"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+            if request.url.path.startswith("/api/") and request.method in {"POST", "PUT", "PATCH", "DELETE"} and not is_authenticated(request):
+                return JSONResponse({"detail": "API token required for write operations"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
             return await call_next(request)
 
         log.info("API write protection enabled (MTR_TRACKER_API_TOKEN is set)")
@@ -72,7 +67,10 @@ def create_app() -> FastAPI:
         index = static_dir / "index.html"
 
         @app.get("/{path:path}", include_in_schema=False)
-        async def spa(path: str) -> FileResponse:
+        async def spa(path: str) -> Response:
+            if path == "api" or path.startswith("api/"):
+                # An unknown API path must answer as the API would, not with the HTML shell and a 200.
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
             candidate = static_dir / path
             if path and candidate.is_file() and candidate.resolve().is_relative_to(static_dir.resolve()):
                 return FileResponse(candidate)

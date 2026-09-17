@@ -1,46 +1,13 @@
-"""API tests running the app in simulation mode against a temporary database."""
+"""API tests running the app in simulation mode against a temporary database (fixtures live in conftest.py)."""
 
 from __future__ import annotations
 
 import asyncio
-import os
-from pathlib import Path
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 
-
-@pytest.fixture
-async def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("MTR_TRACKER_SIMULATE", "1")
-    monkeypatch.setenv("MTR_TRACKER_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("MTR_TRACKER_DB_PATH", str(tmp_path / "test.db"))
-    monkeypatch.setenv("MTR_TRACKER_STATIC_DIR", str(tmp_path / "missing"))
-    # config is evaluated at import time; reload the modules for this test.
-    import importlib
-
-    from app import config as config_mod
-
-    importlib.reload(config_mod)
-    from app import api as api_mod, main as main_mod, mtr as mtr_mod, probes as probes_mod, scheduler as sched_mod
-
-    for m in (mtr_mod, probes_mod, sched_mod, api_mod, main_mod):
-        importlib.reload(m)
-    app = main_mod.create_app()
-    async with main_mod.lifespan(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            yield c
-
-
-async def _wait_for_runs(c: AsyncClient, target_id: int, n: int, timeout: float = 15.0) -> list[dict]:
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        r = await c.get(f"/api/targets/{target_id}/runs")
-        items = r.json()["items"]
-        if len(items) >= n:
-            return items
-        await asyncio.sleep(0.2)
-    raise AssertionError("runs did not appear in time")
+from helpers import wait_for_runs as _wait_for_runs
 
 
 async def test_target_lifecycle_and_run(client: AsyncClient) -> None:
@@ -54,6 +21,7 @@ async def test_target_lifecycle_and_run(client: AsyncClient) -> None:
     assert run["status"] == "ok" and run["reached"] is True and run["hop_count"] > 0
 
     detail = (await client.get(f"/api/runs/{run['id']}")).json()
+    assert detail["target_type"] == "mtr" and detail["target_name"] == "Test"
     assert len(detail["hops"]) == run["hop_count"]
     assert detail["hops"][-1]["ip"] == "192.0.2.10"
     assert {"loss_pct", "avg_ms", "best_ms", "worst_ms", "stdev_ms", "jitter_avg_ms"} <= set(detail["hops"][0])
@@ -253,32 +221,6 @@ async def test_tags_are_sorted_and_tag_colours_validated(client: AsyncClient) ->
 
     assert (await client.put("/api/settings", json={"tag_colors": {}})).json()["tag_colors"] == {}
     assert all(t["color"] is None for t in (await client.get("/api/tags")).json())
-
-
-@pytest.fixture
-async def protected_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("MTR_TRACKER_API_TOKEN", "s3cret")
-    monkeypatch.setenv("MTR_TRACKER_SIMULATE", "1")
-    monkeypatch.setenv("MTR_TRACKER_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("MTR_TRACKER_DB_PATH", str(tmp_path / "p.db"))
-    monkeypatch.setenv("MTR_TRACKER_STATIC_DIR", str(tmp_path / "missing"))
-    import importlib
-
-    from app import config as config_mod
-
-    importlib.reload(config_mod)
-    from app import api as api_mod, main as main_mod, mtr as mtr_mod, probes as probes_mod, scheduler as sched_mod
-
-    for m in (mtr_mod, probes_mod, sched_mod, api_mod, main_mod):
-        importlib.reload(m)
-    app = main_mod.create_app()
-    async with main_mod.lifespan(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            yield c
-    monkeypatch.delenv("MTR_TRACKER_API_TOKEN")
-    importlib.reload(config_mod)
-    for m in (mtr_mod, probes_mod, sched_mod, api_mod, main_mod):
-        importlib.reload(m)
 
 
 async def test_api_token_protects_writes(protected_client: AsyncClient) -> None:

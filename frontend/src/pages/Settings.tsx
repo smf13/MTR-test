@@ -296,7 +296,7 @@ export function Settings() {
                 <dt className="text-muted">Runs since start</dt><dd className="text-right">{s.runs_completed_since_start}</dd>
                 <dt className="text-muted">Runs stored</dt><dd className="text-right">{s.runs_total.toLocaleString()}</dd>
                 <dt className="text-muted">Database</dt><dd className="text-right">{fmtBytes(s.db_size_bytes)}</dd>
-                <dt className="text-muted">DB path</dt><dd className="truncate text-right font-mono text-[11px]" title={s.db_path}>{s.db_path}</dd>
+                {s.db_path && <><dt className="text-muted">DB path</dt><dd className="truncate text-right font-mono text-[11px]" title={s.db_path}>{s.db_path}</dd></>}
               </dl>
             ) : (
               <div className="text-sm text-faint">Loading…</div>
@@ -306,7 +306,7 @@ export function Settings() {
           </section>
           <section className="card p-5">
             <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold"><KeyRound size={15} /> API access</h2>
-            <p className="text-xs text-muted">Everything in this UI is available as a JSON API, documented live at <a className="text-accent hover:underline" href="/api/docs" target="_blank" rel="noreferrer">/api/docs</a>. Set <span className="font-mono">MTR_TRACKER_API_TOKEN</span> on the server to require a bearer token for all changes; reads stay open.</p>
+            <p className="text-xs text-muted">Everything in this UI is available as a JSON API, documented live at <a className="text-accent hover:underline" href="/api/docs" target="_blank" rel="noreferrer">/api/docs</a>. Set <span className="font-mono">MTR_TRACKER_API_TOKEN</span> on the server to require a bearer token for all changes; reads stay open, but notification credentials and the webhook address are then shown masked unless the token is saved here.</p>
             <label className="label mt-3">Token for this browser</label>
             <div className="flex gap-2">
               <input className="input font-mono" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="only needed when the server sets a token" autoComplete="off" />

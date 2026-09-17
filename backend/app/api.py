@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import hmac
 import json
 import math
 import re
 import time
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
@@ -16,7 +19,7 @@ from . import __version__
 from .config import config
 from .db import Database, rows_to_dicts
 from .models import BulkAction, NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, validate_options
-from .mtr import mtr_version, run_mtr
+from .mtr import min_probe_interval, mtr_version, run_mtr
 from .notify import NotifyError, format_pushover_text, send_pushover, send_webhook, target_url
 from .resolver import resolve_host, reverse_lookup_many
 from .scheduler import Scheduler
@@ -54,6 +57,66 @@ def _db(request: Request) -> Database:
 
 def _sched(request: Request) -> Scheduler:
     return request.app.state.scheduler
+
+
+# ---------------------------------------------------------------------------
+# Authentication and secret handling
+# ---------------------------------------------------------------------------
+
+
+def request_token(request: Request) -> str:
+    """The API token a request carries (`Authorization: Bearer` or `X-Api-Token`), empty when absent."""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.headers.get("x-api-token", "").strip()
+
+
+def is_authenticated(request: Request) -> bool:
+    """True on an open instance (no token configured) or when the request carries the configured token."""
+    if not config.api_token:
+        return True
+    supplied = request_token(request)
+    # Bytes, not str: compare_digest raises on non-ASCII text, and header values may carry any byte.
+    return bool(supplied) and hmac.compare_digest(supplied.encode("utf-8"), config.api_token.encode("utf-8"))
+
+
+SECRET_MASK = "********"
+_SECRET_KEYS = ("pushover_api_token", "pushover_user_key")
+
+
+def _mask_token(value: str) -> str:
+    return SECRET_MASK + value[-4:] if len(value) > 8 else SECRET_MASK
+
+
+def _mask_url(value: str) -> str:
+    """Keep scheme and host so the operator sees where events go; hide path and query, which usually carry the secret."""
+    parts = urlsplit(value)
+    if not (parts.path.strip("/") or parts.query):
+        return value
+    return f"{parts.scheme}://{parts.netloc}/{SECRET_MASK}"
+
+
+def redact_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    """Settings as shown to a reader without the API token: credentials and webhook secrets are masked."""
+    out = dict(settings)
+    for key in _SECRET_KEYS:
+        if out.get(key):
+            out[key] = _mask_token(str(out[key]))
+    if out.get("webhook_url"):
+        out["webhook_url"] = _mask_url(str(out["webhook_url"]))
+    return out
+
+
+def strip_masked(patch: dict[str, Any]) -> dict[str, Any]:
+    """Drop values that still carry the mask: the client echoed a redacted setting back unchanged."""
+    return {k: v for k, v in patch.items() if not (isinstance(v, str) and SECRET_MASK in v)}
+
+
+# Ad-hoc traces are not bounded by the scheduler; cap them so a burst of quick traces cannot fork mtr without limit.
+ADHOC_PROBE_SLOTS = 2
+ADHOC_PROBE_WAIT = 30.0
+_adhoc_slots = asyncio.Semaphore(ADHOC_PROBE_SLOTS)
 
 
 def _target_out(row: dict[str, Any]) -> dict[str, Any]:
@@ -141,11 +204,13 @@ async def get_status(request: Request) -> dict[str, Any]:
         "simulate": config.simulate,
         "mtr_version": await mtr_version(),
         "mtr_binary": config.mtr_binary,
+        "min_probe_interval": min_probe_interval(),
         "max_concurrent_runs": config.max_concurrent_runs,
         "active_runs": sched.active_run_ids,
         "runs_completed_since_start": sched.runs_completed,
         "db_size_bytes": await db.db_size_bytes(),
-        "db_path": str(config.db_path),
+        # The server's filesystem layout is only shown to callers that hold the API token.
+        "db_path": str(config.db_path) if is_authenticated(request) else None,
         "targets": {k: int(counts[k] or 0) for k in ("total", "enabled", "up", "degraded", "down", "pending")},
         "runs_24h": {"total": int(runs["total"] or 0), "ok": int(runs["ok"] or 0)},
         "runs_total": int(total_runs["n"] or 0),
@@ -155,12 +220,15 @@ async def get_status(request: Request) -> dict[str, Any]:
 
 @router.get("/settings")
 async def get_settings(request: Request) -> dict[str, Any]:
-    return await _db(request).get_settings()
+    """Reads stay open, but when a token is configured only requests carrying it see the secrets unmasked."""
+    settings = await _db(request).get_settings()
+    return settings if is_authenticated(request) else redact_settings(settings)
 
 
 @router.put("/settings")
 async def put_settings(request: Request, body: SettingsUpdate) -> dict[str, Any]:
-    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    # A masked value echoed back by the UI means "unchanged"; only real values are written.
+    patch = strip_masked({k: v for k, v in body.model_dump().items() if v is not None})
     return await _db(request).set_settings(patch)
 
 
@@ -169,7 +237,7 @@ async def test_notification(request: Request, body: NotificationTest) -> dict[st
     """Send a test message through one channel using saved settings merged with any unsaved overrides."""
     settings = await _db(request).get_settings()
     if body.settings is not None:
-        settings.update({k: v for k, v in body.settings.model_dump(exclude_unset=True).items() if v is not None})
+        settings.update(strip_masked({k: v for k, v in body.settings.model_dump(exclude_unset=True).items() if v is not None}))
     site = settings.get("site_name") or "MTR Tracker"
     payload = {
         "source": site,
@@ -234,10 +302,13 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list
         if 0 <= b < TIMELINE_BUCKETS:
             timelines[int(r["target_id"])][b] = {"s": worst_label[int(r["worst"])], "n": int(r["n"]), "avg": round(r["avg_ms"], 1) if r["avg_ms"] is not None else None}
 
+    # Last SPARKLINE_POINTS runs per target in one pass. A correlated `id IN (... LIMIT n)` subquery is
+    # re-evaluated for every run row and took seconds on large histories.
     spark_rows = await db.fetchall(
-        f"SELECT target_id, started_at, avg_ms, loss_pct, reached FROM runs WHERE target_id IN ({placeholders}) "
-        f"AND id IN (SELECT id FROM runs r2 WHERE r2.target_id = runs.target_id ORDER BY started_at DESC LIMIT {SPARKLINE_POINTS}) "
-        f"ORDER BY started_at ASC",
+        f"SELECT target_id, started_at, avg_ms, loss_pct, reached FROM ("
+        f"SELECT target_id, started_at, avg_ms, loss_pct, reached, "
+        f"ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY started_at DESC) AS rn "
+        f"FROM runs WHERE target_id IN ({placeholders})) WHERE rn <= {SPARKLINE_POINTS} ORDER BY started_at ASC",
         ids,
     )
     sparks: dict[int, list[dict[str, Any]]] = {}
@@ -331,6 +402,7 @@ async def import_targets(request: Request, body: TargetImport) -> dict[str, Any]
     db = _db(request)
     created = updated = 0
     if body.mode == "replace":
+        await _sched(request).cancel(_sched(request).active_run_ids)
         await db.execute("DELETE FROM targets")
     existing = {r["name"].lower(): int(r["id"]) for r in await db.fetchall("SELECT id, name FROM targets")} if body.mode == "upsert" else {}
     for item in body.targets:
@@ -358,6 +430,7 @@ async def bulk_targets(request: Request, body: BulkAction) -> dict[str, Any]:
         raise HTTPException(404, "no matching targets")
     ph = ",".join("?" for _ in ids)
     if body.action == "delete":
+        await _sched(request).cancel(ids)
         await db.execute(f"DELETE FROM targets WHERE id IN ({ph})", ids)
     elif body.action == "pause":
         await db.execute(f"UPDATE targets SET enabled = 0, updated_at = ? WHERE id IN ({ph})", [time.time(), *ids])
@@ -433,11 +506,15 @@ async def update_target(request: Request, target_id: int, body: TargetUpdate) ->
     row = await db.fetchone("SELECT * FROM targets WHERE id = ?", (target_id,))
     if row is None:
         raise HTTPException(404, "target not found")
-    patch = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
+    patch = body.model_dump(exclude_unset=True)
+    # An explicit null would land in a NOT NULL column and surface as a 500; only the port may be cleared.
+    nulls = sorted(k for k, v in patch.items() if v is None and k != "port")
+    if nulls:
+        raise HTTPException(422, f"{', '.join(nulls)} cannot be null")
     if not patch:
         return await _load_target(request, target_id)
+    kind = patch.get("type") or row["type"] or "mtr"
     if "type" in patch or "options" in patch:
-        kind = patch.get("type") or row["type"] or "mtr"
         try:
             current = json.loads(row["options"] or "{}")
         except json.JSONDecodeError:
@@ -448,11 +525,12 @@ async def update_target(request: Request, target_id: int, body: TargetUpdate) ->
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         patch["type"] = kind
-        if kind == "tcp" and not (patch.get("port") or row["port"]):
-            raise HTTPException(422, "tcp probes need a port")
-    if "tags" in patch and patch["tags"] is not None:
+    port = patch["port"] if "port" in patch else row["port"]
+    if kind == "tcp" and not port:
+        raise HTTPException(422, "tcp probes need a port")
+    if "tags" in patch:
         patch["tags"] = json.dumps(patch["tags"])
-    if "enabled" in patch and patch["enabled"] is not None:
+    if "enabled" in patch:
         patch["enabled"] = int(patch["enabled"])
     patch["updated_at"] = time.time()
     # Re-run promptly when the schedule or probe definition changes.
@@ -472,6 +550,8 @@ async def delete_target(request: Request, target_id: int) -> None:
     row = await db.fetchone("SELECT id FROM targets WHERE id = ?", (target_id,))
     if row is None:
         raise HTTPException(404, "target not found")
+    # A run still in flight would otherwise try to write against a row that no longer exists.
+    await _sched(request).cancel([target_id])
     await db.execute("DELETE FROM targets WHERE id = ?", (target_id,))
 
 
@@ -813,7 +893,7 @@ async def list_target_events(
 
 async def _load_run(db: Database, run_id: int) -> dict[str, Any]:
     row = await db.fetchone(
-        "SELECT r.*, t.name AS target_name, t.host AS target_host FROM runs r JOIN targets t ON t.id = r.target_id WHERE r.id = ?",
+        "SELECT r.*, t.name AS target_name, t.host AS target_host, t.type AS target_type FROM runs r JOIN targets t ON t.id = r.target_id WHERE r.id = ?",
         (run_id,),
     )
     if row is None:
@@ -933,17 +1013,25 @@ async def adhoc_probe(request: Request, body: ProbeRequest) -> dict[str, Any]:
         dst_ip = await resolve_host(body.host.strip(), body.ip_version)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    result = await run_mtr(
-        dst_ip=dst_ip,
-        count=body.count,
-        probe_interval=0.5,
-        protocol=body.protocol,
-        port=body.port,
-        packet_size=64,
-        max_hops=body.max_hops,
-        ip_version=body.ip_version,
-        asn_lookup=bool(settings.get("asn_lookup", True)),
-    )
+    try:
+        await asyncio.wait_for(_adhoc_slots.acquire(), timeout=ADHOC_PROBE_WAIT)
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(429, f"{ADHOC_PROBE_SLOTS} quick traces are already running; try again in a moment") from exc
+    try:
+        result = await run_mtr(
+            dst_ip=dst_ip,
+            count=body.count,
+            # Half a second between probes keeps a trace short; non-root mtr only allows whole seconds.
+            probe_interval=max(0.5, min_probe_interval()),
+            protocol=body.protocol,
+            port=body.port,
+            packet_size=64,
+            max_hops=body.max_hops,
+            ip_version=body.ip_version,
+            asn_lookup=bool(settings.get("asn_lookup", True)),
+        )
+    finally:
+        _adhoc_slots.release()
     if not result.ok:
         raise HTTPException(502, result.error or "mtr failed")
     if settings.get("reverse_dns", True):

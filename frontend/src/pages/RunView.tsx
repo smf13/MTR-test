@@ -1,13 +1,12 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ChevronLeft, ChevronRight, Download, GitBranch, Terminal } from "lucide-react";
-import { api } from "../api";
+import { api, PROBE_TYPE_LABEL } from "../api";
 import { usePoll } from "../hooks";
 import { HopTable } from "../components/HopTable";
 import { StatTile } from "../components/StatTile";
 import { ErrorBanner } from "../components/EmptyState";
 import { fmtDateTime, fmtNum, fmtPct } from "../utils";
 import { CheckDetails } from "../components/CheckDetails";
-import type { ProbeType } from "../api";
 
 export function RunView() {
   const { id } = useParams();
@@ -49,14 +48,14 @@ export function RunView() {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatTile label="Result" value={r.status !== "ok" ? "Error" : r.reached ? "Reached" : "Unreachable"} tone={ok ? "up" : "down"} />
-        <StatTile label={r.hop_count ? "Hops" : "Probe"} value={r.hop_count || guessType(r).toUpperCase()} />
+        <StatTile label={r.hop_count ? "Hops" : "Probe"} value={r.hop_count || PROBE_TYPE_LABEL[r.target_type]} />
         <StatTile label="Loss (dst)" value={fmtPct(r.loss_pct)} tone={(r.loss_pct ?? 0) > 0 ? "degraded" : undefined} />
         <StatTile label="Avg" value={ok ? `${fmtNum(r.avg_ms)} ms` : "–"} sub={ok ? `last ${fmtNum(r.last_ms)} ms` : undefined} />
         <StatTile label="Best / Worst" value={ok ? `${fmtNum(r.best_ms)} / ${fmtNum(r.worst_ms)}` : "–"} sub="ms" />
         <StatTile label="StDev / Jitter" value={ok ? `${fmtNum(r.stdev_ms)} / ${fmtNum(r.jitter_avg_ms)}` : "–"} sub={ok ? `jitter max ${fmtNum(r.jitter_max_ms)} ms` : undefined} />
       </div>
 
-      {r.hops.length > 0 || r.details === null ? (
+      {r.target_type === "mtr" ? (
         <div className="card overflow-hidden">
           <div className="border-b border-border px-4 py-2.5 text-sm font-semibold">All hops</div>
           <HopTable hops={r.hops} dstIp={r.dst_ip} />
@@ -64,7 +63,7 @@ export function RunView() {
       ) : (
         <div className="card p-4">
           <div className="mb-2 text-sm font-semibold">Check details</div>
-          <CheckDetails run={r} type={guessType(r)} />
+          <CheckDetails run={r} type={r.target_type} />
         </div>
       )}
 
@@ -76,13 +75,4 @@ export function RunView() {
       )}
     </div>
   );
-}
-
-function guessType(r: { details: Record<string, unknown> | null; command: string | null }): ProbeType {
-  const d = r.details || {};
-  if ("samples_ms" in d) return "ping";
-  if ("status" in d || "url" in d) return "http";
-  if ("connected" in d) return "tcp";
-  if ("record_type" in d) return "dns";
-  return "mtr";
 }

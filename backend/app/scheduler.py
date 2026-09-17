@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 import time
-from typing import Any
+from typing import Any, Iterable
 
 from .config import config
 from .db import Database
@@ -19,6 +20,8 @@ log = logging.getLogger("mtr-tracker.scheduler")
 
 TICK_SECONDS = 1.0
 CLEANUP_EVERY = 3600.0
+# How long stop() waits for notifications still being delivered before giving up on them.
+NOTIFY_DRAIN_TIMEOUT = 10.0
 
 
 class Scheduler:
@@ -29,6 +32,9 @@ class Scheduler:
         self._stop = asyncio.Event()
         self._sem = asyncio.Semaphore(config.max_concurrent_runs)
         self._running: dict[int, asyncio.Task[None]] = {}
+        # Notification deliveries run detached from the run that produced them. asyncio keeps only weak
+        # references to tasks, so hold them here (and drain them on stop()) or they can vanish mid-flight.
+        self._notify_tasks: set[asyncio.Task[None]] = set()
         self._wake = asyncio.Event()
         self.started_at = time.time()
         self.runs_completed = 0
@@ -44,12 +50,18 @@ class Scheduler:
     async def stop(self) -> None:
         self._stop.set()
         self._wake.set()
-        for t in (self._task, self._cleanup_task):
-            if t:
-                t.cancel()
-        for t in list(self._running.values()):
+        loops = [t for t in (self._task, self._cleanup_task) if t is not None]
+        runs = list(self._running.values())
+        for t in (*loops, *runs):
             t.cancel()
-        await asyncio.gather(*self._running.values(), return_exceptions=True)
+        await asyncio.gather(*loops, *runs, return_exceptions=True)
+        self._running.clear()
+        if self._notify_tasks:
+            _, pending = await asyncio.wait(self._notify_tasks, timeout=NOTIFY_DRAIN_TIMEOUT)
+            for t in pending:
+                t.cancel()
+            if pending:
+                log.warning("gave up on %d notification(s) still in flight", len(pending))
         log.info("scheduler stopped")
 
     def wake(self) -> None:
@@ -58,6 +70,20 @@ class Scheduler:
     @property
     def active_run_ids(self) -> list[int]:
         return sorted(self._running.keys())
+
+    @property
+    def pending_notifications(self) -> int:
+        return len(self._notify_tasks)
+
+    async def cancel(self, target_ids: Iterable[int]) -> None:
+        """Abort in-flight runs for targets that are about to be deleted, and wait until they are gone."""
+        tasks = {tid: self._running[tid] for tid in target_ids if tid in self._running}
+        for t in tasks.values():
+            t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks.values(), return_exceptions=True)
+            for tid in tasks:
+                self._running.pop(tid, None)
 
     # -- loop --------------------------------------------------------------
 
@@ -135,21 +161,39 @@ class Scheduler:
                 await self._execute(t, settings)
             except asyncio.CancelledError:
                 raise
+            except sqlite3.IntegrityError as exc:
+                # The foreign key fails when the target row disappeared under a run that was not cancelled
+                # (deleted straight from the database, for example): nothing left to record against.
+                if await self._target_exists(target_id):
+                    log.exception("run for target %s failed", target_id)
+                    await self._record_internal_error(t, settings, exc)
+                else:
+                    log.info("target %s was deleted during its run; result discarded", target_id)
             except Exception as exc:  # noqa: BLE001
                 log.exception("run for target %s failed", target_id)
-                now = time.time()
-                run_id = await self.db.execute(
-                    "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, reached, hop_count, loss_pct) "
-                    "VALUES (?, ?, ?, 0, 'error', ?, 0, 0, 100)",
-                    (target_id, now, now, f"internal error: {exc}"),
-                )
-                await self._apply_status(t, run_id, "down", settings, error=str(exc))
+                await self._record_internal_error(t, settings, exc)
             finally:
                 self.runs_completed += 1
                 # If the run overran the interval, go again right away (with a short
                 # breather); otherwise keep the original cadence.
                 next_at = max(started + interval, time.time() + 1.0)
                 await self.db.execute("UPDATE targets SET next_run_at = ? WHERE id = ?", (next_at, target_id))
+
+    async def _target_exists(self, target_id: int) -> bool:
+        return await self.db.fetchone("SELECT 1 FROM targets WHERE id = ?", (target_id,)) is not None
+
+    async def _record_internal_error(self, t: dict[str, Any], settings: dict[str, Any], exc: BaseException) -> None:
+        now = time.time()
+        try:
+            run_id = await self.db.execute(
+                "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, reached, hop_count, loss_pct) "
+                "VALUES (?, ?, ?, 0, 'error', ?, 0, 0, 100)",
+                (t["id"], now, now, f"internal error: {exc}"),
+            )
+        except sqlite3.IntegrityError:
+            log.info("target %s was deleted during its run; error not recorded", t["id"])
+            return
+        await self._apply_status(t, run_id, "down", settings, error=str(exc))
 
     async def _execute(self, t: dict[str, Any], settings: dict[str, Any]) -> None:
         if (t.get("type") or "mtr") != "mtr":
@@ -199,42 +243,46 @@ class Scheduler:
         reached = final.ip == dst_ip and final.received > 0
         sig = route_signature(hops)
 
+        # Route changes are only judged between two runs that both reached the destination. An
+        # unreachable run is padded with unknown hops up to max_hops, so comparing across an outage
+        # would announce a bogus reroute on top of the down and recovered events.
         previous = await self.db.fetchone(
-            "SELECT id, route_hash, dst_ip FROM runs WHERE target_id = ? AND status = 'ok' ORDER BY started_at DESC LIMIT 1",
+            "SELECT id, route_hash, dst_ip FROM runs WHERE target_id = ? AND status = 'ok' AND reached = 1 ORDER BY started_at DESC LIMIT 1",
             (t["id"],),
         )
         route_changed = False
         dst_changed = False
         prev_ips: list[str | None] = []
-        if previous is not None and previous["route_hash"] and previous["route_hash"] != sig:
+        if reached and previous is not None and previous["route_hash"] and previous["route_hash"] != sig:
             prev_rows = await self.db.fetchall("SELECT ip FROM hops WHERE run_id = ? ORDER BY hop_no", (previous["id"],))
             prev_ips = [r["ip"] for r in prev_rows]
             route_changed = not routes_equivalent(prev_ips, [h.ip for h in hops])
             dst_changed = bool(previous["dst_ip"]) and previous["dst_ip"] != dst_ip
 
         summary = _summarise(final, reached)
-        run_id = await self.db.execute(
-            "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, src, dst_ip, reached, hop_count, sent, "
-            "loss_pct, last_ms, avg_ms, best_ms, worst_ms, stdev_ms, jitter_avg_ms, jitter_max_ms, route_hash, route_changed, command) "
-            "VALUES (?, ?, ?, ?, 'ok', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                t["id"], result.started_at, result.finished_at, result.duration_ms, result.src, dst_ip, int(reached), len(hops),
-                final.sent, summary["loss_pct"], summary["last_ms"], summary["avg_ms"], summary["best_ms"], summary["worst_ms"],
-                summary["stdev_ms"], summary["jitter_avg_ms"], summary["jitter_max_ms"], sig, int(route_changed), result.command,
-            ),
-            commit=False,
-        )
-        await self.db.executemany(
-            "INSERT INTO hops(run_id, hop_no, ip, hostname, asn, loss_pct, sent, received, last_ms, avg_ms, best_ms, worst_ms, "
-            "stdev_ms, gmean_ms, jitter_ms, jitter_avg_ms, jitter_max_ms, jitter_int_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
+        # The run and its hops land together or not at all.
+        async with self.db.transaction() as tx:
+            run_id = await tx.execute(
+                "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, src, dst_ip, reached, hop_count, sent, "
+                "loss_pct, last_ms, avg_ms, best_ms, worst_ms, stdev_ms, jitter_avg_ms, jitter_max_ms, route_hash, route_changed, command) "
+                "VALUES (?, ?, ?, ?, 'ok', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    run_id, h.hop_no, h.ip, h.hostname, h.asn, h.loss_pct, h.sent, h.received, h.last_ms, h.avg_ms, h.best_ms,
-                    h.worst_ms, h.stdev_ms, h.gmean_ms, h.jitter_ms, h.jitter_avg_ms, h.jitter_max_ms, h.jitter_int_ms,
-                )
-                for h in hops
-            ],
-        )
+                    t["id"], result.started_at, result.finished_at, result.duration_ms, result.src, dst_ip, int(reached), len(hops),
+                    final.sent, summary["loss_pct"], summary["last_ms"], summary["avg_ms"], summary["best_ms"], summary["worst_ms"],
+                    summary["stdev_ms"], summary["jitter_avg_ms"], summary["jitter_max_ms"], sig, int(route_changed), result.command,
+                ),
+            )
+            await tx.executemany(
+                "INSERT INTO hops(run_id, hop_no, ip, hostname, asn, loss_pct, sent, received, last_ms, avg_ms, best_ms, worst_ms, "
+                "stdev_ms, gmean_ms, jitter_ms, jitter_avg_ms, jitter_max_ms, jitter_int_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        run_id, h.hop_no, h.ip, h.hostname, h.asn, h.loss_pct, h.sent, h.received, h.last_ms, h.avg_ms, h.best_ms,
+                        h.worst_ms, h.stdev_ms, h.gmean_ms, h.jitter_ms, h.jitter_avg_ms, h.jitter_max_ms, h.jitter_int_ms,
+                    )
+                    for h in hops
+                ],
+            )
 
         if route_changed:
             if dst_changed:
@@ -336,7 +384,9 @@ class Scheduler:
             "url": target_url(settings, t["id"]),
             "timestamp": now,
         }
-        asyncio.create_task(dispatch_event(settings, payload))
+        task = asyncio.create_task(dispatch_event(settings, payload), name=f"mtr-tracker-notify-{kind}")
+        self._notify_tasks.add(task)
+        task.add_done_callback(self._notify_tasks.discard)
 
 
 def _summarise(final: HopResult, reached: bool) -> dict[str, Any]:

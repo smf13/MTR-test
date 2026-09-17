@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
+import os
 import random
 import shutil
 import time
@@ -15,6 +17,11 @@ from typing import Any
 from .config import config
 
 log = logging.getLogger("mtr-tracker.mtr")
+
+
+def min_probe_interval() -> float:
+    """Smallest `-i` this process may pass to mtr: mtr rejects sub-second intervals unless it runs as root."""
+    return 0.1 if getattr(os, "geteuid", lambda: 0)() == 0 else 1.0
 
 # Field order requested from mtr. L=Loss%, S=Snt, D=Drop, R=Rcv, N=Last, B=Best,
 # A=Avg, W=Wrst, V=StDev, G=Gmean, J=Jttr, M=Javg, X=Jmax, I=Jint.
@@ -186,6 +193,11 @@ async def run_mtr(
     if use_sim:
         return await _simulate(dst_ip=dst_ip, count=count, probe_interval=probe_interval, max_hops=max_hops)
 
+    floor = min_probe_interval()
+    if probe_interval < floor:
+        log.debug("probe interval %.2fs raised to %.1fs: mtr accepts sub-second intervals only as root", probe_interval, floor)
+        probe_interval = floor
+
     cmd = build_command(
         binary=config.mtr_binary,
         dst_ip=dst_ip,
@@ -216,6 +228,12 @@ async def run_mtr(
         await proc.wait()
         finished = time.time()
         return MtrResult(False, started, finished, " ".join(cmd), error=f"mtr timed out after {budget:.0f}s")
+    except asyncio.CancelledError:
+        # Shutdown or target deletion: do not leave an orphaned mtr probing in the background.
+        proc.kill()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        raise
     finished = time.time()
 
     text = stdout.decode("utf-8", "replace").strip()

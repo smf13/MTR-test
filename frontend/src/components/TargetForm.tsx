@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, DEFAULT_OPTIONS, PROBE_TYPE_LABEL, type DnsRecordType, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
+import { api, DEFAULT_OPTIONS, LATENCY_ALERT_DEFAULT, PROBE_TYPE_LABEL, type DnsRecordType, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
 import { Modal } from "./Modal";
 import { NumberInput } from "./NumberInput";
 import { TagColorPicker, useTagColors } from "./Tags";
@@ -25,6 +25,12 @@ const DEFAULTS: TargetInput = {
   alert_loss_pct: 5,
   alert_latency_ms: 200,
 };
+
+/** "https://host:8443/path" -> "host"; anything that is not a URL is returned as typed. */
+function hostFromUrl(value: string): string {
+  const m = /^https?:\/\/([^/?#:]+)/i.exec(value.trim());
+  return m ? m[1] : value;
+}
 
 /** Comma-separated text -> trimmed, de-duplicated tags (order as typed; sorted where displayed and stored). */
 function parseTags(text: string): string[] {
@@ -93,16 +99,17 @@ export function TargetForm({
 
   const set = <K extends keyof TargetInput>(k: K, v: TargetInput[K]) => setForm((f) => ({ ...f, [k]: v }));
   const setOpt = <K extends keyof ProbeOptions>(k: K, v: ProbeOptions[K]) => setForm((f) => ({ ...f, options: { ...f.options, [k]: v } }));
-  const LATENCY_DEFAULT: Record<ProbeType, number> = { mtr: 200, ping: 200, http: 1500, tcp: 500, dns: 500 };
   const setType = (type: ProbeType) =>
     setForm((f) => ({
       ...f,
       type,
+      // A URL only makes sense for HTTP checks; other probe types resolve a plain host name.
+      host: f.type === "http" && type !== "http" ? hostFromUrl(f.host) : f.host,
       options: { ...DEFAULT_OPTIONS[type] },
       port: type === "tcp" ? (f.port ?? 443) : f.port,
       count: type === "ping" && f.count === 10 ? 5 : f.count,
       // Keep a user-edited threshold; only swap the per-type default.
-      alert_latency_ms: f.alert_latency_ms === LATENCY_DEFAULT[f.type] ? LATENCY_DEFAULT[type] : f.alert_latency_ms,
+      alert_latency_ms: f.alert_latency_ms === LATENCY_ALERT_DEFAULT[f.type] ? LATENCY_ALERT_DEFAULT[type] : f.alert_latency_ms,
     }));
   const isMtr = form.type === "mtr";
   const isPing = form.type === "ping";
@@ -184,7 +191,7 @@ export function TargetForm({
           <label className="label">Probe type</label>
           <div className="seg w-full" role="radiogroup">
             {(Object.keys(PROBE_TYPE_LABEL) as ProbeType[]).map((k) => (
-              <button key={k} type="button" className="flex-1" data-active={form.type === k} onClick={() => setType(k)} role="radio" aria-checked={form.type === k} disabled={!!initial && initial.type !== k && false}>
+              <button key={k} type="button" className="flex-1" data-active={form.type === k} onClick={() => setType(k)} role="radio" aria-checked={form.type === k}>
                 {PROBE_TYPE_LABEL[k]}
               </button>
             ))}
@@ -385,7 +392,7 @@ export function TargetForm({
             <div>
               <label className="label">Probe interval (s)</label>
               <NumberInput className="input num" min={0.1} max={10} step={0.1} value={form.probe_interval} onChange={(v) => set("probe_interval", v ?? form.probe_interval)} />
-              <div className="help">Delay between probes ({isMtr ? "mtr -i" : "ping -i"}).</div>
+              <div className="help">Delay between probes ({isMtr ? "mtr -i" : "ping -i"}).{isMtr ? " Below 1 s only works when mtr runs as root; otherwise the server uses 1 s." : ""}</div>
             </div>
             <div>
               <label className="label">Packet size (bytes)</label>

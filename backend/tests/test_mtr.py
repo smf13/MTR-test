@@ -64,6 +64,17 @@ def test_build_command_flags() -> None:
     assert "-P" not in icmp and "-z" not in icmp and "-6" in icmp
 
 
+def test_min_probe_interval_depends_on_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    from app import mtr
+
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    assert mtr.min_probe_interval() == 1.0
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    assert mtr.min_probe_interval() == 0.1
+
+
 async def test_simulator_reaches_destination() -> None:
     result = await run_mtr(dst_ip="198.51.100.7", count=3, probe_interval=0.1, protocol="icmp", port=None, packet_size=64,
                            max_hops=30, ip_version="auto", asn_lookup=False, simulate=True)

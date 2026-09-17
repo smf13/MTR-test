@@ -6,7 +6,7 @@ import { EventsList, EVENT_KIND_LABEL } from "../components/EventsList";
 import { RangePicker, Segmented } from "../components/RangePicker";
 import { EmptyState, ErrorBanner } from "../components/EmptyState";
 import { ConfirmDialog } from "../components/Modal";
-import { Pager } from "./TargetDetail";
+import { Pager } from "../components/Pager";
 import { useToast } from "../components/Toast";
 
 const PAGE = 50;

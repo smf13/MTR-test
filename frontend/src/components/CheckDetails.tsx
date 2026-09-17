@@ -6,6 +6,8 @@ import { fmtNum, lossColor } from "../utils";
 export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
   const d = (run.details || {}) as Record<string, unknown>;
   const ok = run.status === "ok" && run.reached;
+  // The threshold the probe applied is stored with the run, so old runs keep the warning they were judged by.
+  const tlsSoon = Number(d.tls_expires_in_days) <= Number(d.tls_warn_days ?? 14);
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -35,8 +37,8 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
                   d.tls_expires_in_days === null ? (
                     <span className="text-muted">{String(d.tls_error ?? "not checked")}</span>
                   ) : (
-                    <span className="inline-flex items-center gap-1" style={{ color: Number(d.tls_expires_in_days) <= 14 ? "var(--degraded)" : "var(--up)" }}>
-                      {Number(d.tls_expires_in_days) <= 14 ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />} expires in {String(d.tls_expires_in_days)} days
+                    <span className="inline-flex items-center gap-1" style={{ color: tlsSoon ? "var(--degraded)" : "var(--up)" }}>
+                      {tlsSoon ? <ShieldAlert size={13} /> : <ShieldCheck size={13} />} expires in {String(d.tls_expires_in_days)} days
                     </span>
                   )
                 }

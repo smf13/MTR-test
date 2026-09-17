@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Plus, Search, Play, Pause, Pencil, Trash2, Clock, GitBranch, Activity, ShieldCheck, ShieldAlert, ShieldOff, RefreshCw, ChevronDown, ChevronUp, LineChart } from "lucide-react";
-import { api, PROBE_TYPE_LABEL, type Target, type TargetInput } from "../api";
+import { api, type Target, type TargetInput } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { StatusBadge } from "../components/StatusBadge";
 import { StatTile } from "../components/StatTile";
@@ -10,9 +10,13 @@ import { TargetForm } from "../components/TargetForm";
 import { ConfirmDialog } from "../components/Modal";
 import { EmptyState, ErrorBanner } from "../components/EmptyState";
 import { Segmented } from "../components/RangePicker";
-import { OverviewChart, StatusStrip } from "../components/Visuals";
+import { StatusStrip } from "../components/StatusStrip";
+import { TypeBadge } from "../components/TypeBadge";
 import { TagList, useTagColors } from "../components/Tags";
 import { useToast } from "../components/Toast";
+
+// Recharts only loads when the overview chart is actually shown.
+const OverviewChart = lazy(() => import("../components/Visuals").then((m) => ({ default: m.OverviewChart })));
 import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe } from "../utils";
 
 type SortKey = "name" | "status" | "latency" | "loss" | "hops";
@@ -176,7 +180,13 @@ export function Dashboard() {
             </div>
             <button className="btn btn-ghost btn-sm" onClick={() => setShowOverview(!showOverview)}>{showOverview ? <><ChevronUp size={14} /> Collapse</> : <><ChevronDown size={14} /> Expand</>}</button>
           </div>
-          {showOverview && <div className="mt-2"><OverviewChart data={overview.data} /></div>}
+          {showOverview && (
+            <div className="mt-2">
+              <Suspense fallback={<div style={{ height: 240 }} />}>
+                <OverviewChart data={overview.data} />
+              </Suspense>
+            </div>
+          )}
         </div>
       )}
 
@@ -310,14 +320,6 @@ function TargetCard({ t, now, onEdit, onDelete, onToggle, onRun }: { t: Target; 
         </div>
       </div>
     </div>
-  );
-}
-
-export function TypeBadge({ type }: { type: Target["type"] }) {
-  return (
-    <span className="rounded px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
-      {PROBE_TYPE_LABEL[type] ?? type}
-    </span>
   );
 }
 

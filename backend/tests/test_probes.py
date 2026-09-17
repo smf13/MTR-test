@@ -8,7 +8,14 @@ import httpx
 import pytest
 
 from app import probes
-from app.probes import json_matches, json_path, run_http, run_tcp, status_allowed
+from app.probes import json_matches, json_path, ping_payload_bytes, run_http, run_tcp, status_allowed
+
+
+def test_ping_payload_matches_mtr_packet_size() -> None:
+    # 64-byte packets like mtr's default: IPv4 20 + ICMP 8 + 36 payload; IPv6 40 + 8 + 16.
+    assert ping_payload_bytes(64, ipv6=False) == 36
+    assert ping_payload_bytes(64, ipv6=True) == 16
+    assert ping_payload_bytes(28, ipv6=False) == 0 and ping_payload_bytes(20, ipv6=True) == 0
 
 
 def test_status_allowed() -> None:
@@ -63,6 +70,14 @@ async def test_run_http_checks(live: None, monkeypatch: pytest.MonkeyPatch) -> N
 
     allowed = await run_http({"host": "http://svc.test/down", "type": "http"}, {"expected_status": "503"})
     assert allowed.reached
+
+
+async def test_run_http_caps_the_body_it_keeps(live: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    big = b"needle" + b"x" * (probes.MAX_HTTP_BODY + 100_000)
+    monkeypatch.setattr(probes, "_HTTP_TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(200, content=big)))
+    o = await run_http({"host": "http://svc.test/big", "type": "http"}, {"keyword": "needle"})
+    assert o.reached and o.details["keyword_found"] is True
+    assert o.details["truncated"] is True and o.details["bytes"] == len(big)
 
 
 async def test_run_tcp_local(live: None) -> None:

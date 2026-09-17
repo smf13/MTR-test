@@ -16,48 +16,48 @@ export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, deps: 
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
-  const alive = useRef(true);
-  const inflight = useRef<Promise<void> | null>(null);
+  // Bumped whenever the deps change or the hook unmounts. A response from an older generation is
+  // discarded, and a request still in flight for the old parameters is never reused for the new ones
+  // (which used to leave the previous target's or range's data on screen until the next tick).
+  const generation = useRef(0);
+  const inflight = useRef<{ generation: number; promise: Promise<void> } | null>(null);
 
   const refresh = useCallback(async () => {
-    if (inflight.current) return inflight.current;
-    const p = (async () => {
+    const gen = generation.current;
+    if (inflight.current && inflight.current.generation === gen) return inflight.current.promise;
+    const promise = (async () => {
       try {
         const result = await fetcherRef.current();
-        if (!alive.current) return;
+        if (gen !== generation.current) return;
         setData(result);
         setError(null);
         setLastUpdated(Date.now());
       } catch (e) {
-        if (!alive.current) return;
+        if (gen !== generation.current) return;
         setError(e instanceof Error ? e.message : String(e));
       } finally {
-        if (alive.current) setLoading(false);
-        inflight.current = null;
+        if (gen === generation.current) setLoading(false);
+        if (inflight.current?.generation === gen) inflight.current = null;
       }
     })();
-    inflight.current = p;
-    return p;
+    inflight.current = { generation: gen, promise };
+    return promise;
   }, []);
 
   useEffect(() => {
-    alive.current = true;
+    generation.current += 1;
+    inflight.current = null;
     setLoading(true);
     void refresh();
-    let timer: number | undefined;
-    const schedule = () => {
-      window.clearInterval(timer);
-      timer = window.setInterval(() => {
-        if (document.visibilityState === "visible") void refresh();
-      }, intervalMs);
-    };
-    schedule();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, intervalMs);
     const onVis = () => {
       if (document.visibilityState === "visible") void refresh();
     };
     document.addEventListener("visibilitychange", onVis);
     return () => {
-      alive.current = false;
+      generation.current += 1;
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVis);
     };

@@ -14,18 +14,15 @@ services:
       MTR_TRACKER_LOG_LEVEL: "info"
       # Set to "1" to generate synthetic data without sending packets (demos, dev machines).
       MTR_TRACKER_SIMULATE: "0"
-      # Optional: MTR_TRACKER_MTR_BINARY, MTR_TRACKER_PORT
-    # mtr needs raw sockets for ICMP/UDP/TCP probing.
+      # Optional: MTR_TRACKER_MTR_BINARY, MTR_TRACKER_PORT, MTR_TRACKER_API_TOKEN.
+      # Optional: MTR_TRACKER_RUN_AS_ROOT=1 keeps the process as root, only needed for probe intervals below 1 s.
+    # The process runs as an unprivileged user; mtr-packet and ping carry the cap_net_raw file capability,
+    # which only takes effect when NET_RAW is in the container's capability set (Docker's default includes it).
     cap_add:
       - NET_RAW
-      - NET_ADMIN
     # Optional: uncomment to probe from the host network stack (sees the host's real first hop).
     # network_mode: host
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${MTR_TRACKER_PORT:-8899}/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+    # The image's HEALTHCHECK (curl on /healthz) applies; it reads MTR_TRACKER_PORT inside the container.
 
 volumes:
   mtr-tracker-data:

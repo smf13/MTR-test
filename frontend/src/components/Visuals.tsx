@@ -1,29 +1,10 @@
 import { useMemo, useState } from "react";
 import { Area, Bar, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
-import type { Hop, HopSummary, HourlyBucket, OverviewSeries, Routes, SeriesPoint, TimelineBucket } from "../api";
+import type { Hop, HopSummary, HourlyBucket, OverviewSeries, Routes, SeriesPoint } from "../api";
 import { Sized } from "./Charts";
 import { fmtNum, fmtTime, fmtDateTime, latencyColor, lossColor, percentile, seriesColor, classNames } from "../utils";
 
-/* ------------------------------------------------------------------ */
-/* Status timeline strip (24h, one cell per bucket)                     */
-/* ------------------------------------------------------------------ */
-
-const STATUS_FILL: Record<TimelineBucket["s"], string> = { up: "var(--up)", degraded: "var(--degraded)", down: "var(--down)" };
-
-export function StatusStrip({ buckets, bucketSec, since, height = 8, className }: { buckets: (TimelineBucket | null)[]; bucketSec: number; since: string; height?: number; className?: string }) {
-  const start = new Date(since).getTime();
-  return (
-    <div className={classNames("flex w-full gap-px", className)} style={{ height }} aria-label="Status over the last 24 hours">
-      {buckets.map((b, i) => {
-        const from = new Date(start + i * bucketSec * 1000);
-        const title = b
-          ? `${fmtTime(from.toISOString())}: ${b.s}${b.avg !== null ? ` · avg ${fmtNum(b.avg)} ms` : ""} · ${b.n} run${b.n === 1 ? "" : "s"}`
-          : `${fmtTime(from.toISOString())}: no runs`;
-        return <div key={i} className="flex-1 rounded-[1px]" style={{ background: b ? STATUS_FILL[b.s] : "var(--surface-2)", opacity: b ? 0.9 : 1 }} title={title} />;
-      })}
-    </div>
-  );
-}
+/* The status strip lives in StatusStrip.tsx so pages can show it without loading Recharts. */
 
 /* ------------------------------------------------------------------ */
 /* Multi-target latency overview                                        */

@@ -12,7 +12,10 @@ import { HopHeatmap, HeatLegend, type HeatMetric } from "../components/HopHeatma
 import { PathSummary } from "../components/PathSummary";
 import { RunsTable } from "../components/RunsTable";
 import { EventsList } from "../components/EventsList";
-import { StatusStrip, PathProfileChart, LatencyHistogram, HourlyHeatmap, RouteTimeline, profileFromHops, profileFromSummary, type HourlyMetric } from "../components/Visuals";
+import { PathProfileChart, LatencyHistogram, HourlyHeatmap, RouteTimeline, profileFromHops, profileFromSummary, type HourlyMetric } from "../components/Visuals";
+import { StatusStrip } from "../components/StatusStrip";
+import { Pager } from "../components/Pager";
+import { TypeBadge } from "../components/TypeBadge";
 import { TargetForm } from "../components/TargetForm";
 import { ConfirmDialog } from "../components/Modal";
 import { ErrorBanner } from "../components/EmptyState";
@@ -20,7 +23,6 @@ import { TagList, useTagColors } from "../components/Tags";
 import { useToast } from "../components/Toast";
 import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, classNames, hostLabel, isPathProbe } from "../utils";
 import { CheckDetails } from "../components/CheckDetails";
-import { TypeBadge } from "./Dashboard";
 import { PROBE_TYPE_LABEL } from "../api";
 
 type Tab = "path" | "history" | "summary" | "runs" | "events";
@@ -88,23 +90,38 @@ export function TargetDetail() {
     }
   };
 
+  const report = (e: unknown) => toast(e instanceof Error ? e.message : String(e), "error");
+
   const toggle = async () => {
     if (!t) return;
-    await api.updateTarget(t.id, { enabled: !t.enabled });
-    toast(t.enabled ? "Monitoring paused" : "Monitoring resumed", "info");
-    void target.refresh();
+    try {
+      await api.updateTarget(t.id, { enabled: !t.enabled });
+      toast(t.enabled ? "Monitoring paused" : "Monitoring resumed", "info");
+      void target.refresh();
+    } catch (e) {
+      report(e);
+    }
   };
 
   const runNow = async () => {
-    const r = await api.runNow(targetId);
-    toast(r.already_running ? "A probe is already running" : "Probe started", "info");
-    window.setTimeout(refreshAll, 2500);
+    try {
+      const r = await api.runNow(targetId);
+      toast(r.already_running ? "A probe is already running" : "Probe started", "info");
+      window.setTimeout(refreshAll, 2500);
+    } catch (e) {
+      report(e);
+    }
   };
 
   const remove = async () => {
-    await api.deleteTarget(targetId);
-    toast("Target deleted", "info");
-    navigate("/");
+    try {
+      await api.deleteTarget(targetId);
+      toast("Target deleted", "info");
+      navigate("/");
+    } catch (e) {
+      setDeleting(false);
+      report(e);
+    }
   };
 
   if (target.error && !t) {
@@ -120,7 +137,7 @@ export function TargetDetail() {
   if (!t) return <div className="py-20 text-center text-sm text-faint">Loading…</div>;
 
   const run = t.latest_run;
-  const latestRun = latest.data && latest.data.id === run?.id ? latest.data : latest.data;
+  const latestRun = latest.data;
   const pathProbe = isPathProbe(t.type);
   const latencyWord = t.type === "http" ? "Response" : t.type === "tcp" ? "Connect" : t.type === "dns" ? "Lookup" : "Latency";
   const singleSample = !pathProbe && t.type !== "ping";
@@ -373,17 +390,6 @@ function Legend() {
       <span className="inline-flex items-center gap-1"><span className="inline-block h-[2px] w-4" style={{ background: "var(--chart-avg)" }} /> avg</span>
       <span className="inline-flex items-center gap-1"><span className="inline-block h-3 w-4 rounded-sm" style={{ background: "var(--chart-band)", opacity: 0.25 }} /> best–worst</span>
       <span className="inline-flex items-center gap-1"><span className="inline-block h-3 w-1 rounded-sm" style={{ background: "var(--chart-jitter)" }} /> route change</span>
-    </div>
-  );
-}
-
-export function Pager({ page, pageSize, total, onChange }: { page: number; pageSize: number; total: number; onChange: (p: number) => void }) {
-  const pages = Math.max(1, Math.ceil(total / pageSize));
-  return (
-    <div className="flex items-center gap-2 text-xs text-muted">
-      <span className="num">{total ? `${page * pageSize + 1}–${Math.min(total, (page + 1) * pageSize)} of ${total}` : "0 results"}</span>
-      <button className="btn btn-sm" disabled={page === 0} onClick={() => onChange(page - 1)}>Prev</button>
-      <button className="btn btn-sm" disabled={page + 1 >= pages} onClick={() => onChange(page + 1)}>Next</button>
     </div>
   );
 }

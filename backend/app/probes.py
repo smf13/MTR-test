@@ -7,11 +7,11 @@ stores for MTR runs, plus a free-form `details` dict shown in the UI.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import random
 import re
 import shutil
-import socket
 import ssl
 import statistics
 import time
@@ -25,7 +25,8 @@ import httpx
 from .config import config
 from .resolver import is_ip, resolve_host
 
-PROBE_TYPES = ("mtr", "ping", "http", "tcp", "dns")
+# Bytes of an HTTP response body kept in memory for the keyword/JSON checks; the rest is discarded.
+MAX_HTTP_BODY = 5_000_000
 
 # Tests override these: force live mode and inject an httpx.MockTransport.
 _FORCE_LIVE = False
@@ -103,11 +104,17 @@ _PING_TIME_RE = re.compile(r"time[=<]([\d.]+)\s*ms")
 _PING_SUMMARY_RE = re.compile(r"(\d+) packets transmitted, (\d+) (?:packets )?received")
 
 
+def ping_payload_bytes(packet_size: int, ipv6: bool) -> int:
+    """ping's -s counts only the ICMP payload while mtr's -s (and `targets.packet_size`) is the whole IP packet,
+    so subtract the IP header (20 bytes for IPv4, 40 for IPv6) and the 8-byte ICMP header to send equal sizes."""
+    return max(0, int(packet_size) - (48 if ipv6 else 28))
+
+
 async def run_ping(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     started = time.time()
     count = int(t.get("count") or 5)
     interval = float(t.get("probe_interval") or 1.0)
-    size = int(t.get("packet_size") or 56)
+    size = int(t.get("packet_size") or 64)
     timeout = float(opts.get("timeout_sec") or 2.0)
     try:
         dst_ip = await resolve_host(t["host"], t.get("ip_version") or "auto")
@@ -117,15 +124,24 @@ async def run_ping(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     if _sim() or shutil.which("ping") is None:
         return _simulate_ping(started, dst_ip, count)
 
-    cmd = ["ping", "-6" if ":" in dst_ip else "-4", "-n", "-c", str(count), "-i", f"{max(0.2, interval):g}", "-W", f"{timeout:g}", "-s", str(max(0, size - 8)), dst_ip]
+    ipv6 = ":" in dst_ip
+    cmd = ["ping", "-6" if ipv6 else "-4", "-n", "-c", str(count), "-i", f"{max(0.2, interval):g}", "-W", f"{timeout:g}", "-s", str(ping_payload_bytes(size, ipv6)), dst_ip]
     budget = count * (max(0.2, interval) + timeout) + 5
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=budget)
-    except asyncio.TimeoutError:
-        return ProbeOutcome(False, False, started, time.time(), error=f"ping timed out after {budget:.0f}s", dst_ip=dst_ip, loss_pct=100.0, command=" ".join(cmd))
     except FileNotFoundError:
         return ProbeOutcome(False, False, started, time.time(), error="ping binary not found", dst_ip=dst_ip, loss_pct=100.0)
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=budget)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return ProbeOutcome(False, False, started, time.time(), error=f"ping timed out after {budget:.0f}s", dst_ip=dst_ip, loss_pct=100.0, command=" ".join(cmd))
+    except asyncio.CancelledError:
+        proc.kill()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+        raise
     finished = time.time()
     text = stdout.decode("utf-8", "replace")
     samples = [float(m) for m in _PING_TIME_RE.findall(text)]
@@ -210,8 +226,31 @@ def json_matches(value: Any, expected: str) -> bool:
     return str(value) == expected
 
 
+def cert_days_left(cert: dict[str, Any] | None) -> tuple[int | None, str | None]:
+    """Days until a peer certificate (as returned by getpeercert()) expires, or (None, reason)."""
+    if not cert or "notAfter" not in cert:
+        return None, "no certificate"
+    try:
+        not_after = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None, f"unreadable expiry date {cert['notAfter']!r}"
+    return int((not_after - datetime.now(timezone.utc)).total_seconds() // 86400), None
+
+
+def cert_days_from_response(resp: httpx.Response) -> tuple[int | None, str | None] | None:
+    """Certificate expiry read off the TLS connection that served this response, or None when unavailable
+    (plain HTTP, mocked transports, or a stream that exposes no ssl object)."""
+    try:
+        stream = resp.extensions.get("network_stream")
+        ssl_obj = stream.get_extra_info("ssl_object") if stream is not None else None
+        cert = ssl_obj.getpeercert() if ssl_obj is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+    return cert_days_left(cert) if cert else None
+
+
 async def tls_expiry_days(host: str, port: int, timeout: float = 5.0) -> tuple[int | None, str | None]:
-    """Days until the server certificate expires, or (None, reason)."""
+    """Days until the server certificate expires, via a dedicated connection; or (None, reason)."""
     ctx = ssl.create_default_context()
     try:
         _, writer = await asyncio.wait_for(asyncio.open_connection(host, port, ssl=ctx, server_hostname=host), timeout=timeout)
@@ -219,11 +258,7 @@ async def tls_expiry_days(host: str, port: int, timeout: float = 5.0) -> tuple[i
         return None, str(exc) or exc.__class__.__name__
     try:
         ssl_obj = writer.get_extra_info("ssl_object")
-        cert = ssl_obj.getpeercert() if ssl_obj else None
-        if not cert or "notAfter" not in cert:
-            return None, "no certificate"
-        not_after = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
-        return int((not_after - datetime.now(timezone.utc)).total_seconds() // 86400), None
+        return cert_days_left(ssl_obj.getpeercert() if ssl_obj else None)
     finally:
         writer.close()
         try:
@@ -253,15 +288,33 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     tls_warn_days = int(opts.get("tls_warn_days") or 0)
 
     if _sim():
-        return _simulate_http(started, url, keyword, jpath)
+        return _simulate_http(started, url, keyword, jpath, tls_warn_days)
 
     parts = urlsplit(url)
+    want_tls = parts.scheme == "https" and verify and tls_warn_days > 0
     details: dict[str, Any] = {"url": url, "method": method}
+    tls: tuple[int | None, str | None] | None = None
     try:
         async with httpx.AsyncClient(timeout=timeout, verify=verify, follow_redirects=follow, headers=headers, transport=_HTTP_TRANSPORT) as client:
             t0 = time.perf_counter()
-            resp = await client.request(method, url, content=body.encode() if isinstance(body, str) and body else None)
-            elapsed = (time.perf_counter() - t0) * 1000.0
+            # Stream the body: a monitored URL may serve something huge, and only the first MAX_HTTP_BODY
+            # bytes are needed for the keyword and JSON checks.
+            async with client.stream(method, url, content=body.encode() if isinstance(body, str) and body else None) as resp:
+                if want_tls:
+                    tls = cert_days_from_response(resp)
+                chunks: list[bytes] = []
+                received = 0
+                truncated = False
+                async for chunk in resp.aiter_bytes():
+                    room = MAX_HTTP_BODY - received
+                    received += len(chunk)
+                    if len(chunk) > room:
+                        chunks.append(chunk[:room])
+                        truncated = True
+                        break
+                    chunks.append(chunk)
+                elapsed = (time.perf_counter() - t0) * 1000.0
+                content = b"".join(chunks)
     except httpx.HTTPError as exc:
         return ProbeOutcome(True, False, started, time.time(), error=f"{exc.__class__.__name__}: {exc}", loss_pct=100.0, details=details)
     finished = time.time()
@@ -270,7 +323,7 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
         {
             "status": resp.status_code,
             "reason": resp.reason_phrase,
-            "bytes": len(resp.content),
+            "bytes": received,
             "content_type": resp.headers.get("content-type"),
             "server": resp.headers.get("server"),
             "final_url": str(resp.url),
@@ -278,13 +331,18 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
             "http_version": resp.http_version,
         }
     )
+    if truncated:
+        details["truncated"] = True
     failures: list[str] = []
     ok_status = status_allowed(resp.status_code, opts.get("expected_status"))
     details["status_ok"] = ok_status
     if not ok_status:
         failures.append(f"HTTP {resp.status_code} not in expected {opts.get('expected_status') or '200-299'}")
 
-    text = resp.text if len(resp.content) <= 5_000_000 else ""
+    try:
+        text = content.decode(resp.charset_encoding or "utf-8", "replace")
+    except LookupError:
+        text = content.decode("utf-8", "replace")
     if keyword:
         found = keyword.lower() in text.lower()
         details["keyword"] = keyword
@@ -295,7 +353,7 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
             failures.append(f"keyword '{keyword}' not found")
     if jpath:
         try:
-            data = resp.json()
+            data = json.loads(text)
             found, value = json_path(data, jpath)
             details["json_path"] = jpath
             details["json_value"] = value if isinstance(value, (str, int, float, bool)) or value is None else json.dumps(value)[:200]
@@ -310,12 +368,14 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
             failures.append("response is not valid JSON")
 
     warnings: list[str] = []
-    if parts.scheme == "https" and verify:
-        days, why = await tls_expiry_days(parts.hostname or "", parts.port or 443)
+    if want_tls:
+        # Prefer the certificate of the connection just used; open a second one only when the stream did not expose it.
+        days, why = tls if tls is not None else await tls_expiry_days(parts.hostname or "", parts.port or 443)
         details["tls_expires_in_days"] = days
+        details["tls_warn_days"] = tls_warn_days
         if days is None and why:
             details["tls_error"] = why
-        elif days is not None and tls_warn_days > 0 and days <= tls_warn_days:
+        elif days is not None and days <= tls_warn_days:
             warnings.append(f"TLS certificate expires in {days} day{'s' if days != 1 else ''}")
 
     o = ProbeOutcome(True, not failures, started, finished, dst_ip=None, sent=1, details=details, warnings=warnings, command=f"{method} {url}")
@@ -326,12 +386,12 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     return o
 
 
-def _simulate_http(started: float, url: str, keyword: str, jpath: str) -> ProbeOutcome:
+def _simulate_http(started: float, url: str, keyword: str, jpath: str, tls_warn_days: int = 14) -> ProbeOutcome:
     rng = random.Random()
     elapsed = max(20.0, rng.gauss(180, 40))
     fail = rng.random() < 0.03
     details = {"url": url, "method": "GET", "status": 503 if fail else 200, "reason": "Service Unavailable" if fail else "OK", "bytes": 15234, "content_type": "text/html; charset=utf-8",
-               "server": "simulator", "final_url": url, "redirects": 0, "http_version": "HTTP/1.1", "status_ok": not fail, "tls_expires_in_days": 61}
+               "server": "simulator", "final_url": url, "redirects": 0, "http_version": "HTTP/1.1", "status_ok": not fail, "tls_expires_in_days": 61, "tls_warn_days": tls_warn_days}
     if keyword:
         details.update({"keyword": keyword, "keyword_found": not fail})
     if jpath:
@@ -454,7 +514,3 @@ async def run_probe(t: dict[str, Any]) -> ProbeOutcome:
     except Exception as exc:  # noqa: BLE001
         now = time.time()
         return ProbeOutcome(False, False, now, now, error=f"{exc.__class__.__name__}: {exc}", loss_pct=100.0)
-
-
-def socket_family_hint(ip: str) -> int:
-    return socket.AF_INET6 if ":" in ip else socket.AF_INET

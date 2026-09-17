@@ -49,7 +49,9 @@ docker compose up -d --build
 
 Open <http://localhost:8899>, click **Add target**, enter a host and an interval, and the first run starts immediately.
 
-Data lives in the `mtr-tracker-data` volume (`/data` inside the container). The container needs `CAP_NET_RAW` for mtr, which `docker-compose.yml` already grants. Uncomment `network_mode: host` if you want the first hop to be your host's real gateway instead of the Docker bridge.
+Data lives in the `mtr-tracker-data` volume (`/data` inside the container). The process runs as an unprivileged user (uid 1000): `mtr-packet` and `ping` carry the `cap_net_raw` file capability, so raw sockets work without root as long as `NET_RAW` is in the container's capability set (Docker's default, and `docker-compose.yml` grants it explicitly). At start the entrypoint changes the owner of `/data` to that user, which also applies to a bind-mounted host directory. Uncomment `network_mode: host` if you want the first hop to be your host's real gateway instead of the Docker bridge.
+
+mtr only accepts probe intervals below one second when it runs as root, so such intervals are raised to 1 s in the container. Set `MTR_TRACKER_RUN_AS_ROOT=1` to keep the process as root if you need them.
 
 ### Configuration
 
@@ -58,12 +60,13 @@ Environment variables (read at startup):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `MTR_TRACKER_PORT` | `8899` | HTTP port |
-| `MTR_TRACKER_DATA_DIR` | `/data` | Directory for the SQLite database |
+| `MTR_TRACKER_DATA_DIR` | `./data` (`/data` in the image) | Directory for the SQLite database |
 | `MTR_TRACKER_MAX_CONCURRENT_RUNS` | `8` | How many mtr processes may run at once. Raise it if you have many targets on short intervals |
 | `MTR_TRACKER_MTR_BINARY` | `mtr` | Path to the mtr binary |
 | `MTR_TRACKER_SIMULATE` | `0` | `1` generates synthetic paths instead of sending packets |
 | `MTR_TRACKER_LOG_LEVEL` | `info` | Log verbosity |
-| `MTR_TRACKER_API_TOKEN` | empty | When set, all write requests need `Authorization: Bearer <token>` |
+| `MTR_TRACKER_API_TOKEN` | empty | When set, all write requests need `Authorization: Bearer <token>`, and reads of the settings show credentials masked unless they carry it |
+| `MTR_TRACKER_RUN_AS_ROOT` | `0` | Docker only: `1` keeps the process as root (needed for mtr probe intervals below 1 s) |
 
 Everything else (retention days, reverse DNS, ASN lookup, notification channels, public URL) is set in the UI under **Settings** and stored in the database.
 
@@ -99,12 +102,16 @@ Event kinds: `down`, `recovered`, `degraded`, `route_change`. `url` is present w
 - **Every hop shows 100% loss** in live mode: the container lacks raw-socket rights. Keep `cap_add: [NET_RAW]` in the compose file, or use `network_mode: host`.
 - **First hop is `172.x.x.x`** instead of your gateway: that is the Docker bridge. Use `network_mode: host` to probe from the host's network stack.
 - **`mtr binary not found`** in Settings: the image ships `mtr-tiny`; outside Docker install it (`apt install mtr-tiny`) or set `MTR_TRACKER_MTR_BINARY`.
+- **A probe interval below 1 s runs at 1 s**: mtr refuses shorter intervals for non-root users. Run as root (`MTR_TRACKER_RUN_AS_ROOT=1` in Docker) if you need them; `/api/status` reports the effective minimum as `min_probe_interval`.
+- **Slow API right after lowering the retention**: the hourly purge deletes in batches of 5000 runs and yields between them, so the UI stays responsive, but a very large backlog still takes a while to disappear.
 
 ## Managing targets from the API
 
 The UI is a thin client over a JSON API, so anything you do by hand can be scripted. Interactive docs with every schema live at `/api/docs`.
 
-Set `MTR_TRACKER_API_TOKEN` on the server to require `Authorization: Bearer <token>` (or `X-Api-Token`) on every `POST`, `PUT` and `DELETE`. Reads stay open so dashboards and wall displays work without credentials. When a token is set, the UI asks for it once and keeps it in the browser (Settings → API access).
+Set `MTR_TRACKER_API_TOKEN` on the server to require `Authorization: Bearer <token>` (or `X-Api-Token`) on every `POST`, `PUT` and `DELETE`. Reads stay open so dashboards and wall displays work without credentials, but with a token set, `GET /api/settings` masks the Pushover credentials and the path of the webhook URL (`********`) unless the request carries the token, and `GET /api/status` omits the database path. A masked value sent back in a `PUT` leaves the stored one untouched. When a token is set, the UI asks for it once and keeps it in the browser (Settings → API access).
+
+`POST /api/probe` (quick trace) runs at most two traces at a time; further requests wait up to 30 s and then get `429`.
 
 ```bash
 BASE=http://localhost:8899
@@ -165,8 +172,8 @@ Target fields: `name`, `host` (hostname, IP, or URL for http), `type` (`mtr` | `
 1. The scheduler wakes every second and launches any enabled target whose next run is due (limited by `MTR_TRACKER_MAX_CONCURRENT_RUNS`). The interval is measured from the start of a run, so a 30 s target starts a run every 30 s; a run with 10 probes takes about 15 s, so keep the interval comfortably above probes × probe interval + 5 s.
 2. The host is resolved to a single IP (honouring the target's IP version) so the destination hop can be identified unambiguously.
 3. For MTR targets, `mtr --json -n -c <count> -i <probe interval> -s <size> -m <max hops> -o LSDRNBAWVGJMXI [-4|-6] [--udp|--tcp -P <port>] [-z] <ip>` runs and its JSON report is parsed.
-4. Hop IPs are reverse-resolved (cached), the route signature is compared with the previous run, thresholds are evaluated, and the run, hops and any events are written in one transaction.
-5. State transitions (`up` → `degraded` → `down` → `recovered`) create events and fire notifications.
+4. Hop IPs are reverse-resolved (cached), the route signature is compared with the previous run that reached the destination (an unreachable run is padded with unknown hops, so comparing across an outage would report a bogus reroute), thresholds are evaluated, and the run and its hops are written in one transaction.
+5. State transitions (`up` → `degraded` → `down` → `recovered`) create events and fire notifications. Deleting a target cancels a run still in flight.
 
 Ping, HTTP, TCP and DNS targets follow the same loop with `probes.py` in place of mtr: one summary row per run plus a `details` object (samples, status code, TLS expiry, answers) instead of hops. A failed check is `down`; a TLS certificate inside the warning window is `degraded`.
 
@@ -221,7 +228,9 @@ npm run dev        # http://localhost:5173, proxies /api to :8899
 npm run build      # writes dist/, which the backend serves automatically
 ```
 
-Running real probes outside Docker requires the `mtr` binary (`apt install mtr-tiny`) and either root or `setcap cap_net_raw+ep $(which mtr)`.
+Running real probes outside Docker requires the `mtr` binary (`apt install mtr-tiny`, which gives `mtr-packet` the `cap_net_raw` capability) and `iputils-ping`. Root is only needed for probe intervals below one second.
+
+Tests live in `backend/tests`: `conftest.py` provides `client` (open instance), `protected_client` (with an API token) and `static_client` (with a stub frontend build), all built by `helpers.app_client`.
 
 ## Project layout
 
@@ -234,11 +243,12 @@ backend/app/
   probes.py      ping, HTTP, TCP and DNS probes
   notify.py      webhook + Pushover delivery, event fan-out
   resolver.py    forward / reverse DNS with cache
-  db.py          SQLite schema and helpers
+  db.py          SQLite schema, transactions, batched retention purge
   models.py      request schemas
 frontend/src/
   pages/         Dashboard, TargetDetail, RunView, Events, Settings, QuickTrace
-  components/    charts, heatmap, hop tables, forms, layout
+  components/    charts, heatmap, hop tables, forms, tags, layout
+docker-entrypoint.sh  fixes /data ownership as root, then drops to the unprivileged user
 ```
 
 ## License

@@ -1,12 +1,6 @@
 import type { CSSProperties } from "react";
 import type { Status, Target } from "./api";
 
-export function fmtMs(v: number | null | undefined, digits = 1): string {
-  if (v === null || v === undefined || Number.isNaN(v)) return "–";
-  if (v >= 1000) return `${(v / 1000).toFixed(2)} s`;
-  return `${v.toFixed(v < 10 ? Math.max(digits, 2) : digits)} ms`;
-}
-
 export function fmtNum(v: number | null | undefined, digits = 1): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "–";
   return v.toFixed(digits);
@@ -121,10 +115,6 @@ export function hopLabel(hop: { ip: string | null; hostname: string | null }): s
 
 export function classNames(...xs: (string | false | null | undefined)[]): string {
   return xs.filter(Boolean).join(" ");
-}
-
-export function clamp(v: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, v));
 }
 
 /** Categorical palette for multi-target charts; readable on dark, OLED and light backgrounds. */

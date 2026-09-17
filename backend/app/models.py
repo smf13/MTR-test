@@ -246,13 +246,6 @@ class ProbeRequest(BaseModel):
     max_hops: int = Field(default=30, ge=1, le=64)
 
 
-def apply_update(existing: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(existing)
-    for k, v in patch.items():
-        merged[k] = v
-    return merged
-
-
 class BulkAction(BaseModel):
     action: Literal["pause", "resume", "run", "delete"]
     ids: list[int] = Field(min_length=1, max_length=1000)

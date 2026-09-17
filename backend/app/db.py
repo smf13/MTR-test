@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
 
@@ -13,7 +14,7 @@ import aiosqlite
 
 log = logging.getLogger("mtr-tracker.db")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -78,6 +79,7 @@ CREATE TABLE IF NOT EXISTS runs (
     details TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runs_target_started ON runs(target_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at);
 
 CREATE TABLE IF NOT EXISTS hops (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,6 +116,8 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_target ON events(target_id, created_at DESC);
+-- Without this, every run deleted by the retention purge scans the whole events table for ON DELETE SET NULL.
+CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id);
 """
 
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -134,6 +138,22 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # tag -> "#rrggbb"; tags without an entry get an automatic colour in the UI.
     "tag_colors": {},
 }
+
+
+class Transaction:
+    """Statements issued inside one `Database.transaction()` block: one lock hold, one commit (or one rollback)."""
+
+    def __init__(self, conn: aiosqlite.Connection):
+        self._conn = conn
+
+    async def execute(self, sql: str, params: Iterable[Any] = ()) -> int:
+        cur = await self._conn.execute(sql, tuple(params))
+        last_id = cur.lastrowid or 0
+        await cur.close()
+        return last_id
+
+    async def executemany(self, sql: str, rows: Iterable[Iterable[Any]]) -> None:
+        await self._conn.executemany(sql, [tuple(r) for r in rows])
 
 
 class Database:
@@ -213,6 +233,21 @@ class Database:
     async def commit(self) -> None:
         await self.conn.commit()
 
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[Transaction]:
+        """Run several statements atomically: every one is committed on success, none on error.
+
+        The lock is held for the whole block, so no other writer can slip a commit in between
+        (which is what `execute(commit=False)` followed by a second call allowed).
+        """
+        async with self._lock:
+            try:
+                yield Transaction(self.conn)
+            except BaseException:
+                await self.conn.rollback()
+                raise
+            await self.conn.commit()
+
     # -- settings --------------------------------------------------------
 
     async def get_settings(self) -> dict[str, Any]:
@@ -241,12 +276,28 @@ class Database:
                 total += p.stat().st_size
         return total
 
-    async def purge_older_than(self, days: int) -> int:
+    async def purge_older_than(self, days: int, batch: int = 5000) -> int:
+        """Delete runs (hops follow by cascade) and events older than `days`.
+
+        Runs go in batches with a commit and a yield to the event loop between them: one huge DELETE
+        holds the single connection for minutes when the retention window shrinks, and every API
+        request waits behind it.
+        """
         cutoff = time.time() - days * 86400
+        removed = 0
+        while True:
+            async with self._lock:
+                cur = await self.conn.execute(
+                    "DELETE FROM runs WHERE id IN (SELECT id FROM runs WHERE started_at < ? LIMIT ?)", (cutoff, batch)
+                )
+                n = cur.rowcount or 0
+                await cur.close()
+                await self.conn.commit()
+            removed += n
+            if n < batch:
+                break
+            await asyncio.sleep(0.05)
         async with self._lock:
-            cur = await self.conn.execute("DELETE FROM runs WHERE started_at < ?", (cutoff,))
-            removed = cur.rowcount or 0
-            await cur.close()
             cur = await self.conn.execute("DELETE FROM events WHERE created_at < ?", (cutoff,))
             await cur.close()
             await self.conn.commit()
@@ -255,8 +306,3 @@ class Database:
 
 def rows_to_dicts(rows: Iterable[aiosqlite.Row]) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
-
-
-async def iter_rows(rows: list[aiosqlite.Row]) -> AsyncIterator[dict[str, Any]]:
-    for r in rows:
-        yield dict(r)
