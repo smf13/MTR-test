@@ -6,7 +6,9 @@ export type IpVersion = "auto" | "4" | "6";
 export type ProbeType = "mtr" | "ping" | "http" | "tcp" | "dns" | "globalping";
 export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
 export type DnsRecordType = "A" | "AAAA" | "CNAME" | "MX" | "NS" | "TXT" | "SOA" | "PTR" | "SRV";
-export type GlobalpingMeasurement = "ping" | "mtr";
+export type GlobalpingMeasurement = "ping" | "traceroute" | "mtr" | "dns" | "http";
+export type GlobalpingHttpMethod = "GET" | "HEAD" | "OPTIONS";
+export type GlobalpingHttpProtocol = "HTTPS" | "HTTP" | "HTTP2";
 
 export interface HttpOptions {
   method: HttpMethod;
@@ -38,8 +40,18 @@ export interface GlobalpingOptions {
   measurement: GlobalpingMeasurement;
   /** Globalping "magic" location: country, city, continent, region, ASN, network or cloud region; "world" = any probe. */
   location: string;
-  /** Probes to use at that location (ping only; mtr always uses one). */
+  /** Probes to use at that location (ping, dns, http); traceroute and mtr always use one. */
   probes: number;
+  /** dns: record type, resolver the probe should ask (empty = its own) and an expected answer substring. */
+  record_type: DnsRecordType;
+  resolver: string;
+  expected: string;
+  /** http: request path, method, protocol, acceptable status codes and a body keyword. */
+  path: string;
+  http_method: GlobalpingHttpMethod;
+  http_protocol: GlobalpingHttpProtocol;
+  expected_status: string;
+  keyword: string;
 }
 export type ProbeOptions = Partial<HttpOptions & PingOptions & TcpOptions & DnsOptions & GlobalpingOptions>;
 
@@ -51,7 +63,7 @@ export const DEFAULT_OPTIONS: Record<ProbeType, ProbeOptions> = {
   http: { method: "GET", expected_status: "200-299", keyword: "", keyword_absent: false, json_path: "", json_expected: "", headers: {}, body: "", timeout_sec: 10, verify_tls: true, follow_redirects: true, tls_warn_days: 14, tls_info: true },
   tcp: { timeout_sec: 5 },
   dns: { record_type: "A", resolver: "", expected: "", timeout_sec: 5, random_prefix: false },
-  globalping: { measurement: "ping", location: "world", probes: 1 },
+  globalping: { measurement: "ping", location: "world", probes: 1, record_type: "A", resolver: "", expected: "", path: "/", http_method: "GET", http_protocol: "HTTPS", expected_status: "200-299", keyword: "" },
 };
 
 /** Per-type default latency alert threshold (ms); mirrors LATENCY_ALERT_DEFAULT in backend/app/models.py. */
@@ -72,14 +84,19 @@ export interface TlsInfo {
   cipher: string | null;
 }
 
-/** One remote probe of a Globalping ping run (details.probes[]). */
-export interface GlobalpingProbe {
+/** Where a Globalping probe sits; shared by every measurement's details.probes[] entries. */
+export interface GlobalpingProbeBase {
   label: string;
+  continent: string | null;
   country: string | null;
   city: string | null;
   asn: number | null;
   network: string | null;
   status: string | null;
+}
+
+/** One remote probe of a Globalping ping run. */
+export interface GlobalpingProbe extends GlobalpingProbeBase {
   resolved: string | null;
   sent: number | null;
   received: number | null;
@@ -88,6 +105,31 @@ export interface GlobalpingProbe {
   avg: number | null;
   max: number | null;
   rtts: number[];
+}
+
+/** One remote probe of a Globalping dns run. */
+export interface GlobalpingDnsProbe extends GlobalpingProbeBase {
+  rcode: string | null;
+  resolver: string | null;
+  total_ms: number | null;
+  answers: { name: string | null; type: string | null; ttl: number | null; value: string | null }[];
+  passed: boolean;
+  reason: string | null;
+}
+
+/** One remote probe of a Globalping http run. */
+export interface GlobalpingHttpProbe extends GlobalpingProbeBase {
+  status_code: number | null;
+  status_name: string | null;
+  resolved: string | null;
+  total_ms: number | null;
+  timings: { dns: number | null; tcp: number | null; tls: number | null; firstByte: number | null; download: number | null };
+  server: string | null;
+  content_type: string | null;
+  truncated: boolean;
+  tls: TlsInfo | null;
+  passed: boolean;
+  reason: string | null;
 }
 
 export interface Run {

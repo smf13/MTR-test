@@ -12,7 +12,18 @@ IpVersion = Literal["auto", "4", "6"]
 ProbeType = Literal["mtr", "ping", "http", "tcp", "dns", "globalping"]
 HttpMethod = Literal["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 DnsRecordType = Literal["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV"]
-GlobalpingMeasurement = Literal["ping", "mtr"]
+GlobalpingMeasurement = Literal["ping", "traceroute", "mtr", "dns", "http"]
+GlobalpingHttpMethod = Literal["GET", "HEAD", "OPTIONS"]
+GlobalpingHttpProtocol = Literal["HTTPS", "HTTP", "HTTP2"]
+
+
+def clean_status_spec(v: str) -> str:
+    """'200', '200-299' or '200,301' style lists of acceptable HTTP status codes."""
+    v = (v or "").strip() or "200-299"
+    for token in v.split(","):
+        if not re.match(r"^\s*\d{3}(\s*-\s*\d{3})?\s*$", token):
+            raise ValueError(f"invalid status token '{token.strip()}'")
+    return v
 
 
 class HttpOptions(BaseModel):
@@ -33,11 +44,7 @@ class HttpOptions(BaseModel):
     @field_validator("expected_status")
     @classmethod
     def _status(cls, v: str) -> str:
-        v = v.strip() or "200-299"
-        for token in v.split(","):
-            if not re.match(r"^\s*\d{3}(\s*-\s*\d{3})?\s*$", token):
-                raise ValueError(f"invalid status token '{token.strip()}'")
-        return v
+        return clean_status_spec(v)
 
 
 class PingOptions(BaseModel):
@@ -68,12 +75,38 @@ class GlobalpingOptions(BaseModel):
         description="Globalping 'magic' location: country, city, continent, region, ASN, network or cloud region, "
         "e.g. 'Germany', 'Frankfurt', 'EU', 'AS3320', 'aws-eu-west-1'; 'world' picks any probe",
     )
-    probes: int = Field(default=1, ge=1, le=10, description="probes to use at that location (ping only; mtr always uses one)")
+    probes: int = Field(default=1, ge=1, le=10, description="probes to use at that location (ping, dns, http); traceroute and mtr always use one")
+    # dns
+    record_type: DnsRecordType = "A"
+    resolver: str = Field(default="", max_length=253, description="dns: resolver the probe should query (IP or host name); empty = the probe's own")
+    expected: str = Field(default="", max_length=500, description="dns: substring that must appear in one of the answers")
+    # http
+    path: str = Field(default="/", max_length=2048, description="http: request path (and query) on the target host")
+    http_method: GlobalpingHttpMethod = "GET"
+    http_protocol: GlobalpingHttpProtocol = "HTTPS"
+    expected_status: str = Field(default="200-299", max_length=100, description="http: e.g. 200, 200-299, 200,301")
+    keyword: str = Field(default="", max_length=500, description="http: text that must appear in the (first 10 kB of the) body")
 
     @field_validator("location")
     @classmethod
     def _location(cls, v: str) -> str:
         return v.strip() or "world"
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, v: str) -> str:
+        v = v.strip() or "/"
+        return v if v.startswith("/") else "/" + v
+
+    @field_validator("expected_status")
+    @classmethod
+    def _status(cls, v: str) -> str:
+        return clean_status_spec(v)
+
+    @field_validator("resolver", "expected", "keyword")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        return v.strip()
 
 
 OPTION_MODELS: dict[str, type[BaseModel]] = {"http": HttpOptions, "ping": PingOptions, "tcp": TcpOptions, "dns": DnsOptions, "globalping": GlobalpingOptions}

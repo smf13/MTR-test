@@ -133,14 +133,23 @@ export function percentile(values: number[], p: number): number | null {
   return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (k - lo);
 }
 
-/** Types whose runs carry a hop list: the local mtr, or a Globalping mtr measurement. */
+const GLOBALPING_PATH = new Set(["mtr", "traceroute"]);
+const GLOBALPING_PACKET = new Set(["ping", "mtr", "traceroute"]);
+
+/** Types whose runs carry a hop list: the local mtr, or a Globalping mtr / traceroute measurement. */
 export function isPathProbe(type: string | undefined, options?: { measurement?: string } | null): boolean {
-  return !type || type === "mtr" || (type === "globalping" && options?.measurement === "mtr");
+  return !type || type === "mtr" || (type === "globalping" && GLOBALPING_PATH.has(options?.measurement ?? "ping"));
 }
 
-/** Types that send several packets and report packet loss, as opposed to one request per run. */
+/** Types that send several packets and report packet loss, as opposed to one request (check) per run. */
 export function isPacketProbe(type: string | undefined, options?: { measurement?: string } | null): boolean {
-  return isPathProbe(type, options) || type === "ping" || type === "globalping";
+  return isPathProbe(type, options) || type === "ping" || (type === "globalping" && GLOBALPING_PACKET.has(options?.measurement ?? "ping"));
+}
+
+/** What the latency figure of a target means: response, connect or lookup time, or round-trip latency. */
+export function latencyLabel(type: string | undefined, options?: { measurement?: string } | null): "Response" | "Connect" | "Lookup" | "Latency" {
+  const kind = type === "globalping" ? (options?.measurement ?? "ping") : type;
+  return kind === "http" ? "Response" : kind === "tcp" ? "Connect" : kind === "dns" ? "Lookup" : "Latency";
 }
 
 /** Short label for the host of a target: strips the scheme for http probes so cards stay compact. */

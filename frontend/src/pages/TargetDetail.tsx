@@ -21,7 +21,7 @@ import { ConfirmDialog } from "../components/Modal";
 import { ErrorBanner } from "../components/EmptyState";
 import { TagList, useTagColors } from "../components/Tags";
 import { useToast } from "../components/Toast";
-import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, classNames, hostLabel, isPathProbe, isPacketProbe } from "../utils";
+import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, classNames, hostLabel, isPathProbe, isPacketProbe, latencyLabel } from "../utils";
 import { CheckDetails } from "../components/CheckDetails";
 import { PROBE_TYPE_LABEL } from "../api";
 
@@ -139,7 +139,7 @@ export function TargetDetail() {
   const run = t.latest_run;
   const latestRun = latest.data;
   const pathProbe = isPathProbe(t.type, t.options);
-  const latencyWord = t.type === "http" ? "Response" : t.type === "tcp" ? "Connect" : t.type === "dns" ? "Lookup" : "Latency";
+  const latencyWord = latencyLabel(t.type, t.options);
   const singleSample = !isPacketProbe(t.type, t.options);
   const latestDetails = (run?.details || {}) as Record<string, unknown>;
 

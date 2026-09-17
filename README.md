@@ -22,7 +22,7 @@ Think of it as SmokePing or Uptime Kuma, but built around the full MTR path rath
   - **HTTP(S)**: any method, expected status codes, keyword present or absent, JSON path check (`data.items[0].status` equals, `>= 5`, `~substring`), custom headers and body, redirects, TLS verification, a warning before the certificate expires, and the certificate itself (issuer, subject, validity, alternative names, negotiated protocol) recorded with every run.
   - **TCP port**: connect time to host:port.
   - **DNS**: record type, optional resolver, expected answer, lookup time. A **random subdomain** option queries a fresh label under the name on every run, so no resolver cache can answer and the time reflects a real recursive lookup (NXDOMAIN then counts as success).
-  - **Globalping**: ping or MTR run from a remote probe of the [globalping.io](https://globalping.io) network. Pick a country, city, continent, ASN, network or cloud region; a remote MTR is stored like a local one, so every path visual works for that vantage point, and a remote ping lists every probe used. An optional API token (Settings) raises the free rate limit of 250 measurements per hour.
+  - **Globalping**: any of the five [globalping.io](https://globalping.io) measurements, ping, traceroute, MTR, DNS or HTTP, run from a remote probe. Pick a country, city, continent, ASN, network or cloud region. A remote MTR or traceroute is stored like a local path run, so every path visual works for that vantage point; ping, DNS and HTTP can use up to ten probes at once (aggregated, every probe listed, one failing probe makes the target degraded), and the HTTP measurement brings the timing breakdown and the certificate of the remote fetch. An optional API token (Settings) raises the free rate limit of 250 measurements per hour.
 - **Every hop, every run.** Loss %, sent/received, last/avg/best/worst, standard deviation, jitter (Jttr, Javg, Jmax, Jint), ASN and reverse DNS for each hop are stored and searchable.
 - **Time-series views.** Round-trip time with best–worst band, packet loss and jitter charts over 1h to 30d, automatically aggregated for long ranges. Click a point to open the underlying run.
 - **Status timeline** on every dashboard card and target page: 48 half-hour cells for the last 24 h coloured up / degraded / down, Uptime Kuma style.
@@ -149,13 +149,19 @@ curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json'
   -d '{ "name": "Resolver, uncached", "host": "example.com", "type": "dns", "interval_sec": 300,
         "options": { "record_type": "A", "resolver": "10.0.0.53", "random_prefix": true } }'
 
-# Globalping: ping from two German probes, and the path as seen from AWS Ireland
+# Globalping: ping from two German probes, the path as seen from AWS Ireland, a DNS lookup from Asia and an HTTPS fetch from three US probes
 curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json' \
   -d '{ "name": "CDN from Germany", "host": "cdn.example.com", "type": "globalping", "interval_sec": 300, "count": 4,
         "options": { "measurement": "ping", "location": "Germany", "probes": 2 } }'
 curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json' \
   -d '{ "name": "Path from AWS eu-west-1", "host": "203.0.113.1", "type": "globalping", "interval_sec": 600, "count": 3,
         "options": { "measurement": "mtr", "location": "aws-eu-west-1" } }'
+curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json' \
+  -d '{ "name": "DNS from Asia", "host": "www.example.com", "type": "globalping", "interval_sec": 600,
+        "options": { "measurement": "dns", "location": "AS", "probes": 2, "record_type": "A", "resolver": "1.1.1.1", "expected": "93.184." } }'
+curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json' \
+  -d '{ "name": "Portal from the US", "host": "portal.example.com", "type": "globalping", "interval_sec": 600,
+        "options": { "measurement": "http", "location": "US", "probes": 3, "path": "/health", "expected_status": "200", "keyword": "ok" } }'
 
 # Update (partial), pause, run now, delete
 curl -s -X PUT $BASE/api/targets/3 -H "$AUTH" -H 'content-type: application/json' -d '{ "interval_sec": 120 }'
@@ -187,7 +193,7 @@ Target fields: `name`, `host` (hostname, IP, or URL for http), `type` (`mtr` | `
 4. Hop IPs are reverse-resolved (cached), the route signature is compared with the previous run that reached the destination (an unreachable run is padded with unknown hops, so comparing across an outage would report a bogus reroute), thresholds are evaluated, and the run and its hops are written in one transaction.
 5. State transitions (`up` → `degraded` → `down` → `recovered`) create events and fire notifications. Deleting a target cancels a run still in flight.
 
-Ping, HTTP, TCP and DNS targets follow the same loop with `probes.py` in place of mtr: one summary row per run plus a `details` object (samples, status code, TLS expiry and certificate, answers) instead of hops. A failed check is `down`; a TLS certificate inside the warning window is `degraded`. Globalping targets (`globalping.py`) create a measurement through the public API and poll it until every probe has reported: a ping becomes a summary row with one entry per probe, an mtr becomes a normal path run whose hops came from the remote probe.
+Ping, HTTP, TCP and DNS targets follow the same loop with `probes.py` in place of mtr: one summary row per run plus a `details` object (samples, status code, TLS expiry and certificate, answers) instead of hops. A failed check is `down`; a TLS certificate inside the warning window is `degraded`. Globalping targets (`globalping.py`) create a measurement through the public API and poll it until every probe has reported: ping, DNS and HTTP become a summary row with one entry per probe (DNS and HTTP are pass/fail checks: down when no probe passed, degraded when only some did), while MTR and traceroute become a normal path run whose hops came from the remote probe.
 
 ## API
 

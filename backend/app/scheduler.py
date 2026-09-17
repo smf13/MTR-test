@@ -11,7 +11,7 @@ from typing import Any, Awaitable, Callable, Iterable
 
 from .config import config
 from .db import Database
-from .globalping import run_globalping_mtr
+from .globalping import PATH_MEASUREMENTS, run_globalping_path
 from .mtr import HopResult, MtrResult, route_signature, routes_equivalent, run_mtr
 from .notify import dispatch_event, target_url
 from .probes import run_probe, target_options
@@ -203,9 +203,9 @@ class Scheduler:
         kind = t.get("type") or "mtr"
         if kind == "mtr":
             await self._execute_path(t, settings, self._run_local_mtr, local_names=True)
-        elif kind == "globalping" and str(target_options(t).get("measurement") or "ping") == "mtr":
-            # A remote mtr comes back as hops too, so it takes the same path pipeline as the local binary.
-            await self._execute_path(t, settings, lambda tt, s: run_globalping_mtr(tt, target_options(tt), s), local_names=False)
+        elif kind == "globalping" and str(target_options(t).get("measurement") or "ping") in PATH_MEASUREMENTS:
+            # A remote mtr or traceroute comes back as hops too, so it takes the same path pipeline as the local binary.
+            await self._execute_path(t, settings, lambda tt, s: run_globalping_path(tt, target_options(tt), s), local_names=False)
         else:
             await self._execute_probe(t, settings)
 
