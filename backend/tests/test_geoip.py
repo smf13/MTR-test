@@ -61,6 +61,31 @@ async def test_geo_endpoint_in_simulation(client: AsyncClient) -> None:
     assert (await client.get("/api/targets/999999/geo")).status_code == 404
 
 
+async def test_probe_targets_get_a_destination_marker(client: AsyncClient) -> None:
+    """Ping and TCP runs store the address they probed; HTTP and DNS runs do not, so the far end is derived."""
+    await client.put("/api/settings", json={"maxmind_license_key": "key_abc"})
+    specs = {
+        "tcp": {"name": "Geo TCP", "host": "192.0.2.41", "type": "tcp", "port": 443, "interval_sec": 60},
+        "http": {"name": "Geo HTTP", "host": "https://status.example.test/health", "type": "http", "interval_sec": 60},
+        "dns-resolver": {"name": "Geo DNS @", "host": "example.test", "type": "dns", "interval_sec": 60, "options": {"resolver": "9.9.9.9"}},
+        "dns-answer": {"name": "Geo DNS", "host": "example.test", "type": "dns", "interval_sec": 60},
+        "gp-ping": {"name": "Geo GP", "host": "example.test", "type": "globalping", "interval_sec": 60, "options": {"measurement": "ping", "location": "DE"}},
+    }
+    ids = {k: (await client.post("/api/targets", json=spec)).json()["id"] for k, spec in specs.items()}
+    for tid in ids.values():
+        await wait_for_runs(client, tid, 1)
+
+    geo = {k: (await client.get(f"/api/targets/{tid}/geo")).json() for k, tid in ids.items()}
+    for k, g in geo.items():
+        assert g["hops"] == [] and g["destination"] and g["destination"]["geo"], k
+    assert geo["tcp"]["destination"]["ip"] == "192.0.2.41" and geo["tcp"]["destination"]["role"] == "target"
+    # The URL's host is resolved (a stable made-up address in simulation) and reported without the scheme or path.
+    assert geo["http"]["destination"]["host"] == "status.example.test" and geo["http"]["destination"]["ip"].startswith("198.51.100.") and geo["http"]["destination"]["role"] == "target"
+    assert geo["dns-resolver"]["destination"] == {**geo["dns-resolver"]["destination"], "ip": "9.9.9.9", "host": "9.9.9.9", "role": "resolver"}
+    assert geo["dns-answer"]["destination"]["role"] == "answer" and geo["dns-answer"]["destination"]["ip"] == "192.0.2.10"
+    assert geo["gp-ping"]["sources"][0]["kind"] == "probe" and geo["gp-ping"]["sources"][0]["geo"]["lat"] and geo["gp-ping"]["destination"]["ip"] == "192.0.2.10"
+
+
 def _archive(member: str = "GeoLite2-City_20260901/GeoLite2-City.mmdb", content: bytes = b"fake-mmdb") -> bytes:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:

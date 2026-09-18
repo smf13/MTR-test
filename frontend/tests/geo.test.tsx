@@ -34,7 +34,7 @@ const geo: PathGeo = {
     { hop_no: 7, ip: "203.0.113.21", hostname: null, asn: "AS64500", avg_ms: 19, loss_pct: 0, geo: frankfurt, note: null },
     { hop_no: 8, ip: "192.0.2.1", hostname: "www.example", asn: "AS64501", avg_ms: 20, loss_pct: 0, geo: london, note: null },
   ],
-  destination: { ip: "192.0.2.1", host: "www.example", reached: true, geo: london, note: null },
+  destination: { ip: "192.0.2.1", host: "www.example", role: "target", reached: true, geo: london, note: null },
 };
 
 describe("path map", () => {
@@ -57,6 +57,17 @@ describe("path map", () => {
     expect(direct.stops.map((s) => s.kind)).toEqual(["source", "source", "destination"]);
     expect(direct.paths).toHaveLength(2);
     expect(direct.places.map((p) => p.label)).toEqual(["Probe", "Probe", "Target"]);
+
+    // A DNS check's far end is the resolver it asked, named as such on the marker and in the route.
+    const dns = buildStops({ ...geo, hops: [], destination: { ip: "9.9.9.9", host: "9.9.9.9", role: "resolver", reached: true, geo: frankfurt, note: null } });
+    expect(dns.places.map((p) => p.label)).toEqual(["Monitor", "Resolver"]);
+    expect(dns.route.map((r) => r.what)).toEqual(["monitor", "resolver"]);
+  });
+
+  it("names an unresolvable far end instead of drawing nothing", () => {
+    render(<MemoryRouter><PathMapCard geo={{ ...geo, hops: [], destination: { ip: null, host: "portal.example", role: "target", reached: false, geo: null, note: "host could not be resolved" } }} pathProbe={false} /></MemoryRouter>);
+    expect(screen.getByText("Latest run · monitor and target · target not located")).toBeTruthy();
+    expect(screen.getByText("Not on the map:").parentElement!.textContent).toContain("target portal.example · host could not be resolved");
   });
 
   it("shows the map, the route by place, the located-hop caption and the hops it could not place", async () => {

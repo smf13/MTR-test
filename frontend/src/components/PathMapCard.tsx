@@ -88,6 +88,7 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
     .filter((s) => s.geo)
     .map((s, i) => ({ id: `src-${i}`, kind: "source" as const, lat: s.geo!.lat, lon: s.geo!.lon, title: s.label, place: placeOf(s.geo), lines: s.ip ? [s.ip] : [], hopNos: [] }));
   const destIp = geo.destination?.ip ?? null;
+  const destWord = destinationWord(geo.destination?.role);
   const chain: MapStop[] = [];
   for (const h of geo.hops) {
     if (!h.geo) continue;
@@ -103,7 +104,7 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
       kind: isDest ? "destination" : "hop",
       lat: h.geo.lat,
       lon: h.geo.lon,
-      title: isDest ? `Target · ${geo.destination?.host ?? h.ip}` : `Hop ${h.hop_no}`,
+      title: isDest ? `${destWord} · ${geo.destination?.host ?? h.ip}` : `Hop ${h.hop_no}`,
       place: placeOf(h.geo),
       lines: [hopLine(h)],
       hopNos: [h.hop_no],
@@ -112,7 +113,7 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
   }
   if (geo.destination?.geo && !chain.some((s) => s.kind === "destination")) {
     const d = geo.destination;
-    chain.push({ id: "dst", kind: "destination", lat: d.geo!.lat, lon: d.geo!.lon, title: `Target · ${d.host}`, place: placeOf(d.geo), lines: [d.ip], hopNos: [], reached: d.reached });
+    chain.push({ id: "dst", kind: "destination", lat: d.geo!.lat, lon: d.geo!.lon, title: `${destWord} · ${d.host}`, place: placeOf(d.geo), lines: d.ip && d.ip !== d.host ? [d.ip] : [], hopNos: [], reached: d.reached });
   }
   const line = chain.map((s) => [s.lat, s.lon] as [number, number]);
   const paths = sources.length ? sources.map((s) => [[s.lat, s.lon] as [number, number], ...line]) : [line];
@@ -144,7 +145,7 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
     const hopText = hopNos.length ? hopRanges(hopNos) : "";
     if (dst) {
       const extra = hopNos.filter((n) => !dst.hopNos.includes(n));
-      p.label = extra.length ? `Target · ${hopRanges(extra)}` : "Target";
+      p.label = extra.length ? `${destWord} · ${hopRanges(extra)}` : destWord;
       p.title = extra.length ? `${dst.title} · also ${hopsWord(extra)}` : dst.title;
     } else if (src.length) {
       const name = src.length > 1 ? `${src.length} probes` : geo.sources.some((s) => s.kind === "probe") ? "Probe" : "Monitor";
@@ -170,9 +171,14 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
   const route: RouteStep[] = steps.map(({ stop, hopNos }) => ({
     place: stop.place || "unknown place",
     kind: stop.kind,
-    what: stop.kind === "source" ? (remote ? "probe" : "monitor") : stop.kind === "destination" ? (hopNos.length ? `hop ${hopNos[0]}, target` : "target") : hopsWord(hopNos),
+    what: stop.kind === "source" ? (remote ? "probe" : "monitor") : stop.kind === "destination" ? (hopNos.length ? `hop ${hopNos[0]}, ${destWord.toLowerCase()}` : destWord.toLowerCase()) : hopsWord(hopNos),
   }));
   return { stops, paths: paths.filter((p) => p.length > 1), places, route };
+}
+
+/** Marker word for the far end: the target itself, or for DNS checks the resolver asked or the answer's address. */
+export function destinationWord(role: "target" | "resolver" | "answer" | undefined): string {
+  return role === "resolver" ? "Resolver" : role === "answer" ? "Answer" : "Target";
 }
 
 /** The map card of a target page: shown once a MaxMind licence key is saved, otherwise a one-line pointer to Settings. */
@@ -200,6 +206,8 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
   const located = geo.hops.filter((h) => h.geo).length;
   const sourcesLocated = geo.sources.filter((s) => s.geo).length;
   const remote = geo.sources.some((s) => s.kind === "probe");
+  const destWord = destinationWord(geo.destination?.role);
+  const destMissing = geo.run_id && (!geo.destination || !geo.destination.geo) ? (geo.destination?.note ?? "no address recorded") : null;
   return (
     <div className="card p-4">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -207,16 +215,16 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
           <h2 className="chart-heading"><MapIcon size={15} /> {pathProbe ? "Path map" : "Location map"}<HelpTip label="path map">
             <p>Every address of the latest run is placed with the MaxMind GeoLite2 City database. The dashed line follows the hops in order, from the {remote ? "Globalping probe" : "monitor"} to the target.</p>
             <p className="mt-2">A marker stands for a place, not a hop: the numbers on it are the hops located there, so "Target · 7, 8" means hops 7 and 8 were placed in the target's city. GeoLite2 knows a city at best, and it often registers backbone routers at their operator's head office, so a path can appear to double back or to reach the target's city several hops early. That is the database's estimate, not a routing fault.</p>
-            <p className="mt-2">The {remote ? "probe is placed where it reports itself" : "monitor is placed by its own address, or by the public address it is seen from when it sits behind NAT"}. Hops with private addresses and addresses missing from the database are listed under the map instead of being drawn.</p>
+            <p className="mt-2">The {remote ? "probe is placed where it reports itself" : "monitor is placed by its own address, or by the public address it is seen from when it sits behind NAT"}. The far end is the address the run talked to: for HTTP the URL's host, for a DNS check the resolver it asked, or, with no resolver configured, the address in the answer. Hops with private addresses and addresses missing from the database are listed under the map instead of being drawn.</p>
           </HelpTip></h2>
           <p className="chart-caption">
-            {geo.run_id ? `Latest run${pathProbe ? ` · ${located} of ${geo.hops.length} hops located · one marker per place, numbers are hops` : ""}${sourcesLocated ? "" : ` · ${remote ? "probe" : "monitor"} not located`}` : "Waiting for the first run…"}
+            {geo.run_id ? `Latest run${pathProbe ? ` · ${located} of ${geo.hops.length} hops located · one marker per place, numbers are hops` : ` · ${remote ? "probe" : "monitor"} and ${destWord.toLowerCase()}`}${sourcesLocated ? "" : ` · ${remote ? "probe" : "monitor"} not located`}${destMissing ? ` · ${destWord.toLowerCase()} not located` : ""}` : "Waiting for the first run…"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs text-faint">
           <span className="inline-flex items-center gap-1"><span className="path-map-key" style={{ background: "var(--accent)" }}>{remote ? "Probe" : "Monitor"}</span> start</span>
           {pathProbe && <span className="inline-flex items-center gap-1"><span className="path-map-key" style={{ background: "var(--paused)" }}>3–5</span> hops at one place</span>}
-          <span className="inline-flex items-center gap-1"><span className="path-map-key" style={{ background: "var(--up)" }}>Target</span> destination (red when unreachable)</span>
+          <span className="inline-flex items-center gap-1"><span className="path-map-key" style={{ background: "var(--up)" }}>{destWord}</span> {geo.destination?.role === "resolver" ? "resolver asked" : geo.destination?.role === "answer" ? "address in the answer" : "destination"} (red when the check failed)</span>
           <span className="inline-flex items-center gap-1"><span className="inline-block w-5 border-t-2 border-dashed" style={{ borderColor: "var(--accent)" }} /> hop order</span>
         </div>
       </div>
@@ -244,12 +252,13 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
           ))}
         </ol>
       )}
-      {unlocated.length > 0 && (
+      {(unlocated.length > 0 || destMissing) && geo.available && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
           <span>Not on the map:</span>
           {unlocated.map(([note, nos]) => (
             <span key={note}><span className="font-mono text-muted">{hopsWord(nos)}</span> · {note}</span>
           ))}
+          {destMissing && <span><span className="font-mono text-muted">{destWord.toLowerCase()}{geo.destination?.host ? ` ${geo.destination.host}` : ""}</span> · {destMissing}</span>}
         </div>
       )}
       {geo.available && pathProbe && geo.run_id && (

@@ -56,6 +56,7 @@ How to read it:
 - **A marker is a place, not a hop.** The label on a marker says what was located there: **Monitor** (or **Probe** for Globalping), the hop numbers (**3–5**, **3, 7**), or **Target**. A label such as **Target · 7, 8** means hops 7 and 8 were placed in the target's city as well. Select a marker for the host names, addresses, latency and loss of everything it holds.
 - **The dashed line follows the hops in order** from the monitor to the target. Because GeoLite2 knows a city at best and often registers backbone routers at their operator's head office, the line can double back or reach the target's city several hops before the last hop. That is the database's estimate, not a routing fault; the marker labels say which hops are where.
 - **The target is green** when the run reached it and red when it did not.
+- **Other probe types show the far end too.** A ping or TCP target is the address probed; an HTTP target is the URL's host; a DNS check shows the **Resolver** it asked, or, with no resolver configured, the **Answer** address the name resolved to. Globalping checks show the remote probe and the address it resolved.
 - **Route by place**, under the map, spells the same path out in words: *Berlin monitor › Frankfurt hops 3–4 › London hop 6 › Frankfurt hop 7 › London hop 8, target*.
 - **Not on the map** lists the hops without a location and why: private address, not in database, or no response.
 

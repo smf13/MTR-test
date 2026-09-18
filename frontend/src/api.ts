@@ -495,8 +495,11 @@ export interface GeoHop {
 }
 
 export interface GeoDestination {
-  ip: string;
+  /** Null when the host could not be resolved; `note` then says so. */
+  ip: string | null;
   host: string;
+  /** What the run talked to: the target itself, the DNS resolver it asked, or the address a DNS answer returned. */
+  role: "target" | "resolver" | "answer";
   reached: boolean;
   geo: GeoPoint | null;
   note: string | null;

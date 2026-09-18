@@ -16,10 +16,12 @@ import tarfile
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
 from .config import config
+from .resolver import resolve_host
 
 try:
     import maxminddb
@@ -485,7 +487,7 @@ async def path_geo(target: dict[str, Any], run: dict[str, Any] | None, hops: lis
         out["sources"] = [p for p in (_probe_point(pr, "probe") for pr in probes) if p]
     else:
         out["sources"] = [await _monitor_point(run.get("src"))]
-    dst_ip = run.get("dst_ip")
+    dst_ip, role, host, failure = await _destination(target, run)
     simulated_route = _simulated_route(out["sources"], dst_ip, hops) if _simulated() else {}
     for h in hops:
         if h.get("ip") in simulated_route:
@@ -495,8 +497,70 @@ async def path_geo(target: dict[str, Any], run: dict[str, Any] | None, hops: lis
         out["hops"].append(_point(geo, note, hop_no=h["hop_no"], ip=h.get("ip"), hostname=h.get("hostname"), asn=h.get("asn"), avg_ms=h.get("avg_ms"), loss_pct=h.get("loss_pct")))
     if dst_ip:
         geo, note = locate(dst_ip)
-        out["destination"] = _point(geo, note, ip=dst_ip, host=target.get("host"), reached=bool(run.get("reached")))
+        out["destination"] = _point(geo, note, ip=dst_ip, host=host, role=role, reached=bool(run.get("reached")))
+    elif failure:
+        out["destination"] = _point(None, failure, ip=None, host=host, role=role, reached=bool(run.get("reached")))
     return out
+
+
+_RESOLVE_TTL = 600.0
+_resolve_cache: dict[str, tuple[float, str | None]] = {}
+
+
+async def _resolve_cached(host: str, ip_version: str) -> str | None:
+    """Forward lookup for targets whose runs store no address (http, dns); cached so polling stays cheap."""
+    key = f"{ip_version}:{host}"
+    now = time.time()
+    hit = _resolve_cache.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    ip: str | None
+    try:
+        ip = await resolve_host(host, ip_version)
+    except ValueError:
+        # Simulation targets rarely resolve; give them the same stable made-up address the simulated probes use.
+        ip = f"198.51.100.{int(hashlib.md5(host.encode()).hexdigest(), 16) % 254 + 1}" if _simulated() else None
+    _resolve_cache[key] = (now + _RESOLVE_TTL, ip)
+    return ip
+
+
+def _looks_like_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
+async def _destination(target: dict[str, Any], run: dict[str, Any]) -> tuple[str | None, str, str, str | None]:
+    """(ip, role, host, failure note) of what the run talked to.
+
+    Path, ping, tcp and Globalping ping/http runs store the address they probed. A local HTTP run stores none, so
+    the URL's host is resolved here. A DNS check talks to a resolver: with one configured that is the destination
+    ("resolver"); otherwise the first address in the answer stands in for the name being looked up ("answer").
+    """
+    kind = str(target.get("type") or "mtr")
+    options = target.get("options") or {}
+    details = run.get("details") or {}
+    host = str(target.get("host") or "")
+    ip_version = str(target.get("ip_version") or "auto")
+    measurement = str(options.get("measurement") or "ping") if kind == "globalping" else kind
+    if measurement == "dns":
+        resolver = str(options.get("resolver") or "").strip()
+        if resolver:
+            ip = resolver if _looks_like_ip(resolver) else await _resolve_cached(resolver, "auto")
+            return ip, "resolver", resolver, None if ip else "resolver could not be resolved"
+        answers = details.get("answers") or []
+        ip = next((str(a) for a in answers if isinstance(a, str) and _looks_like_ip(a)), None)
+        return ip, "answer", host, None if ip else "no address in the answer"
+    dst_ip = run.get("dst_ip")
+    if dst_ip:
+        return str(dst_ip), "target", host, None
+    if measurement == "http":
+        parts = urlsplit(host if "://" in host else f"https://{host}")
+        host = parts.hostname or host
+    ip = await _resolve_cached(host, ip_version)
+    return ip, "target", host, None if ip else "host could not be resolved"
 
 
 def _simulated_route(sources: list[dict[str, Any]], dst_ip: str | None, hops: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
