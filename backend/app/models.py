@@ -190,6 +190,7 @@ class TargetBase(_TargetValidators):
     ip_version: IpVersion = "auto"
     max_hops: int = Field(default=30, ge=1, le=64)
     enabled: bool = True
+    notify: bool = Field(default=True, description="deliver this target's events to the notification channels; events are recorded either way")
     alert_loss_pct: float = Field(default=5.0, ge=0, le=100, description="0 disables")
     alert_latency_ms: float = Field(default=200.0, ge=0, description="0 disables")
 
@@ -225,6 +226,7 @@ class TargetUpdate(_TargetValidators):
     ip_version: IpVersion | None = None
     max_hops: int | None = Field(default=None, ge=1, le=64)
     enabled: bool | None = None
+    notify: bool | None = None
     alert_loss_pct: float | None = Field(default=None, ge=0, le=100)
     alert_latency_ms: float | None = Field(default=None, ge=0)
 
@@ -316,7 +318,7 @@ class ProbeRequest(BaseModel):
 
 
 class BulkAction(BaseModel):
-    action: Literal["pause", "resume", "run", "delete"]
+    action: Literal["pause", "resume", "mute", "unmute", "run", "delete"]
     ids: list[int] = Field(min_length=1, max_length=1000)
 
 

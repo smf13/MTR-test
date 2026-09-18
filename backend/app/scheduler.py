@@ -392,6 +392,10 @@ class Scheduler:
             (t["id"], run_id, kind, severity, message, json.dumps(details), now),
         )
         log.info("event [%s] %s", kind, message)
+        if not t.get("notify", 1):
+            # The event is on record (events page, target page, API); only the channels stay quiet for this target.
+            log.debug("notifications are muted for target %s; %s event not delivered", t["id"], kind)
+            return
         payload = {
             "source": settings.get("site_name") or "MTR Tracker",
             "event": kind,

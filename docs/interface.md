@@ -22,6 +22,7 @@ The same controls appear on dashboard cards, table rows and target pages:
 | Three-dot menu → **Pause** / **Resume** | Disable or enable scheduled checks. Existing history is retained. |
 | Three-dot menu → **Edit** | Change the target's settings. |
 | Three-dot menu → **Clone** | Open a new-target form with the source settings and a “(copy)” name. Adjust the values and select **Create clone** to save it. |
+| Three-dot menu → **Mute notifications** / **Unmute notifications** | Stop or resume delivering this target's events to Pushover and the webhook. Events are still recorded; a muted target shows a **Muted** marker next to its status. The same switch is **Send notifications** in the target form. |
 | Three-dot menu → **Delete** | Open a confirmation dialog. Confirming removes the target and its runs, hops and events. |
 
 Cloning copies configuration, not monitoring history. **Add target** starts a new target from the default settings.

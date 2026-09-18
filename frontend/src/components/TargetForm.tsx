@@ -32,6 +32,7 @@ const DEFAULTS: TargetInput = {
   ip_version: "auto",
   max_hops: 30,
   enabled: true,
+  notify: true,
   alert_loss_pct: 5,
   alert_latency_ms: 200,
 };
@@ -537,9 +538,16 @@ export function TargetForm({
           </>
         )}
 
-        <label className="sm:col-span-2 flex items-center gap-2 text-sm">
+        <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.enabled} onChange={(e) => set("enabled", e.target.checked)} />
           Monitoring enabled
+        </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-0.5" checked={form.notify ?? true} onChange={(e) => set("notify", e.target.checked)} />
+          <span>
+            Send notifications
+            <div className="help">Deliver this target's down, recovered, degraded and route change events to the channels enabled under Settings. Events are recorded either way.</div>
+          </span>
         </label>
 
         {error && (

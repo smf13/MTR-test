@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Play, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays } from "lucide-react";
 import { api, cloneInput, type Target, type TargetInput, type Run } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
-import { TargetActions } from "../components/TargetActions";
+import { MutedBadge, TargetActions } from "../components/TargetActions";
 import { Tabs } from "../components/Tabs";
 import { HelpTip } from "../components/Popover";
 import { StatusBadge } from "../components/StatusBadge";
@@ -126,6 +126,17 @@ export function TargetDetail() {
     }
   };
 
+  const toggleNotify = async () => {
+    if (!t) return;
+    try {
+      await api.updateTarget(t.id, { notify: !t.notify });
+      toast(t.notify ? "Notifications muted for this target" : "Notifications unmuted for this target", "info");
+      void target.refresh();
+    } catch (e) {
+      report(e);
+    }
+  };
+
   const runNow = async () => {
     try {
       const r = await api.runNow(targetId);
@@ -177,6 +188,7 @@ export function TargetDetail() {
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight">{t.name}</h1>
             <StatusBadge status={status} running={t.running} />
+            {!t.notify && <MutedBadge />}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
             <TypeBadge type={t.type} />
@@ -196,7 +208,7 @@ export function TargetDetail() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button className="btn" onClick={runNow} disabled={t.running}><Play size={15} /> Run now</button>
-          <TargetActions name={t.name} enabled={t.enabled} onToggle={toggle} onEdit={() => setEditing(true)} onClone={() => setCloning(true)} onDelete={() => setDeleting(true)} />
+          <TargetActions name={t.name} enabled={t.enabled} notify={t.notify} onToggle={toggle} onToggleNotify={toggleNotify} onEdit={() => setEditing(true)} onClone={() => setCloning(true)} onDelete={() => setDeleting(true)} />
         </div>
       </div>
 

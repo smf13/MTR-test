@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Plus, Search, Play, Clock, GitBranch, Activity, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, LineChart } from "lucide-react";
 import { api, cloneInput, type Target, type TargetInput } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
-import { TargetActions } from "../components/TargetActions";
+import { MutedBadge, TargetActions } from "../components/TargetActions";
 import { HelpTip } from "../components/Popover";
 import { StatusBadge } from "../components/StatusBadge";
 import { StatTile } from "../components/StatTile";
@@ -121,6 +121,16 @@ export function Dashboard() {
     try {
       await api.updateTarget(t.id, { enabled: !t.enabled });
       toast(t.enabled ? `Paused ${t.name}` : `Resumed ${t.name}`, "info");
+      await targets.refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    }
+  };
+
+  const toggleNotify = async (t: Target) => {
+    try {
+      await api.updateTarget(t.id, { notify: !t.notify });
+      toast(t.notify ? `Notifications muted for ${t.name}` : `Notifications unmuted for ${t.name}`, "info");
       await targets.refresh();
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
@@ -258,12 +268,12 @@ export function Dashboard() {
       {view === "cards" ? (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {list.map((t) => (
-            <TargetCard key={t.id} t={t} now={now} onEdit={() => { setEditing(t); setFormOpen(true); }} onClone={() => clone(t)} onDelete={() => setDeleting(t)} onToggle={() => toggle(t)} onRun={() => runNow(t)} />
+            <TargetCard key={t.id} t={t} now={now} onEdit={() => { setEditing(t); setFormOpen(true); }} onClone={() => clone(t)} onDelete={() => setDeleting(t)} onToggle={() => toggle(t)} onToggleNotify={() => toggleNotify(t)} onRun={() => runNow(t)} />
           ))}
         </div>
       ) : (
         <div className="card overflow-hidden">
-          <TargetTable list={list} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onRun={runNow} />
+          <TargetTable list={list} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onToggleNotify={toggleNotify} onRun={runNow} />
         </div>
       )}
 
@@ -281,7 +291,7 @@ export function Dashboard() {
   );
 }
 
-function TargetCard({ t, now, onEdit, onClone, onDelete, onToggle, onRun }: { t: Target; now: number; onEdit: () => void; onClone: () => void; onDelete: () => void; onToggle: () => void; onRun: () => void }) {
+function TargetCard({ t, now, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { t: Target; now: number; onEdit: () => void; onClone: () => void; onDelete: () => void; onToggle: () => void; onToggleNotify: () => void; onRun: () => void }) {
   const status = effectiveStatus(t);
   const run = t.latest_run;
   const loss = run?.loss_pct ?? null;
@@ -293,7 +303,10 @@ function TargetCard({ t, now, onEdit, onClone, onDelete, onToggle, onRun }: { t:
           <Link to={`/targets/${t.id}`} className="block truncate text-base font-semibold hover:text-accent">{t.name}</Link>
           <div className="mt-1 flex items-center gap-2 text-xs text-muted"><TypeBadge type={t.type} /><span className="truncate font-mono" title={t.host}>{hostLabel(t.host)}</span></div>
         </div>
-        <StatusBadge status={status} running={t.running} />
+        <div className="flex shrink-0 items-center gap-1.5">
+          {!t.notify && <MutedBadge />}
+          <StatusBadge status={status} running={t.running} />
+        </div>
       </div>
 
       <div className="mt-5 grid grid-cols-2 items-center gap-4">
@@ -333,7 +346,7 @@ function TargetCard({ t, now, onEdit, onClone, onDelete, onToggle, onRun }: { t:
           <div className="min-w-0"><TagList tags={t.tags} colors={tagColors} max={2} size="xs" /></div>
           <div className="flex shrink-0 items-center gap-1">
             <button className="btn btn-ghost btn-sm" disabled={t.running} onClick={onRun}><Play size={14} />{t.running ? "Probing…" : "Run now"}</button>
-            <TargetActions name={t.name} enabled={t.enabled} onEdit={onEdit} onClone={onClone} onDelete={onDelete} onToggle={onToggle} />
+            <TargetActions name={t.name} enabled={t.enabled} notify={t.notify} onEdit={onEdit} onClone={onClone} onDelete={onDelete} onToggle={onToggle} onToggleNotify={onToggleNotify} />
           </div>
         </div>
       </div>
@@ -389,7 +402,7 @@ export function IconBtn({ title, onClick, children, danger }: { title: string; o
   );
 }
 
-function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onRun }: { list: Target[]; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onRun: (t: Target) => void }) {
+function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { list: Target[]; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onToggleNotify: (t: Target) => void; onRun: (t: Target) => void }) {
   return (
     <div className="overflow-x-auto">
       <table className="table num">
@@ -423,7 +436,7 @@ function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onRun }: 
                   </Link>
                   <div className="flex items-center gap-1.5 font-mono text-xs text-faint"><TypeBadge type={t.type} /><span className="truncate max-w-[220px]" title={t.host}>{hostLabel(t.host)}</span></div>
                 </td>
-                <td><StatusBadge status={status} running={t.running} /></td>
+                <td><div className="flex items-center gap-1.5"><StatusBadge status={status} running={t.running} />{!t.notify && <MutedBadge />}</div></td>
                 <td className="text-right font-semibold">{run?.reached ? fmtNum(run.avg_ms) : "–"}</td>
                 <td className="text-right text-muted">{run?.reached ? fmtNum(run.best_ms) : "–"}</td>
                 <td className="text-right text-muted">{run?.reached ? fmtNum(run.worst_ms) : "–"}</td>
@@ -438,7 +451,7 @@ function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onRun }: 
                 <td>
                   <div className="flex items-center gap-1">
                     <button className="btn btn-ghost btn-sm" disabled={t.running} onClick={() => onRun(t)}><Play size={14} />Run now</button>
-                    <TargetActions name={t.name} enabled={t.enabled} onEdit={() => onEdit(t)} onClone={() => onClone(t)} onDelete={() => onDelete(t)} onToggle={() => onToggle(t)} />
+                    <TargetActions name={t.name} enabled={t.enabled} notify={t.notify} onEdit={() => onEdit(t)} onClone={() => onClone(t)} onDelete={() => onDelete(t)} onToggle={() => onToggle(t)} onToggleNotify={() => onToggleNotify(t)} />
                   </div>
                 </td>
               </tr>

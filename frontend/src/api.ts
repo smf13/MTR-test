@@ -292,6 +292,8 @@ export interface Target {
   ip_version: IpVersion;
   max_hops: number;
   enabled: boolean;
+  /** Deliver this target's events to the notification channels; events are recorded either way. */
+  notify: boolean;
   alert_loss_pct: number;
   alert_latency_ms: number;
   created_at: string;
@@ -335,6 +337,7 @@ export function targetInput(t: Target): TargetInput {
     ip_version: t.ip_version,
     max_hops: t.max_hops,
     enabled: t.enabled,
+    notify: t.notify ?? true,
     alert_loss_pct: t.alert_loss_pct,
     alert_latency_ms: t.alert_latency_ms,
   };
@@ -622,7 +625,7 @@ export const api = {
   exportTargets: () => request<TargetInput[]>("/api/targets/export"),
   importTargets: (targets: TargetInput[], mode: "upsert" | "create" | "replace") =>
     request<{ created: number; updated: number; total: number }>("/api/targets/import", { method: "POST", body: JSON.stringify({ targets, mode }) }),
-  bulk: (action: "pause" | "resume" | "run" | "delete", ids: number[]) =>
+  bulk: (action: "pause" | "resume" | "mute" | "unmute" | "run" | "delete", ids: number[]) =>
     request<{ action: string; affected: number[] }>("/api/targets/bulk", { method: "POST", body: JSON.stringify({ action, ids }) }),
   runNow: (id: number) => request<{ queued: boolean; already_running: boolean }>(`/api/targets/${id}/run`, { method: "POST" }),
 

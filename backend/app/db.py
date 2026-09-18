@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS targets (
     ip_version TEXT NOT NULL DEFAULT 'auto',
     max_hops INTEGER NOT NULL DEFAULT 30,
     enabled INTEGER NOT NULL DEFAULT 1,
+    notify INTEGER NOT NULL DEFAULT 1,
     alert_loss_pct REAL NOT NULL DEFAULT 5.0,
     alert_latency_ms REAL NOT NULL DEFAULT 200.0,
     created_at REAL NOT NULL,
@@ -195,7 +196,7 @@ class Database:
     async def _migrate(self) -> None:
         """Add columns introduced after the first release to databases created earlier."""
         wanted = {
-            "targets": [("type", "TEXT NOT NULL DEFAULT 'mtr'"), ("options", "TEXT NOT NULL DEFAULT '{}'")],
+            "targets": [("type", "TEXT NOT NULL DEFAULT 'mtr'"), ("options", "TEXT NOT NULL DEFAULT '{}'"), ("notify", "INTEGER NOT NULL DEFAULT 1")],
             "runs": [("details", "TEXT")],
         }
         for table, cols in wanted.items():

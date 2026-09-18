@@ -62,7 +62,7 @@ All captures show the current interface running in simulation mode with a week o
 - **Path summary.** Per-hop statistics aggregated over the selected range, including alternate addresses seen at each hop (ECMP or reroutes) with how often each was observed. Runs in which a hop answered no probe count as loss on that hop's usual address and are shown as "n silent", not as another address.
 - **Path map** (optional, [MaxMind GeoLite2](https://www.maxmind.com/en/geolite2/signup)). Save a free MaxMind licence key under **Settings** and every target page gains a map of the monitoring server, every located hop and the destination, joined in path order. The server downloads the GeoLite2 City database with your key, keeps it in the data directory and refreshes it weekly. Private hops and addresses missing from the database are listed under the map; Globalping probes are placed where they report themselves.
 - **Route change detection** with a hop-by-hop diff, and detection of destination IP changes for DNS-based targets.
-- **Alerting.** Per-target loss and latency thresholds produce up / degraded / down state transitions, an event log, and notifications via **Pushover** and generic JSON **webhooks** (n8n, Zapier, custom receivers), each with its own event selection and a one-click test.
+- **Alerting.** Per-target loss and latency thresholds produce up / degraded / down state transitions, an event log, and notifications via **Pushover** and generic JSON **webhooks** (n8n, Zapier, custom receivers), each with its own event selection and a one-click test. Notifications can be muted per target (in the form, from the action menu, or in bulk through the API); a muted target's events are still recorded, they just reach no channel.
 - **Tags** to group and filter targets, always sorted alphabetically, each with an automatic colour that can be replaced by a preset or a custom colour (from the target form or under Settings). A colour applies everywhere the tag is used.
 - **Target actions.** **Run now** stays visible; the three-dot menu contains **Pause/Resume**, **Edit**, **Clone** and **Delete**. Cloning opens a form with every setting of the original and a "(copy)" name, ready to adjust before the new target is created.
 - **Quick trace.** Run a one-off MTR from the server without saving it, then add the host as a target in one click.
@@ -143,6 +143,8 @@ Two channels can be enabled independently under **Settings**, each with its own 
 ```
 
 Event kinds: `down`, `recovered`, `degraded`, `route_change`. `url` is present when a public URL is configured.
+
+Each target has a **Send notifications** switch (target form, or **Mute notifications** / **Unmute notifications** in its action menu; `POST /api/targets/bulk` with `mute` / `unmute` for many at once). A muted target keeps producing events in the log and on its page, and shows a **Muted** marker next to its status, but none of its events are delivered to Pushover or the webhook.
 
 ### Path map (MaxMind GeoLite2)
 
@@ -239,7 +241,7 @@ curl -s "$BASE/api/targets/3/series?range=24h"
 curl -s "$BASE/api/runs/1842/report"          # mtr-style text
 ```
 
-Target fields: `name`, `host` (hostname, IP, or URL for http), `type` (`mtr` | `ping` | `http` | `tcp` | `dns` | `globalping`), `options` (per type, see `/api/docs`), `description`, `tags`, `interval_sec`, `count`, `probe_interval`, `protocol`, `port`, `packet_size`, `ip_version`, `max_hops`, `enabled`, `alert_loss_pct`, `alert_latency_ms`. `count` accepts 1–200 for local MTR/ping; Globalping ping/MTR requests clamp the packet count to 16 per probe. Other check types do not use it as a repeat count.
+Target fields: `name`, `host` (hostname, IP, or URL for http), `type` (`mtr` | `ping` | `http` | `tcp` | `dns` | `globalping`), `options` (per type, see `/api/docs`), `description`, `tags`, `interval_sec`, `count`, `probe_interval`, `protocol`, `port`, `packet_size`, `ip_version`, `max_hops`, `enabled`, `notify` (deliver this target's events to the notification channels; default true), `alert_loss_pct`, `alert_latency_ms`. `count` accepts 1–200 for local MTR/ping; Globalping ping/MTR requests clamp the packet count to 16 per probe. Other check types do not use it as a repeat count.
 
 ## How a run works
 
@@ -263,7 +265,7 @@ Interactive API documentation is available at `/api/docs`, with the OpenAPI sche
 | `GET` | `/api/tags` | Tags in use with target counts and configured colours (`settings.tag_colors`) |
 | `GET` | `/api/targets/export` | Portable target definitions (no runs) |
 | `POST` | `/api/targets/import` | Bulk create/update: `{ "mode": "upsert" \| "create" \| "replace", "targets": [...] }` |
-| `POST` | `/api/targets/bulk` | `{ "action": "pause" \| "resume" \| "run" \| "delete", "ids": [...] }` |
+| `POST` | `/api/targets/bulk` | `{ "action": "pause" \| "resume" \| "mute" \| "unmute" \| "run" \| "delete", "ids": [...] }` |
 | `GET` / `PUT` / `DELETE` | `/api/targets/{id}` | Detail with range stats (`?range=24h`) / update / delete |
 | `POST` | `/api/targets/{id}/run` | Run now |
 | `GET` | `/api/targets/{id}/runs` | Paginated runs (`limit`, `offset`, `range`, `status=ok|failed|route_change`) |

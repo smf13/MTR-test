@@ -122,6 +122,7 @@ _adhoc_slots = asyncio.Semaphore(ADHOC_PROBE_SLOTS)
 def _target_out(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     out["enabled"] = bool(out.get("enabled"))
+    out["notify"] = bool(out.get("notify", 1))
     try:
         # Sorted on the way out as well as on write, so rows saved before tags were sorted read the same.
         out["tags"] = sort_tags([str(t) for t in json.loads(out.get("tags") or "[]")])
@@ -392,20 +393,21 @@ async def _insert_target(db: Database, data: dict[str, Any]) -> int:
     now = time.time()
     return await db.execute(
         "INSERT INTO targets(name, host, type, options, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, "
-        "ip_version, max_hops, enabled, alert_loss_pct, alert_latency_ms, created_at, updated_at, next_run_at, last_status) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+        "ip_version, max_hops, enabled, notify, alert_loss_pct, alert_latency_ms, created_at, updated_at, next_run_at, last_status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
         (
             data["name"], data["host"], data["type"], json.dumps(data["options"]), data["description"], json.dumps(data["tags"]), data["interval_sec"],
             data["count"], data["probe_interval"], data["protocol"], data["port"], data["packet_size"], data["ip_version"], data["max_hops"],
-            int(data["enabled"]), data["alert_loss_pct"], data["alert_latency_ms"], now, now, now,
+            int(data["enabled"]), int(data.get("notify", True)), data["alert_loss_pct"], data["alert_latency_ms"], now, now, now,
         ),
     )
 
 
 EXPORT_FIELDS = (
     "name", "host", "type", "options", "description", "tags", "interval_sec", "count", "probe_interval", "protocol", "port", "packet_size",
-    "ip_version", "max_hops", "enabled", "alert_loss_pct", "alert_latency_ms",
+    "ip_version", "max_hops", "enabled", "notify", "alert_loss_pct", "alert_latency_ms",
 )
+_BOOL_FIELDS = ("enabled", "notify")
 
 
 @router.post("/targets", status_code=201)
@@ -436,7 +438,7 @@ async def import_targets(request: Request, body: TargetImport) -> dict[str, Any]
         tid = existing.get(data["name"].lower())
         if tid is not None:
             cols = [k for k in EXPORT_FIELDS if k != "name"]
-            values = [json.dumps(data[k]) if k in ("options", "tags") else (int(data[k]) if k == "enabled" else data[k]) for k in cols]
+            values = [json.dumps(data[k]) if k in ("options", "tags") else (int(data[k]) if k in _BOOL_FIELDS else data[k]) for k in cols]
             await db.execute(f"UPDATE targets SET {', '.join(f'{c} = ?' for c in cols)}, updated_at = ?, next_run_at = ? WHERE id = ?", [*values, time.time(), time.time(), tid])
             updated += 1
         else:
@@ -462,6 +464,8 @@ async def bulk_targets(request: Request, body: BulkAction) -> dict[str, Any]:
         await db.execute(f"UPDATE targets SET enabled = 0, updated_at = ? WHERE id IN ({ph})", [time.time(), *ids])
     elif body.action == "resume":
         await db.execute(f"UPDATE targets SET enabled = 1, last_status = 'pending', next_run_at = ?, updated_at = ? WHERE id IN ({ph})", [time.time(), time.time(), *ids])
+    elif body.action in ("mute", "unmute"):
+        await db.execute(f"UPDATE targets SET notify = ?, updated_at = ? WHERE id IN ({ph})", [int(body.action == "unmute"), time.time(), *ids])
     elif body.action == "run":
         for tid in ids:
             await _sched(request).run_now(tid)
@@ -556,8 +560,9 @@ async def update_target(request: Request, target_id: int, body: TargetUpdate) ->
         raise HTTPException(422, "tcp probes need a port")
     if "tags" in patch:
         patch["tags"] = json.dumps(patch["tags"])
-    if "enabled" in patch:
-        patch["enabled"] = int(patch["enabled"])
+    for key in _BOOL_FIELDS:
+        if key in patch:
+            patch[key] = int(patch[key])
     patch["updated_at"] = time.time()
     # Re-run promptly when the schedule or probe definition changes.
     if any(k in patch for k in ("interval_sec", "host", "enabled", "protocol", "port", "ip_version", "type", "options")):

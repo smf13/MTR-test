@@ -29,7 +29,7 @@ const run: RunDetail = {
 const target: Target = {
   id: 1, name: "Office WAN", host: "192.0.2.1", type: "mtr", options: {}, description: "",
   tags: ["wan"], interval_sec: 60, count: 10, probe_interval: 1, protocol: "icmp", port: null,
-  packet_size: 64, ip_version: "auto", max_hops: 30, enabled: true, alert_loss_pct: 5,
+  packet_size: 64, ip_version: "auto", max_hops: 30, enabled: true, notify: true, alert_loss_pct: 5,
   alert_latency_ms: 200, created_at: timestamp, updated_at: timestamp, next_run_at: null,
   last_status: "up", latest_run: run, stats_24h: { runs: 1, availability_pct: 100, avg_ms: 12, loss_pct: 0, route_changes: 0 },
   sparkline: [{ t: timestamp, avg: 12, loss: 0, reached: true }],
@@ -57,10 +57,12 @@ describe("target actions", () => {
     const user = userEvent.setup();
     const clone = vi.fn();
     const remove = vi.fn();
-    render(<TargetActions name="Office WAN" enabled onToggle={vi.fn()} onEdit={vi.fn()} onClone={clone} onDelete={remove} />);
+    const mute = vi.fn();
+    render(<TargetActions name="Office WAN" enabled notify onToggle={vi.fn()} onToggleNotify={mute} onEdit={vi.fn()} onClone={clone} onDelete={remove} />);
     const trigger = screen.getByRole("button", { name: "Actions for Office WAN" });
     await user.click(trigger);
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "Pause" }));
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Pause", "Edit", "Clone", "Mute notifications", "Delete"]);
     await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
     expect(clone).toHaveBeenCalledOnce();
     expect(remove).not.toHaveBeenCalled();
@@ -71,6 +73,23 @@ describe("target actions", () => {
     await user.keyboard("{Escape}");
     expect(document.activeElement).toBe(trigger);
     expect(screen.queryByRole("menu")).toBeNull();
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Mute notifications" }));
+    expect(mute).toHaveBeenCalledOnce();
+  });
+
+  it("labels the menu and the card for a muted target", async () => {
+    const user = userEvent.setup();
+    const muted = { ...target, notify: false };
+    vi.spyOn(api, "targets").mockResolvedValue([muted]);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+    const update = vi.spyOn(api, "updateTarget").mockResolvedValue({ ...muted, notify: true });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    const card = await screen.findByRole("article", { name: "Office WAN" });
+    expect(within(card).getByText("Muted")).toBeTruthy();
+    await user.click(within(card).getByRole("button", { name: "Actions for Office WAN" }));
+    await user.click(screen.getByRole("menuitem", { name: "Unmute notifications" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(1, { notify: true }));
   });
 
   it("dismisses help with Escape and outside clicks", async () => {
