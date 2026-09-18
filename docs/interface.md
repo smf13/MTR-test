@@ -38,7 +38,7 @@ The data tabs sit below the charts. Switching between them keeps the charts visi
 | --- | --- | --- |
 | **Current path** | The latest run's complete hop table and a **Text report** download. The destination row is highlighted and carries a **dst** marker. | Local MTR and Globalping MTR/traceroute |
 | **Path history** | One row per hop and one column per run. Choose **Loss**, **Latency** or **Jitter**; select a column to open that run. | Local MTR and Globalping MTR/traceroute |
-| **Path summary · [range]** | Aggregated per-hop statistics, including ASN, address frequency, average/maximum loss, latency, standard deviation and jitter. Expand a hop to inspect alternate addresses seen at that position. | Local MTR and Globalping MTR/traceroute |
+| **Path summary · [range]** | Aggregated per-hop statistics, including ASN, address frequency, average/maximum loss, latency, standard deviation and jitter. Expand a hop to inspect alternate addresses seen at that position. Runs in which the hop answered no probe appear as **n silent** under **Seen** and count as loss on the usual address; they are not alternates. | Local MTR and Globalping MTR/traceroute |
 | **Runs** | Paginated run history with **All**, **Reached** or **Passed**, **Failed**, and **Route changes** where applicable. Select a run to inspect it. | Every target |
 | **Events** | This target's events in the selected range. The tab displays a count when events are present. | Every target |
 
@@ -70,7 +70,7 @@ Timing columns use milliseconds and loss uses percent. Tables show their full he
 
 ## Charts, scales and help
 
-The latency chart's line represents average latency and its band spans best to worst. Dashed markers identify route changes. Select a point to open its associated run. Long ranges may use bucketed averages; read the caption to see the aggregation interval. The latency histogram uses those same series points, so a long-range histogram can describe bucket averages rather than individual runs.
+The latency chart's line represents average latency and its band spans best to worst. Dashed markers identify route changes. Select a point to open its associated run. The **Route in use** strip under the chart colours each stretch of time by the path in use; a hop that answered nothing in one run is treated as a wildcard, so rate-limited routers do not create extra routes or split a segment. Hover a route's label to see whether such runs were folded into it. Long ranges may use bucketed averages; read the caption to see the aggregation interval. The latency histogram uses those same series points, so a long-range histogram can describe bucket averages rather than individual runs.
 
 Both heatmaps show numeric legends:
 

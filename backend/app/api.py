@@ -19,7 +19,7 @@ from . import __version__, geoip
 from .config import config
 from .db import Database, rows_to_dicts
 from .models import BulkAction, NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, validate_options
-from .mtr import min_probe_interval, mtr_version, run_mtr
+from .mtr import min_probe_interval, mtr_version, routes_equivalent, run_mtr
 from .notify import NotifyError, format_pushover_text, send_pushover, send_webhook, target_url
 from .resolver import resolve_host, reverse_lookup_many
 from .scheduler import Scheduler
@@ -758,16 +758,24 @@ async def get_hop_summary(
     )
     total_runs = int(total_runs_row["n"] or 0)
     hops: dict[int, dict[str, Any]] = {}
+    silent: dict[int, dict[str, int]] = {}
     for r in rows:
         hop_no = int(r["hop_no"])
         sent = int(r["sent"] or 0)
         received = int(r["received"] or 0)
+        if r["ip"] is None:
+            # Runs in which this hop answered nothing (rate-limited or deprioritised ICMP, usually) are loss at
+            # this position, not a second address; they are folded into the primary entry below.
+            silent[hop_no] = {"runs": int(r["n"]), "sent": sent, "received": received}
+            continue
         entry = {
             "ip": r["ip"],
             "hostname": r["hostname"],
             "asn": r["asn"],
             "runs": int(r["n"]),
             "share_pct": round(100.0 * int(r["n"]) / total_runs, 1) if total_runs else None,
+            "sent": sent,
+            "received": received,
             "loss_pct": round(100.0 * (sent - received) / sent, 2) if sent else 100.0,
             "max_loss_pct": r["max_loss"],
             "avg_ms": round(r["avg_ms"], 3) if r["avg_ms"] is not None else None,
@@ -777,11 +785,33 @@ async def get_hop_summary(
             "jitter_ms": round(r["jitter_ms"], 3) if r["jitter_ms"] is not None else None,
             "jitter_max_ms": r["jitter_max_ms"],
         }
-        slot = hops.setdefault(hop_no, {"hop": hop_no, "primary": None, "alternates": []})
+        slot = hops.setdefault(hop_no, {"hop": hop_no, "primary": None, "alternates": [], "silent_runs": 0})
         if slot["primary"] is None:
             slot["primary"] = entry
         else:
             slot["alternates"].append(entry)
+    for hop_no, s in silent.items():
+        slot = hops.get(hop_no)
+        if slot is None:
+            # Never answered from any address in this range: the only thing to show is the silence itself.
+            hops[hop_no] = {
+                "hop": hop_no,
+                "primary": {
+                    "ip": None, "hostname": None, "asn": None, "runs": s["runs"], "share_pct": round(100.0 * s["runs"] / total_runs, 1) if total_runs else None,
+                    "sent": s["sent"], "received": s["received"], "loss_pct": 100.0, "max_loss_pct": 100.0, "avg_ms": None, "best_ms": None, "worst_ms": None,
+                    "stdev_ms": None, "jitter_ms": None, "jitter_max_ms": None,
+                },
+                "alternates": [],
+                "silent_runs": s["runs"],
+            }
+            continue
+        primary = slot["primary"]
+        sent = primary["sent"] + s["sent"]
+        received = primary["received"] + s["received"]
+        primary["sent"], primary["received"] = sent, received
+        primary["loss_pct"] = round(100.0 * (sent - received) / sent, 2) if sent else 100.0
+        primary["max_loss_pct"] = 100.0
+        slot["silent_runs"] = s["runs"]
     return {"total_runs": total_runs, "hops": [hops[k] for k in sorted(hops)]}
 
 
@@ -858,7 +888,12 @@ async def get_hourly(request: Request, target_id: int, range: str = Query(defaul
 
 @router.get("/targets/{target_id}/routes")
 async def get_routes(request: Request, target_id: int, range: str = Query(default="24h")) -> dict[str, Any]:  # noqa: A002
-    """Contiguous segments of identical routes over time, plus a per-route share summary."""
+    """Contiguous segments of equivalent routes over time, plus a per-route share summary.
+
+    Runs are grouped the way the route change detector judges them: a hop that answered nothing (`???`) is a
+    wildcard, so a run with one silent hop belongs to the route it otherwise matches instead of becoming a
+    "distinct path" of its own. Only one example run per stored route hash is read for its hop sequence.
+    """
     db = _db(request)
     range_sec = parse_range(range)
     since = time.time() - range_sec
@@ -867,10 +902,12 @@ async def get_routes(request: Request, target_id: int, range: str = Query(defaul
         "ORDER BY started_at ASC",
         (target_id, since),
     )
+    canonical = await _canonical_routes(db, rows)
     segments: list[dict[str, Any]] = []
     totals: dict[str, dict[str, Any]] = {}
     for r in rows:
-        h = r["route_hash"] or "unknown"
+        raw = r["route_hash"] or "unknown"
+        h = canonical.get(raw, raw)
         end = float(r["finished_at"] or r["started_at"])
         if segments and segments[-1]["hash"] == h:
             seg = segments[-1]
@@ -878,10 +915,18 @@ async def get_routes(request: Request, target_id: int, range: str = Query(defaul
             seg["runs"] += 1
         else:
             segments.append({"hash": h, "start": float(r["started_at"]), "end": end, "runs": 1, "first_run_id": int(r["id"]), "hops": int(r["hop_count"])})
-        tot = totals.setdefault(h, {"hash": h, "runs": 0, "hops": int(r["hop_count"]), "first_seen": float(r["started_at"]), "last_seen": end, "reached": 0, "example_run_id": int(r["id"])})
+        tot = totals.setdefault(h, {"hash": h, "runs": 0, "hops": int(r["hop_count"]), "first_seen": float(r["started_at"]), "last_seen": end, "reached": 0, "example_run_id": int(r["id"]), "variants": set()})
         tot["runs"] += 1
         tot["last_seen"] = end
         tot["reached"] += int(r["reached"])
+        tot["variants"].add(raw)
+        if raw == h and not tot.get("_full_example"):
+            # Prefer a run whose hops all answered as the example to open, not one with a silent hop.
+            tot["example_run_id"] = int(r["id"])
+            tot["_full_example"] = True
+    for tot in totals.values():
+        tot["variants"] = len(tot["variants"])
+        tot.pop("_full_example", None)
     n = len(rows)
     for seg in segments:
         seg["start"] = _iso(seg["start"])
@@ -896,6 +941,49 @@ async def get_routes(request: Request, target_id: int, range: str = Query(defaul
     for seg in segments:
         seg["index"] = index.get(seg["hash"], 0)
     return {"range_sec": range_sec, "since": _iso(since), "total_runs": n, "segments": segments, "routes": routes}
+
+
+async def _canonical_routes(db: Database, runs: list[Any]) -> dict[str, str]:
+    """Map every stored route hash to the hash of the route it is wildcard-equivalent to.
+
+    Distinct hashes are processed from the most frequent down, so the fullest observation of a path becomes
+    the canonical one and a hash with silent hops attaches to it. Known addresses seen in a variant fill the
+    wildcards of the canonical sequence, so `A,*,C` and `A,B,*` both end up as `A,B,C`.
+    """
+    counts: dict[str, int] = {}
+    example: dict[str, int] = {}
+    order: dict[str, float] = {}
+    for r in runs:
+        h = r["route_hash"]
+        if not h:
+            continue
+        counts[h] = counts.get(h, 0) + 1
+        example.setdefault(h, int(r["id"]))
+        order.setdefault(h, float(r["started_at"]))
+    if len(counts) < 2:
+        return {}
+    ids = list(example.values())
+    placeholders = ",".join("?" for _ in ids)
+    hop_rows = await db.fetchall(f"SELECT run_id, hop_no, ip FROM hops WHERE run_id IN ({placeholders}) ORDER BY run_id, hop_no", ids)
+    by_run: dict[int, list[str | None]] = {}
+    for h in hop_rows:
+        by_run.setdefault(int(h["run_id"]), []).append(h["ip"])
+    sequences = {h: by_run.get(rid, []) for h, rid in example.items()}
+    canonical: list[tuple[str, list[str | None]]] = []
+    mapping: dict[str, str] = {}
+    for h in sorted(counts, key=lambda x: (-counts[x], order[x])):
+        seq = sequences[h]
+        for canon_hash, merged in canonical:
+            if seq and routes_equivalent(merged, seq):
+                mapping[h] = canon_hash
+                for i, ip in enumerate(seq):
+                    if merged[i] is None and ip is not None:
+                        merged[i] = ip
+                break
+        else:
+            canonical.append((h, list(seq)))
+            mapping[h] = h
+    return mapping
 
 
 @router.get("/targets/{target_id}/geo")

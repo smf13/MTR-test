@@ -162,12 +162,14 @@ describe("detail navigation", () => {
     localStorage.setItem("mtr-tracker.tab", JSON.stringify("summary"));
     mockDetail();
     const primary: HopSummaryEntry = { ip: hop.ip, hostname: hop.hostname, asn: hop.asn, runs: 8, share_pct: 80, loss_pct: 1, max_loss_pct: 5, avg_ms: 12, best_ms: 10, worst_ms: 15, stdev_ms: 2, jitter_ms: 3, jitter_max_ms: 4 };
-    vi.mocked(api.hopSummary).mockResolvedValue({ total_runs: 10, hops: [{ hop: 1, primary, alternates: [{ ...primary, ip: "192.0.2.2", hostname: "alternate.example", asn: "AS64501", runs: 2, share_pct: 20 }] }] });
+    vi.mocked(api.hopSummary).mockResolvedValue({ total_runs: 10, hops: [{ hop: 1, primary, alternates: [{ ...primary, ip: "192.0.2.2", hostname: "alternate.example", asn: "AS64501", runs: 2, share_pct: 20 }], silent_runs: 3 }] });
     renderDetail();
     const table = await screen.findByRole("table");
     expect(screen.getByRole("tab", { name: "Path summary · 24h" }).getAttribute("aria-selected")).toBe("true");
     expect(within(table).getAllByRole("columnheader").map((h) => h.textContent?.trim())).toEqual(["#", "Host", "ASN", "Seen", "Loss", "Max loss", "Avg", "Best", "Wrst", "StDev", "Jitter", "Latency"]);
     expect(within(table).getAllByRole("row")).toHaveLength(2);
+    // Runs where the hop answered nothing are shown as silence on the primary row, never as an extra address.
+    expect(within(within(table).getAllByRole("row")[1]).getByText("3 silent")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "1 alternate address seen at this hop" }));
     const rows = within(table).getAllByRole("row");
     expect(rows).toHaveLength(3);

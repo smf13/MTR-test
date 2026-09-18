@@ -242,6 +242,8 @@ export interface RouteInfo {
   last_seen: string;
   reached: number;
   example_run_id: number;
+  /** Stored route hashes folded into this route: 1 when every run answered at every hop, more when silent hops were merged. */
+  variants: number;
 }
 
 export interface Routes {
@@ -386,6 +388,8 @@ export interface HopSummaryEntry {
   asn: string | null;
   runs: number;
   share_pct: number | null;
+  sent?: number;
+  received?: number;
   loss_pct: number;
   max_loss_pct: number | null;
   avg_ms: number | null;
@@ -398,7 +402,8 @@ export interface HopSummaryEntry {
 
 export interface HopSummary {
   total_runs: number;
-  hops: { hop: number; primary: HopSummaryEntry; alternates: HopSummaryEntry[] }[];
+  /** silent_runs: runs in which the hop answered nothing; counted as loss on the primary address, not as an alternate. */
+  hops: { hop: number; primary: HopSummaryEntry; alternates: HopSummaryEntry[]; silent_runs?: number }[];
 }
 
 export interface Event {

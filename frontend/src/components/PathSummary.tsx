@@ -35,7 +35,7 @@ export function PathSummary({ summary, dstIp }: { summary: HopSummary; dstIp?: s
             const expanded = !!open[h.hop];
             if (expanded) h.alternates.forEach((a) => rows.push({ entry: a, alt: true }));
             return rows.map(({ entry, alt }, i) => (
-              <Row key={`${h.hop}-${i}`} hop={h.hop} entry={entry} alt={alt} altCount={h.alternates.length} expanded={expanded} onToggle={() => setOpen((o) => ({ ...o, [h.hop]: !o[h.hop] }))} maxAvg={maxAvg} isDst={!!dstIp && entry.ip === dstIp} />
+              <Row key={`${h.hop}-${i}`} hop={h.hop} entry={entry} alt={alt} altCount={h.alternates.length} silentRuns={alt ? 0 : h.silent_runs ?? 0} expanded={expanded} onToggle={() => setOpen((o) => ({ ...o, [h.hop]: !o[h.hop] }))} maxAvg={maxAvg} isDst={!!dstIp && entry.ip === dstIp} />
             ));
           })}
         </tbody>
@@ -44,7 +44,7 @@ export function PathSummary({ summary, dstIp }: { summary: HopSummary; dstIp?: s
   );
 }
 
-function Row({ hop, entry, alt, altCount, expanded, onToggle, maxAvg, isDst }: { hop: number; entry: HopSummaryEntry; alt: boolean; altCount: number; expanded: boolean; onToggle: () => void; maxAvg: number; isDst: boolean }) {
+function Row({ hop, entry, alt, altCount, silentRuns, expanded, onToggle, maxAvg, isDst }: { hop: number; entry: HopSummaryEntry; alt: boolean; altCount: number; silentRuns: number; expanded: boolean; onToggle: () => void; maxAvg: number; isDst: boolean }) {
   const avg = entry.avg_ms ?? 0;
   const best = entry.best_ms ?? 0;
   const worst = entry.worst_ms ?? 0;
@@ -74,7 +74,14 @@ function Row({ hop, entry, alt, altCount, expanded, onToggle, maxAvg, isDst }: {
         </div>
       </td>
       <td className="font-mono text-xs text-muted">{entry.asn || "–"}</td>
-      <td className="text-right text-muted">{entry.share_pct !== null ? `${fmtNum(entry.share_pct, 0)}%` : "–"}</td>
+      <td className="text-right text-muted">
+        {entry.share_pct !== null ? `${fmtNum(entry.share_pct, 0)}%` : "–"}
+        {silentRuns > 0 && entry.ip && (
+          <div className="text-[11px] text-faint" title={`In ${silentRuns} run${silentRuns === 1 ? "" : "s"} this hop answered no probe (rate-limited or deprioritised ICMP, usually). Those runs count as loss here, not as another address.`}>
+            {silentRuns} silent
+          </div>
+        )}
+      </td>
       <td className="text-right">
         <span className="inline-block min-w-[3.2rem] rounded px-1.5 py-0.5 text-xs font-semibold" style={{ background: lossColor(entry.loss_pct, 0.22), color: entry.loss_pct > 0 ? lossColor(entry.loss_pct) : "var(--text-muted)" }}>
           {fmtNum(entry.loss_pct)}%

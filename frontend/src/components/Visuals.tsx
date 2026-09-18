@@ -431,7 +431,7 @@ export function RouteTimeline({ routes, onOpenRun }: { routes: Routes; onOpenRun
       </div>
       <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs">
         {routes.routes.slice(0, 12).map((r) => (
-          <button key={r.hash} className={classNames("inline-flex items-center gap-1.5 rounded px-1 transition-opacity", hover !== null && hover !== r.index && "opacity-40")} onMouseEnter={() => setHover(r.index)} onMouseLeave={() => setHover(null)} onClick={() => onOpenRun?.(r.example_run_id)} title={`First seen ${fmtDateTime(r.first_seen)} · last seen ${fmtDateTime(r.last_seen)} · reached ${r.reached}/${r.runs}`}>
+          <button key={r.hash} className={classNames("inline-flex items-center gap-1.5 rounded px-1 transition-opacity", hover !== null && hover !== r.index && "opacity-40")} onMouseEnter={() => setHover(r.index)} onMouseLeave={() => setHover(null)} onClick={() => onOpenRun?.(r.example_run_id)} title={`First seen ${fmtDateTime(r.first_seen)} · last seen ${fmtDateTime(r.last_seen)} · reached ${r.reached}/${r.runs}${(r.variants ?? 1) > 1 ? ` · includes runs where a hop answered nothing (${r.variants - 1} variant${r.variants > 2 ? "s" : ""} folded in)` : ""}`}>
             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: seriesColor(r.index) }} />
             <span className="font-semibold">Route {routeLabel(r.index)}</span>
             <span className="num text-muted">{r.hops} hops · {r.share_pct}% · {r.runs} runs</span>
