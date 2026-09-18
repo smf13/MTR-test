@@ -21,6 +21,8 @@ export interface MapStop {
   lines: string[];
   hopNos: number[];
   reached?: boolean;
+  /** GeoLite2 accuracy radius in km for this position, when the database gives one. */
+  accuracyKm?: number | null;
 }
 
 /** One marker on the map: every stop that lands in the same place, whether or not they are consecutive. */
@@ -36,6 +38,12 @@ export interface MapPlace {
   lines: string[];
   hopNos: number[];
   reached?: boolean;
+  accuracyKm?: number | null;
+}
+
+/** "about 100 km" for a GeoLite2 accuracy radius; empty when unknown. */
+export function accuracyText(km: number | null | undefined): string {
+  return km === null || km === undefined ? "" : `about ${km} km`;
 }
 
 /** One entry of the textual route under the map: consecutive stops in one place. */
@@ -96,7 +104,7 @@ function hopsWord(nos: number[]): string {
 export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, number][][]; places: MapPlace[]; route: RouteStep[] } {
   const sources: MapStop[] = geo.sources
     .filter((s) => s.geo)
-    .map((s, i) => ({ id: `src-${i}`, kind: "source" as const, lat: s.geo!.lat, lon: s.geo!.lon, title: s.label, place: placeOf(s.geo), lines: s.ip ? [s.ip] : [], hopNos: [] }));
+    .map((s, i) => ({ id: `src-${i}`, kind: "source" as const, lat: s.geo!.lat, lon: s.geo!.lon, title: s.label, place: placeOf(s.geo), lines: [s.evidence, ...(s.ip && !s.evidence.includes(s.ip) ? [s.ip] : [])].filter(Boolean), hopNos: [], accuracyKm: s.geo!.accuracy_km }));
   const destIp = geo.destination?.ip ?? null;
   const destWord = destinationWord(geo.destination?.role);
   const chain: MapStop[] = [];
@@ -119,11 +127,12 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
       lines: [hopLine(h)],
       hopNos: [h.hop_no],
       reached: isDest ? geo.destination?.reached : undefined,
+      accuracyKm: h.geo.accuracy_km,
     });
   }
   if (geo.destination?.geo && !chain.some((s) => s.kind === "destination")) {
     const d = geo.destination;
-    chain.push({ id: "dst", kind: "destination", lat: d.geo!.lat, lon: d.geo!.lon, title: `${destWord} · ${d.host}`, place: placeOf(d.geo), lines: d.ip && d.ip !== d.host ? [d.ip] : [], hopNos: [], reached: d.reached });
+    chain.push({ id: "dst", kind: "destination", lat: d.geo!.lat, lon: d.geo!.lon, title: `${destWord} · ${d.host}`, place: placeOf(d.geo), lines: d.ip && d.ip !== d.host ? [d.ip] : [], hopNos: [], reached: d.reached, accuracyKm: d.geo!.accuracy_km });
   }
   const line = chain.map((s) => [s.lat, s.lon] as [number, number]);
   const paths = sources.length ? sources.map((s) => [[s.lat, s.lon] as [number, number], ...line]) : [line];
@@ -151,6 +160,7 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
     p.hopNos = hopNos;
     p.lines = group.flatMap((s) => s.lines);
     p.reached = dst?.reached;
+    p.accuracyKm = group.map((s) => s.accuracyKm).find((a) => a !== null && a !== undefined) ?? null;
     p.kind = dst ? "destination" : src.length ? "source" : "hop";
     const hopText = hopNos.length ? hopRanges(hopNos) : "";
     if (dst) {
@@ -249,6 +259,9 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
   const remote = geo.sources.some((s) => s.kind === "probe");
   const destWord = destinationWord(geo.destination?.role);
   const destMissing = geo.run_id && (!geo.destination || !geo.destination.geo) ? (geo.destination?.note ?? "no address recorded") : null;
+  // The evidence for the start marker: how the position was obtained and how precise GeoLite2 says it is.
+  const start = geo.sources[0];
+  const startEvidence = start ? `${start.evidence}${start.geo?.accuracy_km !== null && start.geo?.accuracy_km !== undefined ? ` · ${accuracyText(start.geo.accuracy_km)} accuracy` : ""}${start.note ? ` · ${start.note}` : ""}` : "";
   return (
     <div className="card p-4">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -307,7 +320,7 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
           {openStep !== null && built.route[openStep] && (
             <div id="route-step-details" className="mt-1.5 rounded-lg border border-border px-3 py-2 text-xs" style={{ background: "var(--surface-2)" }} role="region" aria-label={`${built.route[openStep].place} details`}>
               <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-                <span className="font-semibold">{built.route[openStep].place} <span className="font-normal text-faint">· {built.route[openStep].what}</span></span>
+                <span className="font-semibold">{built.route[openStep].place} <span className="font-normal text-faint">· {built.route[openStep].what}{built.places.find((p) => p.id === built.route[openStep!].placeId)?.accuracyKm != null ? ` · GeoLite2 accuracy ${accuracyText(built.places.find((p) => p.id === built.route[openStep!].placeId)!.accuracyKm)}` : ""}</span></span>
                 <span className="text-faint">Shown on the map · select again to close</span>
               </div>
               {built.route[openStep].lines.length ? (
@@ -330,9 +343,14 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
           {destMissing && <span><span className="font-mono text-muted">{destWord.toLowerCase()}{geo.destination?.host ? ` ${geo.destination.host}` : ""}</span> · {destMissing}</span>}
         </div>
       )}
+      {geo.available && geo.run_id && startEvidence && (
+        <p className="mt-2 text-[11px] leading-relaxed text-faint" data-testid="start-evidence">
+          <span className="font-medium text-muted">{remote ? "Probe" : "Monitor"} position:</span> {startEvidence}. Check any address on the <Link to="/geoip" className="text-accent hover:underline">GeoIP lookup</Link> page.
+        </p>
+      )}
       {geo.available && pathProbe && geo.run_id && (
-        <p className="mt-2 text-[11px] leading-relaxed text-faint">
-          Positions are city-level estimates from GeoLite2. Transit routers are often placed at their operator's registered location, so the line may double back or touch the target's city before the last hop. Select a marker, or a step in the route above, to see exactly which hops it holds.
+        <p className="mt-1 text-[11px] leading-relaxed text-faint">
+          Positions are city-level estimates from GeoLite2. Transit routers are often placed at their operator's registered location, so the line may double back or touch the target's city before the last hop. Select a marker, or a step in the route above, to see exactly which hops it holds and how precise the estimate is.
         </p>
       )}
     </div>

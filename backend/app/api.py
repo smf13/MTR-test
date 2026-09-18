@@ -246,6 +246,14 @@ async def geoip_status(request: Request) -> dict[str, Any]:
     return status
 
 
+@router.get("/geoip/lookup")
+async def geoip_lookup(request: Request, q: str = Query(min_length=1, max_length=253)) -> dict[str, Any]:
+    """Locate one address or host name with the GeoLite2 database; `q=self` locates this server's public address."""
+    result = await geoip.lookup_query(q, await _db(request).get_settings())
+    result["build_epoch"] = _iso(result["build_epoch"])
+    return result
+
+
 @router.post("/geoip/update")
 async def geoip_update(request: Request) -> dict[str, Any]:
     """Download the GeoLite2 City database now with the saved MaxMind credentials."""

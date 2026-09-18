@@ -59,6 +59,7 @@ How to read it:
 - **Other probe types show the far end too.** A ping or TCP target is the address probed; an HTTP target is the URL's host; a DNS check shows the **Resolver** it asked, or, with no resolver configured, the **Answer** address the name resolved to. Globalping checks show the remote probe and the address it resolved.
 - **Route by place**, under the map, spells the same path out in words: *Berlin monitor › Frankfurt hops 3–4 › London hop 6 › Frankfurt hop 7 › London hop 8, target*. Each step is a button: select it to pan the map to that place, open its marker popup and expand a panel listing that step's hops with host names, addresses, latency and loss. Select it again to close the panel. Selecting a marker on the map opens the matching step. With a keyboard, use Left/Right or Home/End to move between steps and Enter or Space to open one.
 - **Not on the map** lists the hops without a location and why: private address, not in database, or no response.
+- **Evidence.** The line **Monitor position** (or **Probe position**) under the map says how the start marker was placed (by the server's own address, by the public address it is seen from, or by the probe's own report) and the accuracy radius GeoLite2 gives for it. Marker popups and the expanded route step show the same radius for every place. A radius of hundreds of kilometres means the marker is a regional guess. Use the **GeoIP lookup** page to check any address yourself.
 
 Use the **+**/**−** controls or pinch to zoom; the mouse wheel keeps scrolling the page. The caption counts how many hops were located. The information icon beside the heading repeats this guidance. Without a key, the card is replaced by a one-line pointer to Settings; while the database is still downloading, the card says so.
 
@@ -80,6 +81,10 @@ Current path, individual run pages and quick trace show the complete hop table i
 
 Timing columns use milliseconds and loss uses percent. Tables show their full height; scroll horizontally to reach additional columns on narrow screens. Hostnames and IP addresses are not truncated. “No response” means a hop did not report an address. A dash means the requested measurement is unavailable. A previously saved compact-view preference does not hide any columns.
 
+## GeoIP lookup
+
+**GeoIP lookup** in the menu answers where the GeoLite2 database places one address. Enter an IP address or a host name (host names are resolved first) and select **Look up**, or select **This server** to locate the monitor exactly as the path map does. The result lists what was looked up, the kind (address, host name, or how this server was placed), the resolved address, the place, the coordinates, the accuracy radius and the database build date, and shows the point on a map. A private address, an address missing from the database or an unresolvable host name is reported in words. Without a saved licence key, or before the database has been downloaded, the page says so and points to Settings.
+
 ## Charts, scales and help
 
 The latency chart's line represents average latency and its band spans best to worst. Dashed markers identify route changes. Select a point to open its associated run. The **Route in use** strip under the chart colours each stretch of time by the path in use; a hop that answered nothing in one run is treated as a wildcard, so rate-limited routers do not create extra routes or split a segment. Hover a route's label to see whether such runs were folded into it. Long ranges may use bucketed averages; read the caption to see the aggregation interval. The latency histogram uses those same series points, so a long-range histogram can describe bucket averages rather than individual runs.
@@ -96,7 +101,7 @@ Select an information icon beside a chart heading to open its explanation. Help 
 
 ## Phones, themes and keyboard controls
 
-On narrow screens, open **Menu** in the sticky header for **Dashboard**, **Events**, **Quick trace** and **Settings**. The **Switch theme** button cycles **Dark → OLED → Light**. On desktop, choose a theme at the bottom of the sidebar. The choice is remembered in this browser.
+On narrow screens, open **Menu** in the sticky header for **Dashboard**, **Events**, **Quick trace**, **GeoIP lookup** and **Settings**. The **Switch theme** button cycles **Dark → OLED → Light**. On desktop, choose a theme at the bottom of the sidebar. The choice is remembered in this browser.
 
 Target tabs and wide data tables scroll horizontally when needed. The three-dot action menu opens over the page so it remains visible inside a scrolling table.
 

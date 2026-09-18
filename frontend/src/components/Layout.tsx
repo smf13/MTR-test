@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Link } from "react-router-dom";
-import { Activity, Bell, LayoutDashboard, Menu, Moon, MoonStar, Settings, Sun, Radar, X, FlaskConical, KeyRound } from "lucide-react";
+import { Activity, Bell, LayoutDashboard, MapPin, Menu, Moon, MoonStar, Settings, Sun, Radar, X, FlaskConical, KeyRound } from "lucide-react";
 import { useTheme, usePoll, THEMES } from "../hooks";
 import { api, AUTH_REQUIRED_EVENT, getApiToken, setApiToken } from "../api";
 import { Modal } from "./Modal";
@@ -10,6 +10,7 @@ const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/events", label: "Events", icon: Bell, end: false },
   { to: "/trace", label: "Quick trace", icon: Radar, end: false },
+  { to: "/geoip", label: "GeoIP lookup", icon: MapPin, end: false },
   { to: "/settings", label: "Settings", icon: Settings, end: false },
 ];
 

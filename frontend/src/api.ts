@@ -480,6 +480,23 @@ export interface GeoSource {
   ip: string | null;
   geo: GeoPoint | null;
   note: string | null;
+  /** How the position was obtained, e.g. "placed by the public address it is seen from, 203.0.113.7". */
+  evidence: string;
+}
+
+/** Result of the GeoIP lookup page (GET /api/geoip/lookup?q=). */
+export interface GeoLookup {
+  query: string;
+  /** "address", "host" (resolved first), or the monitor kind when q was "self". */
+  kind: "address" | "host" | "monitor" | "public_ip" | "probe" | "simulated";
+  host: string | null;
+  ip: string | null;
+  geo: GeoPoint | null;
+  note: string | null;
+  configured: boolean;
+  available: boolean;
+  simulated: boolean;
+  build_epoch: string | null;
 }
 
 export interface GeoHop {
@@ -617,6 +634,7 @@ export const api = {
     request<{ ok: boolean; channel: string }>("/api/notifications/test", { method: "POST", body: JSON.stringify({ channel, settings }) }),
   geoipStatus: () => request<GeoIpStatus>("/api/geoip/status"),
   geoipUpdate: () => request<GeoIpStatus>("/api/geoip/update", { method: "POST" }),
+  geoipLookup: (q: string) => request<GeoLookup>(`/api/geoip/lookup?q=${encodeURIComponent(q)}`),
 
   targets: () => request<Target[]>("/api/targets"),
   tags: () => request<TagInfo[]>("/api/tags"),

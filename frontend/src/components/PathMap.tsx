@@ -21,6 +21,7 @@ function popupHtml(place: MapPlace): string {
   const lines = [`<div class="font-semibold">${escapeHtml(place.title)}</div>`];
   if (place.place) lines.push(`<div>${escapeHtml(place.place)}</div>`);
   place.lines.forEach((l) => lines.push(`<div class="font-mono text-[11px] text-muted">${escapeHtml(l)}</div>`));
+  if (place.accuracyKm !== null && place.accuracyKm !== undefined) lines.push(`<div class="text-[11px] text-faint">GeoLite2 accuracy about ${escapeHtml(String(place.accuracyKm))} km</div>`);
   return `<div class="text-xs leading-snug">${lines.join("")}</div>`;
 }
 

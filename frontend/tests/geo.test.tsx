@@ -5,12 +5,13 @@ import { MemoryRouter } from "react-router-dom";
 import { api, type GeoIpStatus, type GeoPoint, type PathGeo, type Settings as SettingsT } from "../src/api";
 import { PathMapCard, buildStops, hopRanges } from "../src/components/PathMapCard";
 import { Settings } from "../src/pages/Settings";
+import { GeoLookup } from "../src/pages/GeoLookup";
 import type { MapFocus, MapPlace } from "../src/components/PathMapCard";
 
 // Leaflet needs a real layout; the card's own logic (stops, places, captions, unlocated hops, route steps) is what
 // these tests cover. The stub reports the place it was asked to focus and lets a test click a marker.
 vi.mock("../src/components/PathMap", () => ({
-  default: ({ places, paths, focus, onSelect }: { places: MapPlace[]; paths: [number, number][][]; focus?: MapFocus | null; onSelect?: (id: string) => void }) => (
+  default: ({ places, paths, focus, onSelect }: { places: MapPlace[]; paths: [number, number][][]; focus?: MapFocus | null; onSelect?: (id: string) => void; height?: number }) => (
     <div data-testid="path-map" data-paths={paths.length} data-focus={focus?.id ?? ""}>
       {places.map((p) => <button key={p.id} type="button" onClick={() => onSelect?.(p.id)}>{`${p.kind}[${p.label}]`}</button>)}
     </div>
@@ -25,7 +26,7 @@ const geo: PathGeo = {
   enabled: true,
   available: true,
   run_id: 10,
-  sources: [{ kind: "public_ip", label: "This server (public address)", ip: "198.51.100.7", geo: berlin, note: null }],
+  sources: [{ kind: "public_ip", label: "This server (public address)", ip: "198.51.100.7", geo: berlin, note: null, evidence: "placed by the public address it is seen from, 198.51.100.7, not by its own address 192.168.1.20" }],
   hops: [
     { hop_no: 1, ip: "192.168.1.1", hostname: null, asn: null, avg_ms: 0.4, loss_pct: 0, geo: null, note: "private address" },
     { hop_no: 2, ip: "10.0.0.1", hostname: null, asn: null, avg_ms: 1.2, loss_pct: 0, geo: null, note: "private address" },
@@ -59,7 +60,12 @@ describe("path map", () => {
     expect(hopRanges([5, 1, 2, 3, 8])).toBe("1–3, 5, 8");
 
     // A ping-style probe has no hops: the destination is placed on its own, one line per located source.
-    const direct = buildStops({ ...geo, hops: [], sources: [geo.sources[0], { kind: "probe", label: "Frankfurt, DE", ip: null, geo: frankfurt, note: null }] });
+    // The start marker carries its evidence (how it was placed) and the accuracy radius.
+    expect(stops[0].lines).toEqual(["placed by the public address it is seen from, 198.51.100.7, not by its own address 192.168.1.20"]);
+    expect(stops[0].accuracyKm).toBe(50);
+    expect(places[1].accuracyKm).toBe(20);
+
+    const direct = buildStops({ ...geo, hops: [], sources: [geo.sources[0], { kind: "probe", label: "Frankfurt, DE", ip: null, geo: frankfurt, note: null, evidence: "coordinates reported by the Globalping probe itself" }] });
     expect(direct.stops.map((s) => s.kind)).toEqual(["source", "source", "destination"]);
     expect(direct.paths).toHaveLength(2);
     expect(direct.places.map((p) => p.label)).toEqual(["Probe", "Probe", "Target"]);
@@ -83,6 +89,7 @@ describe("path map", () => {
     expect(steps[1].getAttribute("aria-expanded")).toBe("true");
     const details = screen.getByRole("region", { name: "Frankfurt, Hesse, Germany details" });
     expect(within(details).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["3. core1.example (203.0.113.1) · AS64500 · 8.0 ms", "4. core2.example (203.0.113.2) · AS64500 · 8.5 ms · 10.0% loss"]);
+    expect(details.textContent).toContain("GeoLite2 accuracy about 20 km");
     expect(map.getAttribute("data-focus")).toBe("place-1");
 
     // Arrow keys move between steps; selecting the open step again closes it.
@@ -119,6 +126,10 @@ describe("path map", () => {
     expect(notes.textContent).toContain("hops 1–2 · private address");
     expect(notes.textContent).toContain("hop 5 · not in database");
     expect(screen.getByText(/city-level estimates from GeoLite2/)).toBeTruthy();
+    // The evidence line says how the monitor was placed, how precise that is, and links to the lookup page.
+    const evidence = screen.getByTestId("start-evidence");
+    expect(evidence.textContent).toContain("Monitor position: placed by the public address it is seen from, 198.51.100.7, not by its own address 192.168.1.20 · about 50 km accuracy.");
+    expect(within(evidence).getByRole("link", { name: "GeoIP lookup" }).getAttribute("href")).toBe("/geoip");
   });
 
   it("points to Settings without a key and explains a database that is still missing", () => {
@@ -131,6 +142,42 @@ describe("path map", () => {
     expect(screen.getByText(/has not been downloaded yet/)).toBeTruthy();
     expect(screen.queryByTestId("path-map")).toBeNull();
     expect(screen.queryByRole("list", { name: "Route by place" })).toBeNull();
+  });
+});
+
+describe("GeoIP lookup page", () => {
+  it("looks up an address, shows the evidence and places it on the map", async () => {
+    const user = userEvent.setup();
+    const lookup = vi.spyOn(api, "geoipLookup").mockImplementation(async (q) => q === "self"
+      ? { query: "self", kind: "public_ip", host: "This server (public address)", ip: "198.51.100.7", geo: berlin, note: null, configured: true, available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z" }
+      : { query: q, kind: "host", host: q, ip: "203.0.113.9", geo: { ...frankfurt, accuracy_km: 200 }, note: null, configured: true, available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z" });
+    render(<MemoryRouter><GeoLookup /></MemoryRouter>);
+    expect(screen.getByRole("button", { name: "Look up" }).hasAttribute("disabled")).toBe(true);
+    await user.type(screen.getByLabelText("IP address or host name"), "www.example.com{Enter}");
+    await waitFor(() => expect(lookup).toHaveBeenCalledWith("www.example.com"));
+    const result = await screen.findByLabelText("Lookup result");
+    expect(result.textContent).toContain("Host name");
+    expect(result.textContent).toContain("203.0.113.9");
+    expect(result.textContent).toContain("Frankfurt, Hesse, Germany");
+    expect(result.textContent).toContain("about 200 km radius");
+    expect(result.textContent).toContain("GeoLite2 City built 2026-09-01");
+    expect((await screen.findByTestId("path-map")).textContent).toBe("destination[203.0.113.9]");
+
+    await user.click(screen.getByRole("button", { name: "This server" }));
+    await waitFor(() => expect(lookup).toHaveBeenCalledWith("self"));
+    expect((await screen.findByLabelText("Lookup result")).textContent).toContain("This server, by the public address it is seen from");
+    expect(screen.getByTestId("path-map").textContent).toBe("source[Monitor]");
+  });
+
+  it("explains a private address and a missing database", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "geoipLookup").mockResolvedValue({ query: "10.0.0.1", kind: "address", host: null, ip: "10.0.0.1", geo: null, note: "private address", configured: false, available: false, simulated: false, build_epoch: null });
+    render(<MemoryRouter><GeoLookup /></MemoryRouter>);
+    await user.type(screen.getByLabelText("IP address or host name"), "10.0.0.1{Enter}");
+    const result = await screen.findByLabelText("Lookup result");
+    expect(result.textContent).toContain("private address");
+    expect(screen.getByText(/No MaxMind licence key is saved/)).toBeTruthy();
+    expect(screen.getByText("Nothing to place on a map.")).toBeTruthy();
   });
 });
 

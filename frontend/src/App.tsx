@@ -12,6 +12,7 @@ const RunView = lazy(() => import("./pages/RunView").then((m) => ({ default: m.R
 const Events = lazy(() => import("./pages/Events").then((m) => ({ default: m.Events })));
 const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
 const QuickTrace = lazy(() => import("./pages/QuickTrace").then((m) => ({ default: m.QuickTrace })));
+const GeoLookup = lazy(() => import("./pages/GeoLookup").then((m) => ({ default: m.GeoLookup })));
 
 function PageLoading() {
   return <div className="py-20 text-center text-sm text-faint">Loading…</div>;
@@ -30,6 +31,7 @@ export default function App() {
                 <Route path="/runs/:id" element={<RunView />} />
                 <Route path="/events" element={<Events />} />
                 <Route path="/trace" element={<QuickTrace />} />
+                <Route path="/geoip" element={<GeoLookup />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

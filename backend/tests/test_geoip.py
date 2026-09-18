@@ -61,6 +61,31 @@ async def test_geo_endpoint_in_simulation(client: AsyncClient) -> None:
     assert (await client.get("/api/targets/999999/geo")).status_code == 404
 
 
+async def test_lookup_endpoint(client: AsyncClient) -> None:
+    r = await client.get("/api/geoip/lookup", params={"q": "203.0.113.5"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["kind"] == "address" and body["ip"] == "203.0.113.5" and body["configured"] is False and body["simulated"] is True
+    # Simulation fabricates a location whether or not a key is saved; the page uses `configured` to explain.
+    assert body["geo"]["country_code"] and body["note"] is None
+
+    assert (await client.get("/api/geoip/lookup", params={"q": "10.1.2.3"})).json()["note"] == "private address"
+    host = (await client.get("/api/geoip/lookup", params={"q": "www.example.test"})).json()
+    assert host["kind"] == "host" and host["host"] == "www.example.test" and host["ip"].startswith("198.51.100.") and host["geo"]
+    me = (await client.get("/api/geoip/lookup", params={"q": "self"})).json()
+    assert me["kind"] == "simulated" and me["geo"]["city"] == "Berlin" and me["host"] == "This server (simulated)"
+    assert (await client.get("/api/geoip/lookup", params={"q": ""})).status_code == 422
+    assert (await client.get("/api/geoip/lookup")).status_code == 422
+
+
+async def test_sources_carry_their_evidence(client: AsyncClient) -> None:
+    await client.put("/api/settings", json={"maxmind_license_key": "key_abc"})
+    r = await client.post("/api/targets", json={"name": "Evidence", "host": "192.0.2.32", "type": "ping", "interval_sec": 60, "count": 3})
+    await wait_for_runs(client, r.json()["id"], 1)
+    geo = (await client.get(f"/api/targets/{r.json()['id']}/geo")).json()
+    assert geo["sources"][0]["evidence"] == "simulated location" and geo["sources"][0]["geo"]["accuracy_km"] == 50
+
+
 async def test_probe_targets_get_a_destination_marker(client: AsyncClient) -> None:
     """Ping and TCP runs store the address they probed; HTTP and DNS runs do not, so the far end is derived."""
     await client.put("/api/settings", json={"maxmind_license_key": "key_abc"})

@@ -472,6 +472,7 @@ def _probe_point(probe: dict[str, Any], kind: str) -> dict[str, Any] | None:
         kind=kind,
         label=str(probe.get("label") or probe.get("city") or "Globalping probe"),
         ip=None,
+        evidence="coordinates reported by the Globalping probe itself",
     )
 
 
@@ -532,6 +533,34 @@ def _looks_like_ip(value: str) -> bool:
         return False
 
 
+async def lookup_query(query: str, settings: dict[str, Any]) -> dict[str, Any]:
+    """The GeoIP lookup page: an address, a host name (resolved first) or "self" (this server's public address).
+
+    Always answers, even without a database, so the page can explain what is missing.
+    """
+    q = query.strip()
+    out: dict[str, Any] = {
+        "query": q, "host": None, "ip": None, "geo": None, "note": None, "kind": "address",
+        "configured": configured(settings), "available": available(), "simulated": _simulated(), "build_epoch": build_time(),
+    }
+    if q.lower() in ("self", "me", "this server"):
+        point = await _monitor_point(None)
+        out.update({"kind": point["kind"], "ip": point["ip"], "geo": point["geo"], "note": point["note"], "host": point["label"]})
+        return out
+    if _looks_like_ip(q):
+        ip: str | None = q
+    else:
+        out["kind"] = "host"
+        out["host"] = q
+        ip = await _resolve_cached(q, "auto")
+        if not ip:
+            out["note"] = "host could not be resolved"
+            return out
+    out["ip"] = ip
+    out["geo"], out["note"] = locate(ip)
+    return out
+
+
 async def _destination(target: dict[str, Any], run: dict[str, Any]) -> tuple[str | None, str, str, str | None]:
     """(ip, role, host, failure note) of what the run talked to.
 
@@ -588,12 +617,12 @@ def _simulated_route(sources: list[dict[str, Any]], dst_ip: str | None, hops: li
 async def _monitor_point(src: str | None) -> dict[str, Any]:
     """Where this server runs from: its own address when public, otherwise the address it is seen from."""
     if _simulated():
-        return _point({"lat": 52.52, "lon": 13.405, "city": "Berlin", "region": None, "country": "Germany", "country_code": "DE", "accuracy_km": 50}, None, kind="simulated", label="This server (simulated)", ip=src)
+        return _point({"lat": 52.52, "lon": 13.405, "city": "Berlin", "region": None, "country": "Germany", "country_code": "DE", "accuracy_km": 50}, None, kind="simulated", label="This server (simulated)", ip=src, evidence="simulated location")
     if src and not is_unroutable(src):
         geo, note = locate(src)
-        return _point(geo, note, kind="monitor", label="This server", ip=src)
+        return _point(geo, note, kind="monitor", label="This server", ip=src, evidence=f"placed by its own address {src}")
     ip = await public_ip()
     if not ip:
-        return _point(None, "public address unknown", kind="monitor", label="This server", ip=src)
+        return _point(None, "public address unknown", kind="monitor", label="This server", ip=src, evidence="the public address could not be determined")
     geo, note = locate(ip)
-    return _point(geo, note, kind="public_ip", label="This server (public address)", ip=ip)
+    return _point(geo, note, kind="public_ip", label="This server (public address)", ip=ip, evidence=f"placed by the public address it is seen from, {ip}, not by its own address {src or 'unknown'}")
