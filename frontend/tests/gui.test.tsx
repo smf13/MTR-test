@@ -46,6 +46,7 @@ function mockDetail(t: Target = target) {
   vi.spyOn(api, "targetEvents").mockResolvedValue([]);
   vi.spyOn(api, "routes").mockResolvedValue({ routes: [], segments: [], since: timestamp, range_sec: 86400, total_runs: 0 });
   vi.spyOn(api, "hourly").mockResolvedValue({ hours: [], range_sec: 86400 });
+  vi.spyOn(api, "geo").mockResolvedValue({ enabled: false, available: false, run_id: null, sources: [], hops: [], destination: null });
 }
 function renderDetail() {
   return render(<MemoryRouter initialEntries={["/targets/1"]}><Routes><Route path="/targets/:id" element={<TargetDetail />} /><Route path="/runs/:id" element={<div>Run inspection opened</div>} /></Routes></MemoryRouter>);

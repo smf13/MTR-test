@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload, Tags as TagsIcon, Globe } from "lucide-react";
+import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload, Tags as TagsIcon, Globe, MapPin, CloudDownload } from "lucide-react";
 import { api, getApiToken, setApiToken, type Settings as SettingsT, type TargetInput } from "../api";
-import { usePoll } from "../hooks";
+import { useNow, usePoll } from "../hooks";
 import { useToast } from "../components/Toast";
 import { ErrorBanner } from "../components/EmptyState";
 import { NumberInput } from "../components/NumberInput";
 import { TagColorPicker, useTagColors } from "../components/Tags";
-import { fmtBytes, fmtDuration, sortTags } from "../utils";
+import { fmtBytes, fmtDuration, relTime, sortTags } from "../utils";
 
 /** Copy of a tag colour map with one tag set (hex) or reset to automatic (null). */
 function withTagColor(map: Record<string, string>, tag: string, hex: string | null): Record<string, string> {
@@ -25,9 +25,12 @@ const EVENT_OPTIONS = [
 
 export function Settings() {
   const toast = useToast();
+  const now = useNow(5000);
   const settings = usePoll(() => api.settings(), 60000);
   const status = usePoll(() => api.status(), 10000);
   const tags = usePoll(() => api.tags(), 60000);
+  const geoip = usePoll(() => api.geoipStatus(), 15000);
+  const [downloading, setDownloading] = useState(false);
   const { refresh: refreshTagColors } = useTagColors();
   const [form, setForm] = useState<SettingsT | null>(null);
   // Tags in use (with counts) plus any tag that only has a stored colour left over, so it can be reset.
@@ -86,6 +89,20 @@ export function Settings() {
     }
   };
 
+  const downloadGeoIp = async () => {
+    setDownloading(true);
+    try {
+      const st = await api.geoipUpdate();
+      toast(st.build_epoch ? `GeoLite2 City database updated (build ${st.build_epoch.slice(0, 10)})` : "GeoLite2 City database updated", "success");
+      void geoip.refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+      void geoip.refresh();
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const toggleEvent = (key: "webhook_events" | "pushover_events", value: string, on: boolean) => {
     if (!form) return;
     const list = form[key];
@@ -103,6 +120,7 @@ export function Settings() {
       const updated = await api.updateSettings(form);
       setForm(updated);
       void refreshTagColors();
+      void geoip.refresh();
       toast("Settings saved", "success");
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
@@ -281,6 +299,46 @@ export function Settings() {
                 <label className="label">API token (optional)</label>
                 <input className="input font-mono" type="password" value={form.globalping_token ?? ""} onChange={(e) => setForm({ ...form, globalping_token: e.target.value })} spellCheck={false} autoComplete="new-password" placeholder="leave empty for anonymous use" />
                 <div className="help">Sent as a bearer token with every Globalping request. Shown masked to readers without the API token of this server.</div>
+              </section>
+
+              <section className="card p-5">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold"><MapPin size={15} /> MaxMind GeoIP</h2>
+                  <button className="btn btn-sm" onClick={downloadGeoIp} disabled={downloading || !geoip.data?.configured || geoip.data?.updating || geoip.data?.simulated} title="Fetch the GeoLite2 City database now with the saved credentials">
+                    <CloudDownload size={13} /> {downloading || geoip.data?.updating ? "Downloading…" : "Download now"}
+                  </button>
+                </div>
+                <p className="mb-3 text-xs text-faint">A free GeoLite2 account at maxmind.com provides a licence key. Once it is saved, the server downloads the GeoLite2 City database into its data directory, refreshes it weekly, and every target page gains a map of the monitor, the hops and the destination. The database is fetched with your key and never bundled.</p>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="label">Licence key</label>
+                    <input className="input font-mono" type="password" value={form.maxmind_license_key ?? ""} onChange={(e) => setForm({ ...form, maxmind_license_key: e.target.value })} spellCheck={false} autoComplete="new-password" placeholder="leave empty to disable the map" aria-label="MaxMind licence key" />
+                    <div className="help">From <span className="font-mono">Account → Manage License Keys</span> on maxmind.com. Shown masked to readers without the API token of this server.</div>
+                  </div>
+                  <div>
+                    <label className="label">Account ID (optional)</label>
+                    <input className="input font-mono" value={form.maxmind_account_id ?? ""} onChange={(e) => setForm({ ...form, maxmind_account_id: e.target.value })} spellCheck={false} inputMode="numeric" placeholder="123456" aria-label="MaxMind account ID" />
+                    <div className="help">With the account ID the download uses MaxMind's current authenticated endpoint; without it the key alone is used.</div>
+                  </div>
+                </div>
+                <div className="mt-3 text-xs text-muted" aria-live="polite">
+                  {geoip.data ? (
+                    geoip.data.simulated ? (
+                      <span>Simulation mode: locations are synthetic and no database is downloaded. The map appears once a key is saved.</span>
+                    ) : !geoip.data.configured ? (
+                      <span>No licence key saved. Target pages show no map.</span>
+                    ) : geoip.data.available ? (
+                      <span>
+                        Database: <span className="font-mono">{geoip.data.edition}</span>{geoip.data.build_epoch ? ` built ${geoip.data.build_epoch.slice(0, 10)}` : ""}{geoip.data.downloaded_at ? ` · downloaded ${relTime(geoip.data.downloaded_at, now)}` : ""} · refreshed every {fmtDuration(geoip.data.refresh_after_sec)}.
+                      </span>
+                    ) : (
+                      <span>Database not downloaded yet. It is fetched in the background shortly after the key is saved, or immediately with Download now.</span>
+                    )
+                  ) : (
+                    <span>Checking the database…</span>
+                  )}
+                  {geoip.data?.last_error && <div className="mt-1 text-down">Last download failed: {geoip.data.last_error}</div>}
+                </div>
               </section>
 
               <div className="flex justify-end">

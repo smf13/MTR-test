@@ -9,6 +9,7 @@ import sqlite3
 import time
 from typing import Any, Awaitable, Callable, Iterable
 
+from . import geoip
 from .config import config
 from .db import Database
 from .globalping import PATH_MEASUREMENTS, run_globalping_path
@@ -60,6 +61,7 @@ class Scheduler:
             t.cancel()
         await asyncio.gather(*loops, *runs, return_exceptions=True)
         self._running.clear()
+        await geoip.cancel_refresh()
         if self._notify_tasks:
             _, pending = await asyncio.wait(self._notify_tasks, timeout=NOTIFY_DRAIN_TIMEOUT)
             for t in pending:
@@ -138,6 +140,9 @@ class Scheduler:
                 removed = await self.db.purge_older_than(days)
                 if removed:
                     log.info("retention: purged %d runs older than %d days", removed, days)
+                # The GeoLite2 database is refreshed weekly on the same hourly tick (a background task, so a
+                # slow download never delays the purge).
+                geoip.schedule_refresh(settings)
             except Exception:  # noqa: BLE001
                 log.exception("cleanup failed")
             try:

@@ -46,6 +46,10 @@ The data tabs sit below the charts. Switching between them keeps the charts visi
 
 **Path profile**, above the data tabs, compares per-hop latency and loss. Switch between **Latest run** and **Avg · [range]**. Intermediate-hop loss alone does not establish loss at the destination.
 
+### Path map
+
+With a MaxMind licence key saved under **Settings → MaxMind GeoIP**, a **Path map** card sits between the latency distribution and the hour-by-day heatmap (**Location map** on ping, HTTP, TCP and DNS targets). It plots the latest completed run: the monitoring server in the accent colour, hops in grey and the destination in green (red when it did not respond), joined by a dashed line in path order. Consecutive hops in the same place share one marker; hover a marker for its hop numbers, select it for host names, addresses, latency and loss. Use the **+**/**−** controls or pinch to zoom; the mouse wheel keeps scrolling the page. The caption counts how many hops were located, and a line under the map lists the hops that were not, with the reason (private address, not in database). Without a key, the card is replaced by a one-line pointer to Settings; while the database is still downloading, the card says so.
+
 ### Hop table columns
 
 Current path, individual run pages and quick trace show the complete hop table immediately. The original 14 columns are always available, without a column-mode selector.
@@ -88,7 +92,7 @@ With a keyboard, use Left/Right or Home/End in the data tabs. In an action menu,
 
 ## Settings and saved preferences
 
-**Settings** controls retention, name/ASN lookups, notification channels, public URL, Globalping credentials and tag colours. It also offers **Export JSON** and **Import JSON** for target definitions; these exports do not contain monitoring history. Import modes update by name, always create, or replace all targets.
+**Settings** controls retention, name/ASN lookups, notification channels, public URL, Globalping credentials, MaxMind GeoIP credentials and tag colours. The **MaxMind GeoIP** section shows whether the GeoLite2 City database is present, its build date and the last download error, and offers **Download now** once a licence key is saved. It also offers **Export JSON** and **Import JSON** for target definitions; these exports do not contain monitoring history. Import modes update by name, always create, or replace all targets.
 
 Theme, dashboard view/sort, comparison-chart visibility, data tab and time range are saved in browser storage. They are preferences for that browser, not global settings.
 

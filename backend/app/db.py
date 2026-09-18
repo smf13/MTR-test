@@ -139,6 +139,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tag_colors": {},
     # Optional Globalping API token (globalping.io); raises the rate limits for the globalping probe type.
     "globalping_token": "",
+    # MaxMind GeoLite2 credentials: the licence key enables the map on target pages (the database is
+    # downloaded with it); the account ID is optional and switches to MaxMind's basic-auth download endpoint.
+    "maxmind_account_id": "",
+    "maxmind_license_key": "",
 }
 
 

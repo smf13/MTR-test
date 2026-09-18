@@ -111,6 +111,17 @@ function readTheme(): Theme {
   return t === "light" || t === "oled" ? t : "dark";
 }
 
+/** The theme currently applied to the document, without owning it (follows changes made elsewhere). */
+export function useDocumentTheme(): Theme {
+  const [theme, setTheme] = useState<Theme>(readTheme);
+  useEffect(() => {
+    const observer = new MutationObserver(() => setTheme(readTheme()));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+  return theme;
+}
+
 export function useTheme(): [Theme, (t: Theme) => void, () => void] {
   const [theme, setTheme] = useState<Theme>(readTheme);
   useEffect(() => {

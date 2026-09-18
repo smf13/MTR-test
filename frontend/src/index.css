@@ -192,6 +192,21 @@ body {
 
 }
 
+/* Path map (Leaflet). The stylesheet of the map chunk loads after this one, so the overrides carry a parent selector. */
+.path-map { width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-2); }
+.path-map .leaflet-container { font-family: var(--font-sans); background: var(--surface-2); }
+/* One tile provider for every theme: dark themes invert the raster tiles into a muted night map. */
+.path-map-dark .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.82) contrast(0.9) saturate(0.45); }
+.path-map .leaflet-control-zoom a { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+.path-map .leaflet-control-zoom a:hover { background: var(--surface-2); }
+.path-map .leaflet-bar { border: 1px solid var(--border-strong); box-shadow: none; }
+.path-map .leaflet-control-attribution { background: color-mix(in srgb, var(--surface) 85%, transparent); color: var(--text-muted); font-size: 10px; }
+.path-map .leaflet-control-attribution a { color: var(--accent); }
+.path-map .leaflet-popup-content-wrapper, .path-map .leaflet-popup-tip { background: var(--surface); color: var(--text); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); }
+.path-map .leaflet-popup-content { margin: 8px 10px; }
+.path-map .leaflet-tooltip.path-map-label { background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; font-size: 11px; padding: 2px 6px; box-shadow: none; }
+.path-map .leaflet-tooltip.path-map-label::before { border-top-color: var(--border-strong); }
+
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .pulse { animation: pulse-dot 1.4s ease-in-out infinite; }
 

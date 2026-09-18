@@ -93,6 +93,8 @@ export interface GlobalpingProbeBase {
   asn: number | null;
   network: string | null;
   status: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 /** One remote probe of a Globalping ping run. */
@@ -431,6 +433,75 @@ export interface Settings {
   tag_colors: Record<string, string>;
   /** Optional Globalping API token (raises the rate limits for the globalping probe type). */
   globalping_token: string;
+  /** MaxMind account ID (optional, digits) and licence key; the key enables the GeoLite2 download and the map on target pages. */
+  maxmind_account_id: string;
+  maxmind_license_key: string;
+}
+
+/** State of the MaxMind GeoLite2 database on the server (GET /api/geoip/status). */
+export interface GeoIpStatus {
+  configured: boolean;
+  available: boolean;
+  simulated: boolean;
+  edition: string;
+  path: string;
+  build_epoch: string | null;
+  downloaded_at: string | null;
+  last_attempt: string | null;
+  last_success: string | null;
+  last_error: string | null;
+  updating: boolean;
+  refresh_after_sec: number;
+}
+
+/** A located address as returned by the geo endpoint. */
+export interface GeoPoint {
+  lat: number;
+  lon: number;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  country_code: string | null;
+  accuracy_km: number | null;
+}
+
+/** Where a run was launched from: this server (its own or its public address), a Globalping probe, or the simulator. */
+export interface GeoSource {
+  kind: "monitor" | "public_ip" | "probe" | "simulated";
+  label: string;
+  ip: string | null;
+  geo: GeoPoint | null;
+  note: string | null;
+}
+
+export interface GeoHop {
+  hop_no: number;
+  ip: string | null;
+  hostname: string | null;
+  asn: string | null;
+  avg_ms: number | null;
+  loss_pct: number | null;
+  geo: GeoPoint | null;
+  /** Why there is no location: "private address", "not in database", "no database", "no response". */
+  note: string | null;
+}
+
+export interface GeoDestination {
+  ip: string;
+  host: string;
+  reached: boolean;
+  geo: GeoPoint | null;
+  note: string | null;
+}
+
+/** Geolocation of the latest completed run (GET /api/targets/{id}/geo); `enabled` is false without a MaxMind key. */
+export interface PathGeo {
+  enabled: boolean;
+  available: boolean;
+  run_id: number | null;
+  sources: GeoSource[];
+  hops: GeoHop[];
+  destination: GeoDestination | null;
 }
 
 export interface TagInfo {
@@ -533,6 +604,8 @@ export const api = {
   updateSettings: (patch: Partial<Settings>) => request<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
   testNotification: (channel: "webhook" | "pushover", settings: Partial<Settings>) =>
     request<{ ok: boolean; channel: string }>("/api/notifications/test", { method: "POST", body: JSON.stringify({ channel, settings }) }),
+  geoipStatus: () => request<GeoIpStatus>("/api/geoip/status"),
+  geoipUpdate: () => request<GeoIpStatus>("/api/geoip/update", { method: "POST" }),
 
   targets: () => request<Target[]>("/api/targets"),
   tags: () => request<TagInfo[]>("/api/tags"),
@@ -563,6 +636,7 @@ export const api = {
   overview: (range: string) => request<OverviewSeries>(`/api/overview/series?range=${encodeURIComponent(range)}`),
   hourly: (id: number, range: string) => request<{ range_sec: number; hours: HourlyBucket[] }>(`/api/targets/${id}/hourly?range=${encodeURIComponent(range)}`),
   routes: (id: number, range: string) => request<Routes>(`/api/targets/${id}/routes?range=${encodeURIComponent(range)}`),
+  geo: (id: number) => request<PathGeo>(`/api/targets/${id}/geo`),
   targetEvents: (id: number, range?: string) =>
     request<Event[]>(`/api/targets/${id}/events?limit=200${range ? `&range=${encodeURIComponent(range)}` : ""}`),
 

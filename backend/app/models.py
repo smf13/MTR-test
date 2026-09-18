@@ -246,6 +246,18 @@ class SettingsUpdate(BaseModel):
     site_name: str | None = Field(default=None, max_length=60)
     tag_colors: dict[str, str] | None = Field(default=None, description="tag -> #rrggbb; tags without an entry get an automatic colour")
     globalping_token: str | None = Field(default=None, max_length=200, description="optional Globalping API token for higher rate limits")
+    maxmind_account_id: str | None = Field(default=None, max_length=32, description="MaxMind account ID (optional; digits)")
+    maxmind_license_key: str | None = Field(default=None, max_length=200, description="MaxMind licence key; enables the GeoLite2 download and the map on target pages")
+
+    @field_validator("maxmind_account_id")
+    @classmethod
+    def _check_account_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if v and not v.isdigit():
+            raise ValueError("maxmind_account_id must be the numeric account ID shown on maxmind.com")
+        return v
 
     @field_validator("tag_colors")
     @classmethod
@@ -262,7 +274,7 @@ class SettingsUpdate(BaseModel):
             raise ValueError(f"{info.field_name} must start with http:// or https://")
         return v.rstrip("/") if info.field_name == "base_url" else v
 
-    @field_validator("pushover_user_key", "pushover_api_token", "pushover_device", "pushover_sound", "globalping_token")
+    @field_validator("pushover_user_key", "pushover_api_token", "pushover_device", "pushover_sound", "globalping_token", "maxmind_license_key")
     @classmethod
     def _strip(cls, v: str | None) -> str | None:
         return None if v is None else v.strip()

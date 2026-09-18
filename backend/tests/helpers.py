@@ -17,9 +17,9 @@ def reload_app_modules() -> Any:
     from app import config as config_mod
 
     importlib.reload(config_mod)
-    from app import api as api_mod, globalping as gp_mod, main as main_mod, mtr as mtr_mod, probes as probes_mod, scheduler as sched_mod
+    from app import api as api_mod, geoip as geoip_mod, globalping as gp_mod, main as main_mod, mtr as mtr_mod, probes as probes_mod, scheduler as sched_mod
 
-    for m in (mtr_mod, probes_mod, gp_mod, sched_mod, api_mod, main_mod):
+    for m in (mtr_mod, probes_mod, gp_mod, geoip_mod, sched_mod, api_mod, main_mod):
         importlib.reload(m)
     return main_mod
 

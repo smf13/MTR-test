@@ -26,6 +26,7 @@ import { TagList, useTagColors } from "../components/Tags";
 import { useToast } from "../components/Toast";
 import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, hostLabel, isPathProbe, isPacketProbe, latencyLabel } from "../utils";
 import { CheckDetails } from "../components/CheckDetails";
+import { PathMapCard } from "../components/PathMapCard";
 import { PROBE_TYPE_LABEL } from "../api";
 
 type Tab = "path" | "history" | "summary" | "runs" | "events";
@@ -63,6 +64,7 @@ export function TargetDetail() {
   const events = usePoll(() => api.targetEvents(targetId, range), pollMs, [targetId, range]);
   const routes = usePoll(() => api.routes(targetId, range), pollMs, [targetId, range]);
   const hourly = usePoll(() => api.hourly(targetId, range), Math.max(pollMs, 60000), [targetId, range]);
+  const geo = usePoll(() => api.geo(targetId), pollMs, [targetId]);
 
   useEffect(() => setRunPage(0), [range, runFilter]);
 
@@ -76,7 +78,8 @@ export function TargetDetail() {
     void events.refresh();
     void routes.refresh();
     void hourly.refresh();
-  }, [target, series, latest, history, summary, runs, events, routes, hourly]);
+    void geo.refresh();
+  }, [target, series, latest, history, summary, runs, events, routes, hourly, geo]);
 
   const t: Target | null = target.data;
   const stats = t?.stats;
@@ -296,6 +299,8 @@ export function TargetDetail() {
           <LatencyHistogram points={series.data?.points ?? []} />
         </div>
       </div>
+
+      <PathMapCard geo={geo.data} pathProbe={pathProbe} />
 
       <div className="card p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

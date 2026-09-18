@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__
+from . import __version__, geoip
 from .api import is_authenticated, router
 from .config import config
 from .db import Database
@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         await scheduler.stop()
         await db.close()
+        geoip.close()
 
 
 def create_app() -> FastAPI:

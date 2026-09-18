@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from . import __version__
+from . import __version__, geoip
 from .config import config
 from .db import Database, rows_to_dicts
 from .models import BulkAction, NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, validate_options
@@ -82,7 +82,7 @@ def is_authenticated(request: Request) -> bool:
 
 
 SECRET_MASK = "********"
-_SECRET_KEYS = ("pushover_api_token", "pushover_user_key", "globalping_token")
+_SECRET_KEYS = ("pushover_api_token", "pushover_user_key", "globalping_token", "maxmind_license_key")
 
 
 def _mask_token(value: str) -> str:
@@ -229,7 +229,33 @@ async def get_settings(request: Request) -> dict[str, Any]:
 async def put_settings(request: Request, body: SettingsUpdate) -> dict[str, Any]:
     # A masked value echoed back by the UI means "unchanged"; only real values are written.
     patch = strip_masked({k: v for k, v in body.model_dump().items() if v is not None})
-    return await _db(request).set_settings(patch)
+    settings = await _db(request).set_settings(patch)
+    if "maxmind_license_key" in patch or "maxmind_account_id" in patch:
+        # A newly saved key fetches the database in the background, so the map appears without a restart.
+        geoip.schedule_refresh(settings)
+    return settings
+
+
+@router.get("/geoip/status")
+async def geoip_status(request: Request) -> dict[str, Any]:
+    """State of the MaxMind GeoLite2 database: configured, downloaded, build date, last error."""
+    status = geoip.status(await _db(request).get_settings())
+    for key in ("build_epoch", "downloaded_at", "last_attempt", "last_success"):
+        status[key] = _iso(status[key])
+    return status
+
+
+@router.post("/geoip/update")
+async def geoip_update(request: Request) -> dict[str, Any]:
+    """Download the GeoLite2 City database now with the saved MaxMind credentials."""
+    settings = await _db(request).get_settings()
+    if not geoip.configured(settings):
+        raise HTTPException(400, "save a MaxMind licence key first")
+    try:
+        await geoip.download(settings)
+    except geoip.GeoIpError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return await geoip_status(request)
 
 
 @router.post("/notifications/test")
@@ -870,6 +896,25 @@ async def get_routes(request: Request, target_id: int, range: str = Query(defaul
     for seg in segments:
         seg["index"] = index.get(seg["hash"], 0)
     return {"range_sec": range_sec, "since": _iso(since), "total_runs": n, "segments": segments, "routes": routes}
+
+
+@router.get("/targets/{target_id}/geo")
+async def get_target_geo(request: Request, target_id: int) -> dict[str, Any]:
+    """Locations of the monitor (or remote probes), every hop and the destination of the latest completed run.
+
+    `enabled` is false until a MaxMind licence key is saved; the UI then hides the map. Hops without a
+    location carry a `note` (private address, not in database, no database yet).
+    """
+    db = _db(request)
+    row = await db.fetchone("SELECT * FROM targets WHERE id = ?", (target_id,))
+    if row is None:
+        raise HTTPException(404, "target not found")
+    target = _target_out(dict(row))
+    settings = await db.get_settings()
+    run_row = await db.fetchone("SELECT * FROM runs WHERE target_id = ? AND status = 'ok' ORDER BY started_at DESC LIMIT 1", (target_id,))
+    run = _run_out(dict(run_row)) if run_row else None
+    hops = rows_to_dicts(await db.fetchall("SELECT hop_no, ip, hostname, asn, avg_ms, loss_pct FROM hops WHERE run_id = ? ORDER BY hop_no ASC", (run["id"],))) if run else []
+    return await geoip.path_geo(target, run, hops, settings)
 
 
 @router.get("/targets/{target_id}/events")

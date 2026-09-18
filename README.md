@@ -60,6 +60,7 @@ All captures show the current interface running in simulation mode with a week o
 - **Path history heatmap.** Hop-by-run grid coloured by loss, latency or jitter, with numeric legends. Latency and jitter use a sequential scale; no response and no data are identified separately.
 - **Detailed hop tables.** See full hostnames and IP addresses, ASN, loss, sent/received counts, last/average/best/worst latency, standard deviation, average/maximum jitter and latency bars immediately. Tables show their full height and scroll horizontally on narrow screens.
 - **Path summary.** Per-hop statistics aggregated over the selected range, including alternate addresses seen at each hop (ECMP or reroutes) with how often each was observed.
+- **Path map** (optional, [MaxMind GeoLite2](https://www.maxmind.com/en/geolite2/signup)). Save a free MaxMind licence key under **Settings** and every target page gains a map of the monitoring server, every located hop and the destination, joined in path order. The server downloads the GeoLite2 City database with your key, keeps it in the data directory and refreshes it weekly. Private hops and addresses missing from the database are listed under the map; Globalping probes are placed where they report themselves.
 - **Route change detection** with a hop-by-hop diff, and detection of destination IP changes for DNS-based targets.
 - **Alerting.** Per-target loss and latency thresholds produce up / degraded / down state transitions, an event log, and notifications via **Pushover** and generic JSON **webhooks** (n8n, Zapier, custom receivers), each with its own event selection and a one-click test.
 - **Tags** to group and filter targets, always sorted alphabetically, each with an automatic colour that can be replaced by a preset or a custom colour (from the target form or under Settings). A colour applies everywhere the tag is used.
@@ -113,7 +114,7 @@ Environment variables (read at startup):
 | `MTR_TRACKER_API_TOKEN` | empty | When set, all write requests need `Authorization: Bearer <token>`, and reads of the settings show credentials masked unless they carry it |
 | `MTR_TRACKER_RUN_AS_ROOT` | `0` | Docker only: `1` keeps the process as root (needed for mtr probe intervals below 1 s) |
 
-Everything else (retention days, reverse DNS, ASN lookup, notification channels, public URL, tag colours, the Globalping token) is set in the UI under **Settings** and stored in the database.
+Everything else (retention days, reverse DNS, ASN lookup, notification channels, public URL, tag colours, the Globalping token, the MaxMind credentials) is set in the UI under **Settings** and stored in the database.
 
 The supplied Compose file publishes `8899:8899`. To change only the externally exposed port, change the left-hand value, for example `8080:8899`. If you change `MTR_TRACKER_PORT` inside the container, also update the right-hand value. When using the `uvicorn` development command below, its `--host` and `--port` arguments control the listener instead.
 
@@ -142,6 +143,14 @@ Two channels can be enabled independently under **Settings**, each with its own 
 ```
 
 Event kinds: `down`, `recovered`, `degraded`, `route_change`. `url` is present when a public URL is configured.
+
+### Path map (MaxMind GeoLite2)
+
+1. Create a free GeoLite2 account at maxmind.com and generate a licence key (**Account → Manage License Keys**).
+2. Under **Settings → MaxMind GeoIP**, paste the licence key (and, optionally, your numeric account ID, which switches the download to MaxMind's current authenticated endpoint) and save.
+3. The server downloads the GeoLite2 City database into `<data directory>/geoip/` in the background; **Download now** fetches it immediately and reports any credential error. The database is refreshed once a week by the hourly maintenance tick and is never bundled with the image, as MaxMind's licence requires.
+
+With the key saved, each target page shows a **Path map** (or **Location map** for ping, HTTP, TCP and DNS targets). The monitoring server is placed by its own address, or, when it sits behind NAT, by the public address it is seen from (looked up once an hour through `api.ipify.org`, with `checkip.amazonaws.com` as fallback). Hops with private addresses and addresses missing from the database are listed under the map instead of being drawn. Map tiles come from OpenStreetMap, so browsers need to reach `tile.openstreetmap.org`. In simulation mode no database is downloaded and the locations are synthetic. Leave the key empty to hide the map again.
 
 ### Troubleshooting
 
@@ -263,6 +272,9 @@ Interactive API documentation is available at `/api/docs`, with the OpenAPI sche
 | `GET` | `/api/targets/{id}/hops/summary` | Per-hop aggregates with alternate addresses |
 | `GET` | `/api/targets/{id}/hourly` | Hour buckets (avg, worst, loss, jitter, reached) for the day-by-hour heatmap |
 | `GET` | `/api/targets/{id}/routes` | Contiguous route segments over time and per-route share |
+| `GET` | `/api/targets/{id}/geo` | Locations of the monitor (or remote probes), hops and destination of the latest completed run; `enabled` is false without a MaxMind key |
+| `GET` | `/api/geoip/status` | State of the GeoLite2 database: configured, downloaded, build date, last error |
+| `POST` | `/api/geoip/update` | Download the GeoLite2 City database now with the saved MaxMind credentials |
 | `GET` | `/api/overview/series` | Bucketed latency and loss for every target, for the comparison chart |
 | `GET` | `/api/targets/{id}/events` | Events for one target |
 | `GET` | `/api/runs/{id}` | A run with all hops |
@@ -312,7 +324,7 @@ Running real probes outside Docker requires the `mtr` binary (`apt install mtr-t
 Simulation produces synthetic measurements, but local MTR/ping/TCP hostname resolution, local MTR reverse DNS and configured notifications can still access the network. For an isolated UI demo, use IP-literal targets, disable reverse DNS and leave notification channels disabled.
 
 - **Backend tests:** `backend/tests`; `conftest.py` provides `client` (open instance), `protected_client` (with an API token) and `static_client` (with a stub frontend build), all built by `helpers.app_client`.
-- **Frontend tests:** `frontend/tests`, using Vitest, jsdom and Testing Library. Coverage includes target action menus, keyboard navigation, tab/probe compatibility, all hop metrics, path-summary alternate addresses, run pagination/filtering, help popovers, heatmap legends, dashboard filtering and clone prefill. API calls and browser-only sizing are mocked; these are component tests, not screenshot tests.
+- **Frontend tests:** `frontend/tests`, using Vitest, jsdom and Testing Library. Coverage includes target action menus, keyboard navigation, tab/probe compatibility, all hop metrics, path-summary alternate addresses, run pagination/filtering, help popovers, heatmap legends, dashboard filtering, clone prefill, the path map card (marker grouping, unlocated hops, the Settings pointer) and the MaxMind settings section. API calls and browser-only sizing are mocked; these are component tests, not screenshot tests.
 - **CI:** pushes to `main` and pull requests run backend tests plus the frontend production build and component tests. A Docker build runs after both jobs pass; CI does not publish the image.
 
 ## Project layout
@@ -325,6 +337,7 @@ backend/app/
   mtr.py         mtr command builder, JSON parser, simulator
   probes.py      ping, HTTP, TCP and DNS probes
   globalping.py  Globalping API client: ping, traceroute, MTR, DNS and HTTP
+  geoip.py       MaxMind GeoLite2 download, lookups and path geolocation for the map
   notify.py      webhook + Pushover delivery, event fan-out
   resolver.py    forward DNS and cached reverse DNS
   db.py          SQLite schema, transactions, batched retention purge

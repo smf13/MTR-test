@@ -59,7 +59,8 @@ def probe_label(probe: dict[str, Any]) -> str:
 
 
 def _probe_fields(probe: dict[str, Any]) -> dict[str, Any]:
-    return {"label": probe_label(probe), **{k: probe.get(k) for k in ("continent", "country", "city", "asn", "network")}}
+    # Coordinates come with every probe and let the map place a remote vantage point without a GeoIP lookup.
+    return {"label": probe_label(probe), **{k: probe.get(k) for k in ("continent", "country", "city", "asn", "network", "latitude", "longitude")}}
 
 
 # ---------------------------------------------------------------------------
@@ -555,11 +556,11 @@ async def run_globalping_path(t: dict[str, Any], opts: dict[str, Any], settings:
 # ---------------------------------------------------------------------------
 
 _SIM_PROBES = [
-    {"continent": "EU", "country": "DE", "city": "Frankfurt", "asn": 24940, "network": "Hetzner Online GmbH"},
-    {"continent": "NA", "country": "US", "city": "Ashburn", "asn": 14618, "network": "Amazon.com, Inc."},
-    {"continent": "AS", "country": "SG", "city": "Singapore", "asn": 16509, "network": "Amazon.com, Inc."},
-    {"continent": "EU", "country": "GB", "city": "London", "asn": 20473, "network": "The Constant Company"},
-    {"continent": "SA", "country": "BR", "city": "São Paulo", "asn": 262287, "network": "Latitude.sh"},
+    {"continent": "EU", "country": "DE", "city": "Frankfurt", "asn": 24940, "network": "Hetzner Online GmbH", "latitude": 50.1109, "longitude": 8.6821},
+    {"continent": "NA", "country": "US", "city": "Ashburn", "asn": 14618, "network": "Amazon.com, Inc.", "latitude": 39.0438, "longitude": -77.4874},
+    {"continent": "AS", "country": "SG", "city": "Singapore", "asn": 16509, "network": "Amazon.com, Inc.", "latitude": 1.3521, "longitude": 103.8198},
+    {"continent": "EU", "country": "GB", "city": "London", "asn": 20473, "network": "The Constant Company", "latitude": 51.5074, "longitude": -0.1278},
+    {"continent": "SA", "country": "BR", "city": "São Paulo", "asn": 262287, "network": "Latitude.sh", "latitude": -23.5505, "longitude": -46.6333},
 ]
 
 
