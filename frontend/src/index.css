@@ -209,6 +209,12 @@ body {
 .path-map .path-map-marker span { display: inline-block; transform: translate(-50%, -50%); white-space: nowrap; border-radius: 999px; border: 2px solid var(--surface); padding: 1px 7px; font-size: 11px; font-weight: 600; line-height: 1.3; color: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); cursor: pointer; }
 .path-map .path-map-marker-hop span { font-size: 10px; padding: 0 6px; }
 .path-map .path-map-marker-destination span, .path-map .path-map-marker-source span { border-width: 2px; }
+/* Steps of the "Route by place" list: buttons that focus the map and expand their hops. */
+.route-step { display: inline-flex; align-items: baseline; gap: 4px; border-radius: 6px; border: 1px solid transparent; padding: 2px 6px; background: var(--surface-2); color: var(--text); transition: background-color 0.12s, border-color 0.12s; }
+.route-step:hover { border-color: var(--border-strong); }
+.route-step[data-active="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.route-step .route-step-caret { align-self: center; transition: transform 0.12s; }
+.route-step[data-active="true"] .route-step-caret { transform: rotate(180deg); }
 .path-map-key { display: inline-block; border-radius: 999px; padding: 0 6px; font-size: 10px; font-weight: 600; line-height: 1.5; color: #fff; }
 
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import type { MapPlace } from "./PathMapCard";
+import type { MapFocus, MapPlace } from "./PathMapCard";
 
 /** Leaflet lives in its own chunk: this file is only loaded once a target page has a map to draw. */
 
@@ -30,11 +30,14 @@ function markerColor(place: MapPlace, colors: Record<string, string>): string {
   return colors.hop;
 }
 
-export default function PathMap({ places, paths, dark, height = 360 }: { places: MapPlace[]; paths: [number, number][][]; dark: boolean; height?: number }) {
+export default function PathMap({ places, paths, dark, focus, onSelect, height = 360 }: { places: MapPlace[]; paths: [number, number][][]; dark: boolean; focus?: MapFocus | null; onSelect?: (placeId: string) => void; height?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.LayerGroup | null>(null);
   const fittedRef = useRef<string>("");
+  const markersRef = useRef<Map<string, L.Marker>>(new Map());
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
 
   useEffect(() => {
     const el = ref.current;
@@ -68,6 +71,7 @@ export default function PathMap({ places, paths, dark, height = 360 }: { places:
       hop: cssColor("--paused", "#94a3b8"),
     };
     layer.clearLayers();
+    markersRef.current.clear();
     paths.forEach((p) => {
       if (p.length > 1) L.polyline(p, { color: colors.accent, weight: 2, opacity: 0.75, dashArray: "6 6" }).addTo(layer);
     });
@@ -83,6 +87,8 @@ export default function PathMap({ places, paths, dark, height = 360 }: { places:
       });
       const marker = L.marker([place.lat, place.lon], { icon, zIndexOffset: place.kind === "hop" ? 0 : 1000, keyboard: true, alt: place.title }).addTo(layer);
       marker.bindPopup(popupHtml(place), { closeButton: false, maxWidth: 280 });
+      marker.on("click", () => onSelectRef.current?.(place.id));
+      markersRef.current.set(place.id, marker);
     });
     const key = places.map((s) => `${s.id}@${s.lat.toFixed(2)},${s.lon.toFixed(2)}`).join("|");
     if (key !== fittedRef.current && places.length) {
@@ -93,6 +99,15 @@ export default function PathMap({ places, paths, dark, height = 360 }: { places:
       else map.fitBounds(bounds, { padding: [36, 36], maxZoom: 9 });
     }
   }, [places, paths, dark]);
+
+  useEffect(() => {
+    // A route step was selected under the map: bring its place into view and open the marker's popup.
+    const map = mapRef.current;
+    const marker = focus ? markersRef.current.get(focus.id) : undefined;
+    if (!map || !marker) return;
+    map.setView(marker.getLatLng(), Math.max(map.getZoom(), 5), { animate: true });
+    marker.openPopup();
+  }, [focus]);
 
   return <div ref={ref} className={`path-map ${dark ? "path-map-dark" : ""}`} style={{ height }} role="img" aria-label="Map of the monitoring path" />;
 }

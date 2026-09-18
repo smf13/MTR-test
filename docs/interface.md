@@ -57,7 +57,7 @@ How to read it:
 - **The dashed line follows the hops in order** from the monitor to the target. Because GeoLite2 knows a city at best and often registers backbone routers at their operator's head office, the line can double back or reach the target's city several hops before the last hop. That is the database's estimate, not a routing fault; the marker labels say which hops are where.
 - **The target is green** when the run reached it and red when it did not.
 - **Other probe types show the far end too.** A ping or TCP target is the address probed; an HTTP target is the URL's host; a DNS check shows the **Resolver** it asked, or, with no resolver configured, the **Answer** address the name resolved to. Globalping checks show the remote probe and the address it resolved.
-- **Route by place**, under the map, spells the same path out in words: *Berlin monitor › Frankfurt hops 3–4 › London hop 6 › Frankfurt hop 7 › London hop 8, target*.
+- **Route by place**, under the map, spells the same path out in words: *Berlin monitor › Frankfurt hops 3–4 › London hop 6 › Frankfurt hop 7 › London hop 8, target*. Each step is a button: select it to pan the map to that place, open its marker popup and expand a panel listing that step's hops with host names, addresses, latency and loss. Select it again to close the panel. Selecting a marker on the map opens the matching step. With a keyboard, use Left/Right or Home/End to move between steps and Enter or Space to open one.
 - **Not on the map** lists the hops without a location and why: private address, not in database, or no response.
 
 Use the **+**/**−** controls or pinch to zoom; the mouse wheel keeps scrolling the page. The caption counts how many hops were located. The information icon beside the heading repeats this guidance. Without a key, the card is replaced by a one-line pointer to Settings; while the database is still downloading, the card says so.
@@ -100,7 +100,7 @@ On narrow screens, open **Menu** in the sticky header for **Dashboard**, **Event
 
 Target tabs and wide data tables scroll horizontally when needed. The three-dot action menu opens over the page so it remains visible inside a scrolling table.
 
-With a keyboard, use Left/Right or Home/End in the data tabs. In an action menu, use Up/Down or Home/End to select an item, Enter to activate it, and Escape to close it and return focus to the menu button.
+With a keyboard, use Left/Right or Home/End in the data tabs and in the map's **Route by place** steps. In an action menu, use Up/Down or Home/End to select an item, Enter to activate it, and Escape to close it and return focus to the menu button.
 
 ## Settings and saved preferences
 

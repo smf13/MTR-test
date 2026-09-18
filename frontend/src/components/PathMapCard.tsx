@@ -1,6 +1,6 @@
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, Map as MapIcon, MapPin } from "lucide-react";
+import { ChevronDown, ChevronRight, Map as MapIcon, MapPin } from "lucide-react";
 import type { GeoHop, GeoPoint, PathGeo } from "../api";
 import { useDocumentTheme } from "../hooks";
 import { fmtNum } from "../utils";
@@ -43,6 +43,16 @@ export interface RouteStep {
   place: string;
   what: string;
   kind: "source" | "hop" | "destination";
+  /** The marker this step sits on, so selecting the step can focus the map and vice versa. */
+  placeId: string;
+  /** Detail lines shown when the step is expanded (same content as the marker popup, for these stops only). */
+  lines: string[];
+}
+
+/** A request for the map to pan to a place and open its popup; `seq` makes repeated selections of one place distinct. */
+export interface MapFocus {
+  id: string;
+  seq: number;
 }
 
 export function placeOf(geo: GeoPoint | null): string {
@@ -159,19 +169,22 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
 
   // The textual route: consecutive stops in one place become one step ("Frankfurt · hops 3–5").
   const remote = geo.sources.some((s) => s.kind === "probe");
-  const steps: { stop: MapStop; hopNos: number[] }[] = [];
+  const steps: { stop: MapStop; hopNos: number[]; lines: string[] }[] = [];
   for (const stop of stops) {
     const prev = steps[steps.length - 1];
     if (prev && prev.stop.kind === "hop" && stop.kind === "hop" && (near(prev.stop, stop) || (stop.place && prev.stop.place === stop.place))) {
       prev.hopNos.push(...stop.hopNos);
+      prev.lines.push(...stop.lines);
       continue;
     }
-    steps.push({ stop, hopNos: [...stop.hopNos] });
+    steps.push({ stop, hopNos: [...stop.hopNos], lines: [...stop.lines] });
   }
-  const route: RouteStep[] = steps.map(({ stop, hopNos }) => ({
+  const route: RouteStep[] = steps.map(({ stop, hopNos, lines }) => ({
     place: stop.place || "unknown place",
     kind: stop.kind,
     what: stop.kind === "source" ? (remote ? "probe" : "monitor") : stop.kind === "destination" ? (hopNos.length ? `hop ${hopNos[0]}, ${destWord.toLowerCase()}` : destWord.toLowerCase()) : hopsWord(hopNos),
+    placeId: places.find((p) => near(p, stop))?.id ?? "",
+    lines,
   }));
   return { stops, paths: paths.filter((p) => p.length > 1), places, route };
 }
@@ -185,6 +198,34 @@ export function destinationWord(role: "target" | "resolver" | "answer" | undefin
 export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe: boolean }) {
   const theme = useDocumentTheme();
   const built = useMemo(() => (geo && geo.enabled ? buildStops(geo) : null), [geo]);
+  // The expanded route step and the place the map should show; a marker click selects the first step at that place.
+  const [openStep, setOpenStep] = useState<number | null>(null);
+  const [focus, setFocus] = useState<MapFocus | null>(null);
+  const stepRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const routeKey = built ? built.route.map((s) => `${s.placeId}:${s.what}`).join("|") : "";
+  useEffect(() => {
+    // A different run (new places or hops) invalidates the selection; a plain poll refresh keeps it.
+    setOpenStep(null);
+    setFocus(null);
+  }, [routeKey]);
+  const selectStep = (i: number) => {
+    const step = built?.route[i];
+    if (!step) return;
+    const willOpen = openStep !== i;
+    setOpenStep(willOpen ? i : null);
+    if (willOpen && step.placeId) setFocus((f) => ({ id: step.placeId, seq: (f?.seq ?? 0) + 1 }));
+  };
+  const selectPlace = (placeId: string) => {
+    const i = built?.route.findIndex((s) => s.placeId === placeId) ?? -1;
+    if (i >= 0) setOpenStep(i);
+  };
+  const onStepKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const n = built?.route.length ?? 0;
+    if (!n || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    e.preventDefault();
+    const next = e.key === "Home" ? 0 : e.key === "End" ? n - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + n) % n;
+    stepRefs.current[next]?.focus();
+  };
   const unlocated = useMemo(() => {
     const groups = new Map<string, number[]>();
     geo?.hops.forEach((h) => {
@@ -234,23 +275,51 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
         </div>
       ) : built && built.stops.length ? (
         <Suspense fallback={<div className="flex items-center justify-center text-sm text-faint" style={{ height: 360 }}>Loading map…</div>}>
-          <PathMap places={built.places} paths={built.paths} dark={theme !== "light"} />
+          <PathMap places={built.places} paths={built.paths} dark={theme !== "light"} focus={focus} onSelect={selectPlace} />
         </Suspense>
       ) : (
         <div className="flex items-center justify-center text-sm text-faint" style={{ height: 160 }}>{geo.run_id ? "Nothing on this path could be located." : "No completed run yet."}</div>
       )}
       {built && built.route.length > 0 && geo.available && (
-        <ol className="mt-2 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs" aria-label="Route by place">
-          {built.route.map((step, i) => (
-            <li key={i} className="inline-flex items-center gap-1">
-              {i > 0 && <ChevronRight size={12} className="text-faint" aria-label="then" />}
-              <span className="inline-flex items-baseline gap-1 rounded-md px-1.5 py-0.5" style={{ background: "var(--surface-2)" }}>
-                <span className="font-medium">{step.place}</span>
-                <span className="text-faint">{step.what}</span>
-              </span>
-            </li>
-          ))}
-        </ol>
+        <div className="mt-2">
+          <ol className="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs" aria-label="Route by place">
+            {built.route.map((step, i) => (
+              <li key={i} className="inline-flex items-center gap-1">
+                {i > 0 && <ChevronRight size={12} className="text-faint" aria-label="then" />}
+                <button
+                  type="button"
+                  ref={(el) => { stepRefs.current[i] = el; }}
+                  className="route-step"
+                  data-active={openStep === i}
+                  aria-expanded={openStep === i}
+                  aria-controls={openStep === i ? "route-step-details" : undefined}
+                  title="Show this place on the map and list its hops"
+                  onClick={() => selectStep(i)}
+                  onKeyDown={(e) => onStepKey(e, i)}
+                >
+                  <span className="font-medium">{step.place}</span>
+                  <span className="text-faint">{step.what}</span>
+                  <ChevronDown size={11} className="route-step-caret text-faint" />
+                </button>
+              </li>
+            ))}
+          </ol>
+          {openStep !== null && built.route[openStep] && (
+            <div id="route-step-details" className="mt-1.5 rounded-lg border border-border px-3 py-2 text-xs" style={{ background: "var(--surface-2)" }} role="region" aria-label={`${built.route[openStep].place} details`}>
+              <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+                <span className="font-semibold">{built.route[openStep].place} <span className="font-normal text-faint">· {built.route[openStep].what}</span></span>
+                <span className="text-faint">Shown on the map · select again to close</span>
+              </div>
+              {built.route[openStep].lines.length ? (
+                <ul className="space-y-0.5 font-mono text-[11px] text-muted">
+                  {built.route[openStep].lines.map((l) => <li key={l}>{l}</li>)}
+                </ul>
+              ) : (
+                <div className="text-faint">No address details for this step.</div>
+              )}
+            </div>
+          )}
+        </div>
       )}
       {(unlocated.length > 0 || destMissing) && geo.available && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
@@ -263,7 +332,7 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
       )}
       {geo.available && pathProbe && geo.run_id && (
         <p className="mt-2 text-[11px] leading-relaxed text-faint">
-          Positions are city-level estimates from GeoLite2. Transit routers are often placed at their operator's registered location, so the line may double back or touch the target's city before the last hop; select a marker to see exactly which hops it holds.
+          Positions are city-level estimates from GeoLite2. Transit routers are often placed at their operator's registered location, so the line may double back or touch the target's city before the last hop. Select a marker, or a step in the route above, to see exactly which hops it holds.
         </p>
       )}
     </div>
