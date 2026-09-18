@@ -5,12 +5,12 @@ import { MemoryRouter } from "react-router-dom";
 import { api, type GeoIpStatus, type GeoPoint, type PathGeo, type Settings as SettingsT } from "../src/api";
 import { PathMapCard, buildStops, hopRanges } from "../src/components/PathMapCard";
 import { Settings } from "../src/pages/Settings";
-import type { MapStop } from "../src/components/PathMapCard";
+import type { MapPlace } from "../src/components/PathMapCard";
 
-// Leaflet needs a real layout; the card's own logic (stops, captions, unlocated hops) is what these tests cover.
+// Leaflet needs a real layout; the card's own logic (stops, places, captions, unlocated hops) is what these tests cover.
 vi.mock("../src/components/PathMap", () => ({
-  default: ({ stops, paths }: { stops: MapStop[]; paths: [number, number][][] }) => (
-    <div data-testid="path-map" data-paths={paths.length}>{stops.map((s) => `${s.id}:${s.kind}`).join(" ")}</div>
+  default: ({ places, paths }: { places: MapPlace[]; paths: [number, number][][] }) => (
+    <div data-testid="path-map" data-paths={paths.length}>{places.map((p) => `${p.kind}[${p.label}]`).join(" ")}</div>
   ),
 }));
 
@@ -29,37 +29,48 @@ const geo: PathGeo = {
     { hop_no: 3, ip: "203.0.113.1", hostname: "core1.example", asn: "AS64500", avg_ms: 8, loss_pct: 0, geo: frankfurt, note: null },
     { hop_no: 4, ip: "203.0.113.2", hostname: "core2.example", asn: "AS64500", avg_ms: 8.5, loss_pct: 10, geo: { ...frankfurt, lat: 50.12 }, note: null },
     { hop_no: 5, ip: "203.0.113.9", hostname: null, asn: null, avg_ms: 15, loss_pct: 0, geo: null, note: "not in database" },
-    { hop_no: 6, ip: "192.0.2.1", hostname: "www.example", asn: "AS64501", avg_ms: 20, loss_pct: 0, geo: london, note: null },
+    // A transit router that GeoLite2 registers in the target's city, two hops before the target itself.
+    { hop_no: 6, ip: "203.0.113.20", hostname: "edge.example", asn: "AS64501", avg_ms: 18, loss_pct: 0, geo: london, note: null },
+    { hop_no: 7, ip: "203.0.113.21", hostname: null, asn: "AS64500", avg_ms: 19, loss_pct: 0, geo: frankfurt, note: null },
+    { hop_no: 8, ip: "192.0.2.1", hostname: "www.example", asn: "AS64501", avg_ms: 20, loss_pct: 0, geo: london, note: null },
   ],
   destination: { ip: "192.0.2.1", host: "www.example", reached: true, geo: london, note: null },
 };
 
 describe("path map", () => {
-  it("groups consecutive hops in one place, ends the line at the destination and formats hop ranges", () => {
-    const { stops, paths } = buildStops(geo);
-    expect(stops.map((s) => [s.id, s.kind])).toEqual([["src-0", "source"], ["hop-3", "hop"], ["dst", "destination"]]);
+  it("keeps hop order in the line, merges markers per place and formats hop ranges", () => {
+    const { stops, paths, places, route } = buildStops(geo);
+    expect(stops.map((s) => [s.id, s.kind])).toEqual([["src-0", "source"], ["hop-3", "hop"], ["hop-6", "hop"], ["hop-7", "hop"], ["dst", "destination"]]);
     expect(stops[1].hopNos).toEqual([3, 4]);
     expect(stops[1].lines).toEqual(["3. core1.example (203.0.113.1) · AS64500 · 8.0 ms", "4. core2.example (203.0.113.2) · AS64500 · 8.5 ms · 10.0% loss"]);
     expect(stops[1].place).toBe("Frankfurt, Hesse, Germany");
-    expect(stops[2].title).toBe("Destination · www.example");
-    expect(paths).toEqual([[[52.52, 13.405], [50.11, 8.68], [51.5, -0.12]]]);
+    expect(paths).toEqual([[[52.52, 13.405], [50.11, 8.68], [51.5, -0.12], [50.11, 8.68], [51.5, -0.12]]]);
+    // Three places, not five markers: Frankfurt holds hops 3, 4 and 7; London holds hop 6 and the target.
+    expect(places.map((p) => [p.kind, p.label])).toEqual([["source", "Monitor"], ["hop", "3–4, 7"], ["destination", "Target · 6"]]);
+    expect(places[2].title).toBe("Target · www.example · also hop 6");
+    expect(places[1].lines).toHaveLength(3);
+    expect(route.map((r) => `${r.place} ${r.what}`)).toEqual(["Berlin, Germany monitor", "Frankfurt, Hesse, Germany hops 3–4", "London, United Kingdom hop 6", "Frankfurt, Hesse, Germany hop 7", "London, United Kingdom hop 8, target"]);
     expect(hopRanges([5, 1, 2, 3, 8])).toBe("1–3, 5, 8");
 
     // A ping-style probe has no hops: the destination is placed on its own, one line per located source.
     const direct = buildStops({ ...geo, hops: [], sources: [geo.sources[0], { kind: "probe", label: "Frankfurt, DE", ip: null, geo: frankfurt, note: null }] });
     expect(direct.stops.map((s) => s.kind)).toEqual(["source", "source", "destination"]);
     expect(direct.paths).toHaveLength(2);
+    expect(direct.places.map((p) => p.label)).toEqual(["Probe", "Probe", "Target"]);
   });
 
-  it("shows the map with a located-hop caption and lists the hops it could not place", async () => {
+  it("shows the map, the route by place, the located-hop caption and the hops it could not place", async () => {
     render(<MemoryRouter><PathMapCard geo={geo} pathProbe /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: /Path map/ })).toBeTruthy();
-    expect(screen.getByText("Latest run · 3 of 6 hops located")).toBeTruthy();
+    expect(screen.getByText("Latest run · 5 of 8 hops located · one marker per place, numbers are hops")).toBeTruthy();
     // The map chunk is lazy-loaded, so it appears after the suspense fallback.
-    expect((await screen.findByTestId("path-map")).textContent).toBe("src-0:source hop-3:hop dst:destination");
-    const notes = screen.getByText("Not located:").parentElement!;
+    expect((await screen.findByTestId("path-map")).textContent).toBe("source[Monitor] hop[3–4, 7] destination[Target · 6]");
+    const route = screen.getByRole("list", { name: "Route by place" });
+    expect(within(route).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Berlin, Germanymonitor", "Frankfurt, Hesse, Germanyhops 3–4", "London, United Kingdomhop 6", "Frankfurt, Hesse, Germanyhop 7", "London, United Kingdomhop 8, target"]);
+    const notes = screen.getByText("Not on the map:").parentElement!;
     expect(notes.textContent).toContain("hops 1–2 · private address");
     expect(notes.textContent).toContain("hop 5 · not in database");
+    expect(screen.getByText(/city-level estimates from GeoLite2/)).toBeTruthy();
   });
 
   it("points to Settings without a key and explains a database that is still missing", () => {
@@ -71,6 +82,7 @@ describe("path map", () => {
     expect(screen.getByRole("heading", { name: /Location map/ })).toBeTruthy();
     expect(screen.getByText(/has not been downloaded yet/)).toBeTruthy();
     expect(screen.queryByTestId("path-map")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Route by place" })).toBeNull();
   });
 });
 
