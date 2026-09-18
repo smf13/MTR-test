@@ -19,7 +19,7 @@ import { useToast } from "../components/Toast";
 
 // Recharts only loads when the overview chart is actually shown.
 const OverviewChart = lazy(() => import("../components/Visuals").then((m) => ({ default: m.OverviewChart })));
-import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe, isPacketProbe, latencyLabel } from "../utils";
+import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe, isPacketProbe, latencyLabel, percentile } from "../utils";
 
 type SortKey = "name" | "status" | "latency" | "loss" | "hops";
 type View = "cards" | "table";
@@ -160,9 +160,9 @@ export function Dashboard() {
   };
 
   const total = targets.data?.length ?? 0;
-  const activeAvg = useMemo(() => {
+  const latency = useMemo(() => {
     const vals = (targets.data ?? []).map((t) => t.latest_run?.avg_ms).filter((v): v is number => typeof v === "number");
-    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    return { mean: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null, median: percentile(vals, 0.5) };
   }, [targets.data]);
 
   return (
@@ -188,8 +188,8 @@ export function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-[2fr_1fr_1fr]">
-        <div className="card col-span-2 px-4 py-3 xl:col-span-1">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-[2fr_1fr_1fr_1fr]">
+        <div className="card col-span-2 px-4 py-3 md:col-span-3 xl:col-span-1">
           <div className="flex items-center gap-2 text-xs font-medium text-muted"><ShieldCheck size={15} /> Target health</div>
           <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
             {(["up", "degraded", "down", "paused", ...(counts.pending ? ["pending"] : [])] as (keyof typeof counts)[]).map((key) => (
@@ -200,7 +200,8 @@ export function Dashboard() {
             ))}
           </div>
         </div>
-        <StatTile label="Mean latency" value={activeAvg !== null ? `${fmtNum(activeAvg)} ms` : "–"} sub="latest run, all targets" icon={<Activity size={16} />} />
+        <StatTile label="Mean latency" value={latency.mean !== null ? `${fmtNum(latency.mean)} ms` : "–"} sub="latest run, all targets" icon={<Activity size={16} />} />
+        <StatTile label="Median latency" value={latency.median !== null ? `${fmtNum(latency.median)} ms` : "–"} sub="latest run, all targets" icon={<Activity size={16} />} />
         <StatTile label="Route changes" value={(targets.data ?? []).reduce((a, t) => a + t.stats_24h.route_changes, 0)} sub="last 24 hours" icon={<GitBranch size={16} />} />
       </div>
 

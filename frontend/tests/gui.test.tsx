@@ -233,6 +233,18 @@ describe("detail navigation", () => {
 });
 
 describe("dashboard", () => {
+  it("shows mean and median latency across the targets' latest runs", async () => {
+    const withLatency = (id: number, avg_ms: number | null): Target => ({
+      ...target, id, name: `Target ${id}`, latest_run: avg_ms === null ? null : { ...run, id: id * 10, target_id: id, avg_ms },
+    });
+    vi.spyOn(api, "targets").mockResolvedValue([withLatency(1, 12), withLatency(2, 20), withLatency(3, 100), withLatency(4, null)]);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("article", { name: "Target 1" });
+    expect(screen.getByText("Mean latency").parentElement?.parentElement?.textContent).toContain("44.0 ms");
+    expect(screen.getByText("Median latency").parentElement?.parentElement?.textContent).toContain("20.0 ms");
+  });
+
   it("keeps clone prefill and filtering working with the new card controls", async () => {
     const user = userEvent.setup();
     vi.spyOn(api, "targets").mockResolvedValue([target]);

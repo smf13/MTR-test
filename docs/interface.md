@@ -4,7 +4,7 @@ This guide describes the current MTR Tracker interface. Start with the [README](
 
 ## Dashboard
 
-The top summary shows target health counts, mean latency from targets' latest available runs, and route changes over the last 24 hours. Pending appears in the health summary when at least one target has not completed its first run. These totals cover all targets, including when a search filter is active.
+The top summary shows target health counts, mean and median latency from targets' latest available runs, and route changes over the last 24 hours. The median is the middle value across targets, so one slow target moves the mean but not the median. Pending appears in the health summary when at least one target has not completed its first run. These totals cover all targets, including when a search filter is active.
 
 The **Latency across targets · 24h** chart sits near the top of the dashboard, directly below the health summary and above the filters and target list. Use **Collapse** or **Expand** to control its visibility. Select a legend label to hide or show that target's series. The comparison uses all targets returned by the overview endpoint; the search field filters the cards/table, not this chart.
 
@@ -31,7 +31,7 @@ Cloning copies configuration, not monitoring history. **Add target** starts a ne
 
 The time-range selector offers **1h**, **6h**, **24h**, **7d** and **30d**. It controls historical statistics, charts, runs and events. The latest measurement/current path always comes from the newest run, and the status strip always covers the last 24 hours.
 
-Statistics and charts stay together on one page: current and range statistics, the 24-hour status strip, latency/loss charts, latency distribution and the hour-by-day heatmap. Packet probes also show jitter. Path probes show a route timeline and **Path profile**; other probes show **Latest check** details.
+Statistics and charts stay together on one page: current and range statistics (the **Avg · [range]** tile lists the median, p95 and p99 beneath the mean), the 24-hour status strip, latency/loss charts, latency distribution and the hour-by-day heatmap. Packet probes also show jitter. Path probes show a route timeline and **Path profile**; other probes show **Latest check** details.
 
 The data tabs sit below the charts. Switching between them keeps the charts visible above.
 

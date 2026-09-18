@@ -222,7 +222,7 @@ export function TargetDetail() {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatTile label={`${latencyWord} now`} value={run?.reached ? `${fmtNum(run.avg_ms)} ms` : run ? "unreachable" : "–"} sub={run?.reached ? `best ${fmtNum(run.best_ms)} · worst ${fmtNum(run.worst_ms)}` : run?.error ?? undefined} tone={status === "down" ? "down" : status === "degraded" ? "degraded" : undefined} icon={<Gauge size={15} />} />
-        <StatTile label={`Avg · ${range}`} value={stats?.avg_ms !== null && stats?.avg_ms !== undefined ? `${fmtNum(stats.avg_ms)} ms` : "–"} sub={stats?.p95_ms !== null && stats?.p95_ms !== undefined ? `p95 ${fmtNum(stats.p95_ms)} · p99 ${fmtNum(stats.p99_ms)}` : undefined} icon={<Activity size={15} />} />
+        <StatTile label={`Avg · ${range}`} value={stats?.avg_ms !== null && stats?.avg_ms !== undefined ? `${fmtNum(stats.avg_ms)} ms` : "–"} sub={stats?.p50_ms !== null && stats?.p50_ms !== undefined ? `median ${fmtNum(stats.p50_ms)} · p95 ${fmtNum(stats.p95_ms)} · p99 ${fmtNum(stats.p99_ms)}` : undefined} icon={<Activity size={15} />} />
         <StatTile label={`Loss · ${range}`} value={fmtPct(stats?.loss_pct)} sub={stats?.max_loss_pct ? `max ${fmtPct(stats.max_loss_pct)}` : "no loss recorded"} tone={stats && (stats.loss_pct ?? 0) >= t.alert_loss_pct && t.alert_loss_pct > 0 ? "degraded" : undefined} icon={<Percent size={15} />} />
         <StatTile label={`Uptime · ${range}`} value={fmtPct(stats?.availability_pct, stats?.availability_pct === 100 ? 0 : 2)} sub={stats ? `${stats.ok_runs}/${stats.runs} runs reached` : undefined} tone={stats && stats.availability_pct !== null && stats.availability_pct < 99 ? "degraded" : "up"} icon={<Timer size={15} />} />
         {singleSample ? (
