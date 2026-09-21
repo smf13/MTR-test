@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, geoip
+from . import __version__, geoip, migrate
 from .api import is_authenticated, router
 from .config import config
 from .db import Database
@@ -29,6 +29,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     db = Database(config.database_url, pool_size=config.db_pool_size, connect_timeout=config.db_connect_timeout)
     try:
         await db.connect()
+        if config.auto_migrate:
+            # An installation that still has its SQLite file gets its data carried over before the first probe runs.
+            await migrate.auto_import(db, config.sqlite_path)
     except BaseException:
         await db.close()
         raise
