@@ -284,3 +284,20 @@ async def test_connect_names_the_host_network_case_when_the_name_does_not_resolv
     with pytest.raises(RuntimeError, match="docker-compose.host.yml") as info:
         await Database("postgresql://mtr@db:5432/mtr_tracker", connect_timeout=1).connect()
     assert "name resolution" in str(info.value) and "docker-compose.host.yml" in caplog.text
+
+
+async def test_connect_explains_a_password_changed_after_the_first_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The postgres image keeps the password its volume was created with; the error says how to change it on the server."""
+    import asyncpg
+
+    from app.db import Database
+
+    async def refused(*args: Any, **kwargs: Any) -> Any:
+        raise asyncpg.InvalidPasswordError('password authentication failed for user "mtr"')
+
+    monkeypatch.setattr(asyncpg, "create_pool", refused)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="ALTER USER") as info:
+        await Database("postgresql://mtr:changed@db:5432/mtr_tracker", connect_timeout=30).connect()
+    assert "password authentication failed" in str(info.value) and "mtr:changed@" not in str(info.value)
+    assert time.monotonic() - started < 1, "a refused password is final, not retried"

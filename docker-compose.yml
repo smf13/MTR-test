@@ -7,6 +7,7 @@ services:
       POSTGRES_USER: mtr
       # Change the password in one place: set MTR_TRACKER_DB_PASSWORD in the shell or in a .env file next to this
       # file (copy .env.example). Both services read it; letters, digits and -_.~ only, since it also goes into the URL.
+      # The server takes it only when this volume is first created; change it later with ALTER USER (see the README).
       POSTGRES_PASSWORD: ${MTR_TRACKER_DB_PASSWORD:-mtr}
       POSTGRES_DB: mtr_tracker
     volumes:

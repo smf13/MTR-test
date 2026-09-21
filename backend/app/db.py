@@ -237,6 +237,12 @@ def _hint(exc: BaseException) -> str:
             " (the host name does not resolve: with network_mode: host a Compose service name such as db is unreachable;"
             " start with docker-compose.host.yml or point MTR_TRACKER_DATABASE_URL at 127.0.0.1)"
         )
+    if isinstance(exc, asyncpg.InvalidPasswordError):
+        return (
+            " (the postgres image applies POSTGRES_PASSWORD only when its volume is first created; a password changed later"
+            " has to be set on the server: docker compose exec db psql -U mtr -d mtr_tracker -c \"ALTER USER mtr PASSWORD '<new>'\","
+            " or remove the mtr-tracker-postgres volume)"
+        )
     return ""
 
 
@@ -365,7 +371,7 @@ class Database(_Executor):
                     server_settings={"application_name": "mtr-tracker"},
                 )
             except _FATAL_ERRORS as exc:
-                raise RuntimeError(f"cannot connect to PostgreSQL at {self.describe()}: {exc} (check MTR_TRACKER_DATABASE_URL)") from exc
+                raise RuntimeError(f"cannot connect to PostgreSQL at {self.describe()}: {exc}{_hint(exc)} (check MTR_TRACKER_DATABASE_URL)") from exc
             except ValueError as exc:
                 raise RuntimeError(f"MTR_TRACKER_DATABASE_URL is not a valid PostgreSQL URL: {exc}") from exc
             except PermissionError as exc:
