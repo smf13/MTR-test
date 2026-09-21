@@ -213,6 +213,7 @@ body {
 .route-step { display: inline-flex; align-items: baseline; gap: 4px; border-radius: 6px; border: 1px solid transparent; padding: 2px 6px; background: var(--surface-2); color: var(--text); transition: background-color 0.12s, border-color 0.12s; }
 .route-step:hover { border-color: var(--border-strong); }
 .route-step[data-active="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.route-step .route-step-network { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .route-step .route-step-caret { align-self: center; transition: transform 0.12s; }
 .route-step[data-active="true"] .route-step-caret { transform: rotate(180deg); }
 .path-map-key { display: inline-block; border-radius: 999px; padding: 0 6px; font-size: 10px; font-weight: 600; line-height: 1.5; color: #fff; }

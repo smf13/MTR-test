@@ -4,7 +4,7 @@ import { MapPin, Search, Server } from "lucide-react";
 import { api, type GeoLookup as GeoLookupT } from "../api";
 import { useDocumentTheme } from "../hooks";
 import { ErrorBanner } from "../components/EmptyState";
-import { accuracyText, placeOf, type MapPlace } from "../components/PathMapCard";
+import { accuracyText, networkText, placeOf, type MapPlace } from "../components/PathMapCard";
 
 const PathMap = lazy(() => import("../components/PathMap"));
 
@@ -42,7 +42,8 @@ export function GeoLookup() {
   const place = useMemo<MapPlace | null>(() => {
     if (!result?.geo) return null;
     const label = result.kind === "address" || result.kind === "host" ? result.ip ?? result.query : "Monitor";
-    return { id: "lookup", kind: result.kind === "address" || result.kind === "host" ? "destination" : "source", lat: result.geo.lat, lon: result.geo.lon, label, title: label, place: placeOf(result.geo), lines: [], hopNos: [], reached: true, accuracyKm: result.geo.accuracy_km };
+    const net = networkText(result.asn, result.as_name);
+    return { id: "lookup", kind: result.kind === "address" || result.kind === "host" ? "destination" : "source", lat: result.geo.lat, lon: result.geo.lon, label, title: label, place: placeOf(result.geo), lines: [], hopNos: [], reached: true, accuracyKm: result.geo.accuracy_km, networks: net ? [net] : [] };
   }, [result]);
 
   return (
@@ -69,7 +70,7 @@ export function GeoLookup() {
           )}
           {result.configured && !result.available && !result.simulated && (
             <p className="mb-3 rounded-lg px-3 py-2 text-xs" style={{ background: "var(--degraded-soft)", color: "var(--degraded)" }}>
-              The GeoLite2 database has not been downloaded yet. Use Download now under <Link to="/settings" className="underline">Settings</Link>.
+              The GeoLite2 databases have not been downloaded yet. Use Download now under <Link to="/settings" className="underline">Settings</Link>.
             </p>
           )}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
@@ -87,8 +88,14 @@ export function GeoLookup() {
                   {result.geo.country_code && <><dt className="text-muted">Country code</dt><dd className="font-mono">{result.geo.country_code}</dd></>}
                 </>
               )}
+              {result.ip && (
+                <>
+                  <dt className="text-muted">Network</dt>
+                  <dd>{networkText(result.asn, result.as_name) || <span className="text-faint">{result.note === "private address" ? "none (private address)" : !result.asn_available && !result.simulated ? "unknown (ASN database not downloaded)" : "not in database"}</span>}</dd>
+                </>
+              )}
               <dt className="text-muted">Database</dt>
-              <dd>{result.simulated ? "simulated (no database in simulation mode)" : result.build_epoch ? `GeoLite2 City built ${result.build_epoch.slice(0, 10)}` : "none"}</dd>
+              <dd>{result.simulated ? "simulated (no database in simulation mode)" : result.build_epoch ? `GeoLite2 City built ${result.build_epoch.slice(0, 10)}${result.asn_available ? " and GeoLite2 ASN" : ""}` : "none"}</dd>
             </dl>
             <div>
               {place ? (

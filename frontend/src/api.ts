@@ -446,15 +446,21 @@ export interface Settings {
   maxmind_license_key: string;
 }
 
-/** State of the MaxMind GeoLite2 database on the server (GET /api/geoip/status). */
+/** State of the MaxMind GeoLite2 City and ASN databases on the server (GET /api/geoip/status). */
 export interface GeoIpStatus {
   configured: boolean;
+  /** The City database (locations) is on disk. */
   available: boolean;
   simulated: boolean;
   edition: string;
   path: string;
   build_epoch: string | null;
   downloaded_at: string | null;
+  /** The ASN database (network names) is on disk; it is downloaded together with the City database. */
+  asn_available: boolean;
+  asn_edition: string;
+  asn_build_epoch: string | null;
+  asn_downloaded_at: string | null;
   last_attempt: string | null;
   last_success: string | null;
   last_error: string | null;
@@ -482,6 +488,9 @@ export interface GeoSource {
   note: string | null;
   /** How the position was obtained, e.g. "placed by the public address it is seen from, 203.0.113.7". */
   evidence: string;
+  /** Network of the source: "AS24940" and its organisation name (GeoLite2 ASN, or the Globalping probe's own report). */
+  asn: string | null;
+  as_name: string | null;
 }
 
 /** Result of the GeoIP lookup page (GET /api/geoip/lookup?q=). */
@@ -493,8 +502,11 @@ export interface GeoLookup {
   ip: string | null;
   geo: GeoPoint | null;
   note: string | null;
+  asn: string | null;
+  as_name: string | null;
   configured: boolean;
   available: boolean;
+  asn_available: boolean;
   simulated: boolean;
   build_epoch: string | null;
 }
@@ -503,7 +515,10 @@ export interface GeoHop {
   hop_no: number;
   ip: string | null;
   hostname: string | null;
+  /** "AS64500": the number mtr reported, or the GeoLite2 ASN database's when mtr reported none. */
   asn: string | null;
+  /** The organisation behind `asn` from the GeoLite2 ASN database; null without that database or when it disagrees with mtr's number. */
+  as_name: string | null;
   avg_ms: number | null;
   loss_pct: number | null;
   geo: GeoPoint | null;
@@ -520,12 +535,17 @@ export interface GeoDestination {
   reached: boolean;
   geo: GeoPoint | null;
   note: string | null;
+  asn: string | null;
+  as_name: string | null;
 }
 
 /** Geolocation of the latest completed run (GET /api/targets/{id}/geo); `enabled` is false without a MaxMind key. */
 export interface PathGeo {
   enabled: boolean;
+  /** The City database is on disk (or simulated): places can be drawn. */
   available: boolean;
+  /** The ASN database is on disk (or simulated): points carry network names. */
+  asn_available: boolean;
   run_id: number | null;
   sources: GeoSource[];
   hops: GeoHop[];

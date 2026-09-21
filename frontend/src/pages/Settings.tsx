@@ -93,7 +93,7 @@ export function Settings() {
     setDownloading(true);
     try {
       const st = await api.geoipUpdate();
-      toast(st.build_epoch ? `GeoLite2 City database updated (build ${st.build_epoch.slice(0, 10)})` : "GeoLite2 City database updated", "success");
+      toast(st.build_epoch ? `GeoLite2 City and ASN databases updated (City build ${st.build_epoch.slice(0, 10)})` : "GeoLite2 City and ASN databases updated", "success");
       void geoip.refresh();
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
@@ -304,11 +304,11 @@ export function Settings() {
               <section className="card p-5">
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <h2 className="flex items-center gap-2 text-sm font-semibold"><MapPin size={15} /> MaxMind GeoIP</h2>
-                  <button className="btn btn-sm" onClick={downloadGeoIp} disabled={downloading || !geoip.data?.configured || geoip.data?.updating || geoip.data?.simulated} title="Fetch the GeoLite2 City database now with the saved credentials">
+                  <button className="btn btn-sm" onClick={downloadGeoIp} disabled={downloading || !geoip.data?.configured || geoip.data?.updating || geoip.data?.simulated} title="Fetch the GeoLite2 City and ASN databases now with the saved credentials">
                     <CloudDownload size={13} /> {downloading || geoip.data?.updating ? "Downloading…" : "Download now"}
                   </button>
                 </div>
-                <p className="mb-3 text-xs text-faint">A free GeoLite2 account at maxmind.com provides a licence key. Once it is saved, the server downloads the GeoLite2 City database into its data directory, refreshes it weekly, and every target page gains a map of the monitor, the hops and the destination. The database is fetched with your key and never bundled.</p>
+                <p className="mb-3 text-xs text-faint">A free GeoLite2 account at maxmind.com provides a licence key. Once it is saved, the server downloads the GeoLite2 City and GeoLite2 ASN databases into its data directory, refreshes them weekly, and every target page gains a map of the monitor, the hops and the destination with the network (autonomous system) behind each address. The databases are fetched with your key and never bundled.</p>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="label">Licence key</label>
@@ -329,10 +329,11 @@ export function Settings() {
                       <span>No licence key saved. Target pages show no map.</span>
                     ) : geoip.data.available ? (
                       <span>
-                        Database: <span className="font-mono">{geoip.data.edition}</span>{geoip.data.build_epoch ? ` built ${geoip.data.build_epoch.slice(0, 10)}` : ""}{geoip.data.downloaded_at ? ` · downloaded ${relTime(geoip.data.downloaded_at, now)}` : ""} · refreshed every {fmtDuration(geoip.data.refresh_after_sec)}.
+                        <span>Locations: <span className="font-mono">{geoip.data.edition}</span>{geoip.data.build_epoch ? ` built ${geoip.data.build_epoch.slice(0, 10)}` : ""}{geoip.data.downloaded_at ? ` · downloaded ${relTime(geoip.data.downloaded_at, now)}` : ""} · refreshed every {fmtDuration(geoip.data.refresh_after_sec)}.</span>
+                        <span className="block">Networks: {geoip.data.asn_available ? <><span className="font-mono">{geoip.data.asn_edition}</span>{geoip.data.asn_build_epoch ? ` built ${geoip.data.asn_build_epoch.slice(0, 10)}` : ""}{geoip.data.asn_downloaded_at ? ` · downloaded ${relTime(geoip.data.asn_downloaded_at, now)}` : ""}.</> : <><span className="font-mono">{geoip.data.asn_edition}</span> not downloaded yet, so the map shows no network names; Download now fetches it.</>}</span>
                       </span>
                     ) : (
-                      <span>Database not downloaded yet. It is fetched in the background shortly after the key is saved, or immediately with Download now.</span>
+                      <span>Databases not downloaded yet. They are fetched in the background shortly after the key is saved, or immediately with Download now.</span>
                     )
                   ) : (
                     <span>Checking the database…</span>

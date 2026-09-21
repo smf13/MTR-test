@@ -239,9 +239,9 @@ async def put_settings(request: Request, body: SettingsUpdate) -> dict[str, Any]
 
 @router.get("/geoip/status")
 async def geoip_status(request: Request) -> dict[str, Any]:
-    """State of the MaxMind GeoLite2 database: configured, downloaded, build date, last error."""
+    """State of the MaxMind GeoLite2 City and ASN databases: configured, downloaded, build dates, last error."""
     status = geoip.status(await _db(request).get_settings())
-    for key in ("build_epoch", "downloaded_at", "last_attempt", "last_success"):
+    for key in ("build_epoch", "downloaded_at", "asn_build_epoch", "asn_downloaded_at", "last_attempt", "last_success"):
         status[key] = _iso(status[key])
     return status
 
@@ -256,7 +256,7 @@ async def geoip_lookup(request: Request, q: str = Query(min_length=1, max_length
 
 @router.post("/geoip/update")
 async def geoip_update(request: Request) -> dict[str, Any]:
-    """Download the GeoLite2 City database now with the saved MaxMind credentials."""
+    """Download the GeoLite2 City and ASN databases now with the saved MaxMind credentials."""
     settings = await _db(request).get_settings()
     if not geoip.configured(settings):
         raise HTTPException(400, "save a MaxMind licence key first")
@@ -1001,10 +1001,11 @@ async def _canonical_routes(db: Database, runs: list[Any]) -> dict[str, str]:
 
 @router.get("/targets/{target_id}/geo")
 async def get_target_geo(request: Request, target_id: int) -> dict[str, Any]:
-    """Locations of the monitor (or remote probes), every hop and the destination of the latest completed run.
+    """Locations and networks of the monitor (or remote probes), every hop and the destination of the latest completed run.
 
     `enabled` is false until a MaxMind licence key is saved; the UI then hides the map. Hops without a
-    location carry a `note` (private address, not in database, no database yet).
+    location carry a `note` (private address, not in database, no database yet). Every point carries `asn`
+    and `as_name` from the GeoLite2 ASN database (`asn_available` says whether it is on disk).
     """
     db = _db(request)
     row = await db.fetchone("SELECT * FROM targets WHERE id = ?", (target_id,))

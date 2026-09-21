@@ -1,8 +1,9 @@
 """MaxMind GeoLite2 support: database download with the operator's licence key, cached lookups and path geolocation.
 
-The GeoLite2 City database is fetched from MaxMind with the account's licence key (never bundled: its licence
-forbids redistribution), stored under the data directory and refreshed weekly. Lookups turn the IPs of a run
-(the monitoring host, every hop and the destination) into coordinates for the map on the target page.
+The GeoLite2 City and GeoLite2 ASN databases are fetched from MaxMind with the account's licence key (never
+bundled: their licence forbids redistribution), stored under the data directory and refreshed weekly. Lookups turn
+the IPs of a run (the monitoring host, every hop and the destination) into coordinates and network names
+(autonomous system number and organisation) for the map on the target page.
 """
 
 from __future__ import annotations
@@ -31,6 +32,9 @@ except ImportError:  # pragma: no cover - the dependency is listed in requiremen
 log = logging.getLogger("mtr-tracker.geoip")
 
 EDITION = "GeoLite2-City"
+# The ASN edition names the network (autonomous system) that announces an address; the map prints it per hop.
+ASN_EDITION = "GeoLite2-ASN"
+EDITIONS = (EDITION, ASN_EDITION)
 # Account ID + licence key as HTTP basic auth (the documented permalink) ...
 DOWNLOAD_URL = "https://download.maxmind.com/geoip/databases/{edition}/download?suffix=tar.gz"
 # ... or the older endpoint that only needs the licence key.
@@ -59,8 +63,8 @@ def _simulated() -> bool:
     return config.simulate and not _FORCE_LIVE
 
 
-def db_path() -> Path:
-    return config.data_dir / "geoip" / f"{EDITION}.mmdb"
+def db_path(edition: str = EDITION) -> Path:
+    return config.data_dir / "geoip" / f"{edition}.mmdb"
 
 
 def configured(settings: dict[str, Any]) -> bool:
@@ -72,9 +76,10 @@ def configured(settings: dict[str, Any]) -> bool:
 # Reader
 # ---------------------------------------------------------------------------
 
-_reader: Any = None
-_reader_mtime: float | None = None
+# One open reader per edition, with the mtime of the file it was opened from.
+_readers: dict[str, tuple[Any, float]] = {}
 _lookup_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+_network_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
 _last_error: str | None = None
 _last_attempt: float | None = None
 _last_success: float | None = None
@@ -89,39 +94,46 @@ def _open_reader(path: Path) -> Any:
     return maxminddb.open_database(str(path))
 
 
-def reader() -> Any:
-    """The open database, re-opened when the file on disk changed; None when there is no database."""
-    global _reader, _reader_mtime
-    path = db_path()
+def _close_edition(edition: str) -> None:
+    opened = _readers.pop(edition, None)
+    if opened is not None:
+        opened[0].close()
+    (_lookup_cache if edition == EDITION else _network_cache).clear()
+
+
+def reader(edition: str = EDITION) -> Any:
+    """The open database of one edition, re-opened when the file on disk changed; None when there is none."""
+    path = db_path(edition)
     try:
         mtime = path.stat().st_mtime
     except OSError:
-        if _reader is not None:
-            _reader.close()
-            _reader = None
-            _reader_mtime = None
+        _close_edition(edition)
         return None
-    if _reader is None or mtime != _reader_mtime:
-        if _reader is not None:
-            _reader.close()
-            _reader = None
+    opened = _readers.get(edition)
+    if opened is None or mtime != opened[1]:
+        _close_edition(edition)
         try:
-            _reader = _open_reader(path)
+            r = _open_reader(path)
         except Exception as exc:  # noqa: BLE001
             log.warning("cannot open %s: %s", path, exc)
             return None
-        _reader_mtime = mtime
-        _lookup_cache.clear()
-    return _reader
+        _readers[edition] = (r, mtime)
+        return r
+    return opened[0]
 
 
 def available() -> bool:
-    """Lookups can be answered: a database is on disk, or simulation fabricates locations."""
+    """Location lookups can be answered: the City database is on disk, or simulation fabricates locations."""
     return _simulated() or reader() is not None
 
 
-def build_time() -> float | None:
-    r = reader()
+def asn_available() -> bool:
+    """Network names can be answered: the ASN database is on disk, or simulation fabricates them."""
+    return _simulated() or reader(ASN_EDITION) is not None
+
+
+def build_time(edition: str = EDITION) -> float | None:
+    r = reader(edition)
     if r is None:
         return None
     try:
@@ -130,12 +142,15 @@ def build_time() -> float | None:
         return None
 
 
+def _downloaded_at(edition: str) -> float | None:
+    try:
+        return db_path(edition).stat().st_mtime
+    except OSError:
+        return None
+
+
 def status(settings: dict[str, Any]) -> dict[str, Any]:
     path = db_path()
-    try:
-        downloaded_at: float | None = path.stat().st_mtime
-    except OSError:
-        downloaded_at = None
     return {
         "configured": configured(settings),
         "available": available(),
@@ -143,7 +158,11 @@ def status(settings: dict[str, Any]) -> dict[str, Any]:
         "edition": EDITION,
         "path": str(path),
         "build_epoch": build_time(),
-        "downloaded_at": downloaded_at,
+        "downloaded_at": _downloaded_at(EDITION),
+        "asn_available": asn_available(),
+        "asn_edition": ASN_EDITION,
+        "asn_build_epoch": build_time(ASN_EDITION),
+        "asn_downloaded_at": _downloaded_at(ASN_EDITION),
         "last_attempt": _last_attempt,
         "last_success": _last_success,
         "last_error": _last_error,
@@ -267,6 +286,87 @@ def locate(ip: str | None) -> tuple[dict[str, Any] | None, str | None]:
     return geo, None if geo else "not in database"
 
 
+def parse_network(rec: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A GeoLite2 ASN record reduced to the number ("AS13335") and the organisation name; None without a number."""
+    if not rec:
+        return None
+    number = rec.get("autonomous_system_number")
+    if number is None:
+        return None
+    name = str(rec.get("autonomous_system_organization") or "").strip()
+    return {"asn": f"AS{int(number)}", "name": name or None}
+
+
+# Real operators behind the numbers the simulator hands out, so the demo map reads like a live one.
+_SIM_AS_NAMES = {
+    "AS13335": "Cloudflare, Inc.",
+    "AS15169": "Google LLC",
+    "AS3356": "Level 3 Parent, LLC",
+    "AS174": "Cogent Communications",
+    "AS6939": "Hurricane Electric LLC",
+    "AS1299": "Arelion Sweden AB",
+    "AS2914": "NTT America, Inc.",
+    "AS7018": "AT&T Services, Inc.",
+    "AS3257": "GTT Communications Inc.",
+    "AS24940": "Hetzner Online GmbH",
+    "AS14618": "Amazon.com, Inc.",
+    "AS16509": "Amazon.com, Inc.",
+    "AS20473": "The Constant Company, LLC",
+    "AS262287": "Latitude.sh LTDA",
+}
+
+
+def _simulated_network(ip: str, asn: str | None) -> dict[str, Any]:
+    """A stable network per address; a number the simulated hop already carries keeps its matching name."""
+    if asn in _SIM_AS_NAMES:
+        return {"asn": asn, "name": _SIM_AS_NAMES[asn]}
+    seed = int(hashlib.md5(ip.encode()).hexdigest(), 16)
+    number = list(_SIM_AS_NAMES)[(seed >> 24) % len(_SIM_AS_NAMES)]
+    return {"asn": number, "name": _SIM_AS_NAMES[number]}
+
+
+def network(ip: str | None, asn: str | None = None) -> dict[str, Any] | None:
+    """{"asn", "name"} of the autonomous system announcing a public address, or None (private, unknown, no database).
+
+    `asn` is the number the probe itself reported for the address, if any; simulation keeps the fabricated name
+    consistent with it, a real database ignores it.
+    """
+    if not ip or is_unroutable(ip):
+        return None
+    now = time.time()
+    cached = _network_cache.get(ip)
+    if cached and cached[0] > now:
+        return cached[1]
+    net: dict[str, Any] | None
+    if _simulated():
+        net = _simulated_network(ip, asn)
+    else:
+        r = reader(ASN_EDITION)
+        if r is None:
+            return None
+        try:
+            net = parse_network(r.get(ip))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("network lookup of %s failed: %s", ip, exc)
+            net = None
+    _network_cache[ip] = (now + LOOKUP_CACHE_TTL, net)
+    return net
+
+
+def _network_fields(ip: str | None, asn: str | None = None) -> dict[str, Any]:
+    """`asn` and `as_name` for a point: the probe's own number when it reported one, the database's otherwise.
+
+    The name is printed only when it belongs to the number shown, so a hop whose mtr-reported ASN disagrees with
+    the database keeps its number and gets no name rather than a misleading one.
+    """
+    net = network(ip, asn)
+    if net is None:
+        return {"asn": asn, "as_name": None}
+    if asn and asn != net["asn"]:
+        return {"asn": asn, "as_name": None}
+    return {"asn": net["asn"], "as_name": net["name"]}
+
+
 def _client(**kwargs: Any) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=_TRANSPORT, follow_redirects=True, **kwargs)
 
@@ -318,21 +418,26 @@ def _extract_mmdb(archive: Path, destination: Path) -> None:
                 out.write(chunk)
 
 
-def _verify(path: Path) -> float | None:
-    """Open the freshly extracted database once; a corrupt file must never replace a working one."""
+def _verify(path: Path, edition: str) -> float | None:
+    """Open the freshly extracted database once; a corrupt or wrong-edition file must never replace a working one."""
     r = _open_reader(path)
     try:
         meta = r.metadata()
-        kind = str(getattr(meta, "database_type", EDITION))
-        if "City" not in kind:
-            raise GeoIpError(f"unexpected database type {kind}; {EDITION} is required for coordinates")
+        kind = str(getattr(meta, "database_type", edition))
+        expected = edition.split("-", 1)[1]
+        if expected not in kind:
+            raise GeoIpError(f"unexpected database type {kind}; {edition} was requested")
         return float(getattr(meta, "build_epoch", 0)) or None
     finally:
         r.close()
 
 
 async def download(settings: dict[str, Any]) -> dict[str, Any]:
-    """Fetch the current GeoLite2 City database with the saved credentials and swap it in atomically."""
+    """Fetch the current GeoLite2 City and ASN databases with the saved credentials and swap each in atomically.
+
+    The City database comes first (it is what draws the map); the ASN database only adds network names, so a
+    failure there leaves a fresh City database in place and reports the error.
+    """
     global _last_error, _last_attempt, _last_success
     key = str(settings.get("maxmind_license_key") or "").strip()
     account = str(settings.get("maxmind_account_id") or "").strip()
@@ -342,32 +447,34 @@ async def download(settings: dict[str, Any]) -> dict[str, Any]:
         raise GeoIpError("a database download is already in progress")
     async with _update_lock:
         _last_attempt = time.time()
-        try:
-            build = await _download_locked(key, account)
-        except GeoIpError as exc:
-            _last_error = str(exc)
-            raise
-        except Exception as exc:  # noqa: BLE001
-            _last_error = f"download failed: {exc}"
-            log.exception("GeoLite2 download failed")
-            raise GeoIpError(_last_error) from exc
+        for edition in EDITIONS:
+            try:
+                build = await _download_locked(key, account, edition)
+            except GeoIpError as exc:
+                _last_error = f"{edition}: {exc}"
+                raise GeoIpError(_last_error) from exc
+            except Exception as exc:  # noqa: BLE001
+                _last_error = f"{edition}: download failed: {exc}"
+                log.exception("%s download failed", edition)
+                raise GeoIpError(_last_error) from exc
+            log.info("%s database updated (build %s)", edition, time.strftime("%Y-%m-%d", time.gmtime(build)) if build else "unknown")
         _last_error = None
         _last_success = time.time()
         _lookup_cache.clear()
-        log.info("GeoLite2 City database updated (build %s)", time.strftime("%Y-%m-%d", time.gmtime(build)) if build else "unknown")
+        _network_cache.clear()
         return status(settings)
 
 
-async def _download_locked(key: str, account: str) -> float | None:
-    target = db_path()
+async def _download_locked(key: str, account: str, edition: str) -> float | None:
+    target = db_path(edition)
     target.parent.mkdir(parents=True, exist_ok=True)
     archive = target.parent / f"{target.name}.tar.gz.part"
     extracted = target.parent / f"{target.name}.part"
     if account:
-        url = DOWNLOAD_URL.format(edition=EDITION)
+        url = DOWNLOAD_URL.format(edition=edition)
         auth: tuple[str, str] | None = (account, key)
     else:
-        url = LEGACY_DOWNLOAD_URL.format(edition=EDITION, key=key)
+        url = LEGACY_DOWNLOAD_URL.format(edition=edition, key=key)
         auth = None
     try:
         async with _client(timeout=DOWNLOAD_TIMEOUT, auth=auth) as client:
@@ -387,9 +494,9 @@ async def _download_locked(key: str, account: str) -> float | None:
         raise GeoIpError(f"MaxMind download failed: {exc}") from exc
     try:
         await asyncio.to_thread(_extract_mmdb, archive, extracted)
-        build = await asyncio.to_thread(_verify, extracted)
+        build = await asyncio.to_thread(_verify, extracted, edition)
         # Close the reader before the swap: the new file gets a new mtime and reader() re-opens it lazily.
-        close()
+        _close_edition(edition)
         os.replace(extracted, target)
     except tarfile.TarError as exc:
         raise GeoIpError(f"the MaxMind archive is unreadable: {exc}") from exc
@@ -403,15 +510,19 @@ async def _download_locked(key: str, account: str) -> float | None:
 
 
 def needs_refresh() -> bool:
-    try:
-        age = time.time() - db_path().stat().st_mtime
-    except OSError:
-        return True
-    return age > REFRESH_AFTER
+    """Either database is missing or older than a week (an installation from before the ASN edition lacks it)."""
+    for edition in EDITIONS:
+        try:
+            age = time.time() - db_path(edition).stat().st_mtime
+        except OSError:
+            return True
+        if age > REFRESH_AFTER:
+            return True
+    return False
 
 
 async def maybe_refresh(settings: dict[str, Any]) -> None:
-    """Download when a key is configured and the database is missing or older than a week; errors are logged."""
+    """Download when a key is configured and a database is missing or older than a week; errors are logged."""
     if not configured(settings) or _simulated() or not needs_refresh() or _update_lock.locked():
         return
     if _last_attempt and _last_error and time.time() - _last_attempt < RETRY_AFTER:
@@ -445,11 +556,8 @@ async def cancel_refresh() -> None:
 
 
 def close() -> None:
-    global _reader, _reader_mtime
-    if _reader is not None:
-        _reader.close()
-        _reader = None
-        _reader_mtime = None
+    for edition in list(_readers):
+        _close_edition(edition)
 
 
 # ---------------------------------------------------------------------------
@@ -473,12 +581,14 @@ def _probe_point(probe: dict[str, Any], kind: str) -> dict[str, Any] | None:
         label=str(probe.get("label") or probe.get("city") or "Globalping probe"),
         ip=None,
         evidence="coordinates reported by the Globalping probe itself",
+        asn=f"AS{probe['asn']}" if probe.get("asn") else None,
+        as_name=str(probe.get("network") or "").strip() or None,
     )
 
 
 async def path_geo(target: dict[str, Any], run: dict[str, Any] | None, hops: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any]:
-    """Sources (monitor or remote probes), hops and destination of a run with their locations."""
-    out: dict[str, Any] = {"enabled": configured(settings), "available": available(), "run_id": None, "sources": [], "hops": [], "destination": None}
+    """Sources (monitor or remote probes), hops and destination of a run with their locations and networks."""
+    out: dict[str, Any] = {"enabled": configured(settings), "available": available(), "asn_available": asn_available(), "run_id": None, "sources": [], "hops": [], "destination": None}
     if not out["enabled"] or run is None:
         return out
     out["run_id"] = run["id"]
@@ -495,12 +605,13 @@ async def path_geo(target: dict[str, Any], run: dict[str, Any] | None, hops: lis
             geo, note = simulated_route[h["ip"]], None
         else:
             geo, note = locate(h.get("ip"))
-        out["hops"].append(_point(geo, note, hop_no=h["hop_no"], ip=h.get("ip"), hostname=h.get("hostname"), asn=h.get("asn"), avg_ms=h.get("avg_ms"), loss_pct=h.get("loss_pct")))
+        out["hops"].append(_point(geo, note, hop_no=h["hop_no"], ip=h.get("ip"), hostname=h.get("hostname"), **_network_fields(h.get("ip"), h.get("asn")), avg_ms=h.get("avg_ms"), loss_pct=h.get("loss_pct")))
     if dst_ip:
         geo, note = locate(dst_ip)
-        out["destination"] = _point(geo, note, ip=dst_ip, host=host, role=role, reached=bool(run.get("reached")))
+        dst_asn = next((h.get("asn") for h in hops if h.get("ip") == dst_ip and h.get("asn")), None)
+        out["destination"] = _point(geo, note, ip=dst_ip, host=host, role=role, reached=bool(run.get("reached")), **_network_fields(dst_ip, dst_asn))
     elif failure:
-        out["destination"] = _point(None, failure, ip=None, host=host, role=role, reached=bool(run.get("reached")))
+        out["destination"] = _point(None, failure, ip=None, host=host, role=role, reached=bool(run.get("reached")), asn=None, as_name=None)
     return out
 
 
@@ -540,12 +651,13 @@ async def lookup_query(query: str, settings: dict[str, Any]) -> dict[str, Any]:
     """
     q = query.strip()
     out: dict[str, Any] = {
-        "query": q, "host": None, "ip": None, "geo": None, "note": None, "kind": "address",
-        "configured": configured(settings), "available": available(), "simulated": _simulated(), "build_epoch": build_time(),
+        "query": q, "host": None, "ip": None, "geo": None, "note": None, "kind": "address", "asn": None, "as_name": None,
+        "configured": configured(settings), "available": available(), "asn_available": asn_available(), "simulated": _simulated(), "build_epoch": build_time(),
     }
     if q.lower() in ("self", "me", "this server"):
         point = await _monitor_point(None)
-        out.update({"kind": point["kind"], "ip": point["ip"], "geo": point["geo"], "note": point["note"], "host": point["label"]})
+        out.update({k: point[k] for k in ("kind", "ip", "geo", "note", "asn", "as_name")})
+        out["host"] = point["label"]
         return out
     if _looks_like_ip(q):
         ip: str | None = q
@@ -558,6 +670,7 @@ async def lookup_query(query: str, settings: dict[str, Any]) -> dict[str, Any]:
             return out
     out["ip"] = ip
     out["geo"], out["note"] = locate(ip)
+    out.update(_network_fields(ip))
     return out
 
 
@@ -617,12 +730,12 @@ def _simulated_route(sources: list[dict[str, Any]], dst_ip: str | None, hops: li
 async def _monitor_point(src: str | None) -> dict[str, Any]:
     """Where this server runs from: its own address when public, otherwise the address it is seen from."""
     if _simulated():
-        return _point({"lat": 52.52, "lon": 13.405, "city": "Berlin", "region": None, "country": "Germany", "country_code": "DE", "accuracy_km": 50}, None, kind="simulated", label="This server (simulated)", ip=src, evidence="simulated location")
+        return _point({"lat": 52.52, "lon": 13.405, "city": "Berlin", "region": None, "country": "Germany", "country_code": "DE", "accuracy_km": 50}, None, kind="simulated", label="This server (simulated)", ip=src, evidence="simulated location", asn="AS24940", as_name=_SIM_AS_NAMES["AS24940"])
     if src and not is_unroutable(src):
         geo, note = locate(src)
-        return _point(geo, note, kind="monitor", label="This server", ip=src, evidence=f"placed by its own address {src}")
+        return _point(geo, note, kind="monitor", label="This server", ip=src, evidence=f"placed by its own address {src}", **_network_fields(src))
     ip = await public_ip()
     if not ip:
-        return _point(None, "public address unknown", kind="monitor", label="This server", ip=src, evidence="the public address could not be determined")
+        return _point(None, "public address unknown", kind="monitor", label="This server", ip=src, evidence="the public address could not be determined", asn=None, as_name=None)
     geo, note = locate(ip)
-    return _point(geo, note, kind="public_ip", label="This server (public address)", ip=ip, evidence=f"placed by the public address it is seen from, {ip}, not by its own address {src or 'unknown'}")
+    return _point(geo, note, kind="public_ip", label="This server (public address)", ip=ip, evidence=f"placed by the public address it is seen from, {ip}, not by its own address {src or 'unknown'}", **_network_fields(ip))

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ChevronRight, Map as MapIcon, MapPin } from "lucide-react";
+import { ChevronDown, ChevronRight, Map as MapIcon, MapPin, Network } from "lucide-react";
 import type { GeoHop, GeoPoint, PathGeo } from "../api";
 import { useDocumentTheme } from "../hooks";
 import { fmtNum } from "../utils";
@@ -23,6 +23,8 @@ export interface MapStop {
   reached?: boolean;
   /** GeoLite2 accuracy radius in km for this position, when the database gives one. */
   accuracyKm?: number | null;
+  /** Networks at this stop in hop order ("AS64500 Example Transit GmbH"), without repeats. */
+  networks: string[];
 }
 
 /** One marker on the map: every stop that lands in the same place, whether or not they are consecutive. */
@@ -39,6 +41,8 @@ export interface MapPlace {
   hopNos: number[];
   reached?: boolean;
   accuracyKm?: number | null;
+  /** Networks of every stop at this place, in path order, without repeats. */
+  networks: string[];
 }
 
 /** "about 100 km" for a GeoLite2 accuracy radius; empty when unknown. */
@@ -55,6 +59,8 @@ export interface RouteStep {
   placeId: string;
   /** Detail lines shown when the step is expanded (same content as the marker popup, for these stops only). */
   lines: string[];
+  /** Networks crossed in this step, in hop order, without repeats; printed on the step itself. */
+  networks: string[];
 }
 
 /** A request for the map to pan to a place and open its popup; `seq` makes repeated selections of one place distinct. */
@@ -68,10 +74,20 @@ export function placeOf(geo: GeoPoint | null): string {
   return [geo.city, geo.region && geo.region !== geo.city ? geo.region : null, geo.country].filter(Boolean).join(", ");
 }
 
+/** "AS64500 Example Transit GmbH", or whichever half is known; empty when neither is. */
+export function networkText(asn: string | null | undefined, name: string | null | undefined): string {
+  return [asn, name].filter(Boolean).join(" ");
+}
+
 function hopLine(h: GeoHop): string {
   const who = h.hostname && h.ip ? `${h.hostname} (${h.ip})` : h.hostname || h.ip || "no response";
-  const stats = [h.asn, h.avg_ms !== null ? `${fmtNum(h.avg_ms)} ms` : null, h.loss_pct ? `${fmtNum(h.loss_pct)}% loss` : null].filter(Boolean).join(" · ");
+  const stats = [networkText(h.asn, h.as_name), h.avg_ms !== null ? `${fmtNum(h.avg_ms)} ms` : null, h.loss_pct ? `${fmtNum(h.loss_pct)}% loss` : null].filter(Boolean).join(" · ");
   return `${h.hop_no}. ${who}${stats ? ` · ${stats}` : ""}`;
+}
+
+/** Append a network to a list in path order, skipping repeats and unknowns. */
+function addNetwork(list: string[], text: string): void {
+  if (text && !list.includes(text)) list.push(text);
 }
 
 function near(a: { lat: number; lon: number }, b: { lat: number; lon: number }): boolean {
@@ -101,10 +117,13 @@ function hopsWord(nos: number[]): string {
 }
 
 /** Stops in path order, the lines between them, one marker per place and the textual route. */
-export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, number][][]; places: MapPlace[]; route: RouteStep[] } {
+export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, number][][]; places: MapPlace[]; route: RouteStep[]; networks: string[] } {
   const sources: MapStop[] = geo.sources
     .filter((s) => s.geo)
-    .map((s, i) => ({ id: `src-${i}`, kind: "source" as const, lat: s.geo!.lat, lon: s.geo!.lon, title: s.label, place: placeOf(s.geo), lines: [s.evidence, ...(s.ip && !s.evidence.includes(s.ip) ? [s.ip] : [])].filter(Boolean), hopNos: [], accuracyKm: s.geo!.accuracy_km }));
+    .map((s, i) => {
+      const net = networkText(s.asn, s.as_name);
+      return { id: `src-${i}`, kind: "source" as const, lat: s.geo!.lat, lon: s.geo!.lon, title: s.label, place: placeOf(s.geo), lines: [s.evidence, ...(s.ip && !s.evidence.includes(s.ip) ? [s.ip] : []), ...(net ? [`network ${net}`] : [])].filter(Boolean), hopNos: [], accuracyKm: s.geo!.accuracy_km, networks: net ? [net] : [] };
+    });
   const destIp = geo.destination?.ip ?? null;
   const destWord = destinationWord(geo.destination?.role);
   const chain: MapStop[] = [];
@@ -112,9 +131,11 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
     if (!h.geo) continue;
     const isDest = !!destIp && h.ip === destIp;
     const last = chain[chain.length - 1];
+    const net = networkText(h.asn, h.as_name);
     if (last && !isDest && last.kind === "hop" && near(last, h.geo)) {
       last.hopNos.push(h.hop_no);
       last.lines.push(hopLine(h));
+      addNetwork(last.networks, net);
       continue;
     }
     chain.push({
@@ -128,11 +149,13 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
       hopNos: [h.hop_no],
       reached: isDest ? geo.destination?.reached : undefined,
       accuracyKm: h.geo.accuracy_km,
+      networks: net ? [net] : [],
     });
   }
   if (geo.destination?.geo && !chain.some((s) => s.kind === "destination")) {
     const d = geo.destination;
-    chain.push({ id: "dst", kind: "destination", lat: d.geo!.lat, lon: d.geo!.lon, title: `${destWord} · ${d.host}`, place: placeOf(d.geo), lines: d.ip && d.ip !== d.host ? [d.ip] : [], hopNos: [], reached: d.reached, accuracyKm: d.geo!.accuracy_km });
+    const net = networkText(d.asn, d.as_name);
+    chain.push({ id: "dst", kind: "destination", lat: d.geo!.lat, lon: d.geo!.lon, title: `${destWord} · ${d.host}`, place: placeOf(d.geo), lines: [...(d.ip && d.ip !== d.host ? [d.ip] : []), ...(net ? [`network ${net}`] : [])], hopNos: [], reached: d.reached, accuracyKm: d.geo!.accuracy_km, networks: net ? [net] : [] });
   }
   const line = chain.map((s) => [s.lat, s.lon] as [number, number]);
   const paths = sources.length ? sources.map((s) => [[s.lat, s.lon] as [number, number], ...line]) : [line];
@@ -146,7 +169,7 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
   for (const stop of stops) {
     let p = places.find((x) => near(x, stop));
     if (!p) {
-      p = { id: `place-${places.length}`, kind: "hop", lat: stop.lat, lon: stop.lon, label: "", title: "", place: stop.place, lines: [], hopNos: [] };
+      p = { id: `place-${places.length}`, kind: "hop", lat: stop.lat, lon: stop.lon, label: "", title: "", place: stop.place, lines: [], hopNos: [], networks: [] };
       places.push(p);
       members.set(p.id, []);
     }
@@ -159,6 +182,7 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
     const hopNos = group.flatMap((s) => s.hopNos);
     p.hopNos = hopNos;
     p.lines = group.flatMap((s) => s.lines);
+    group.forEach((s) => s.networks.forEach((n) => addNetwork(p.networks, n)));
     p.reached = dst?.reached;
     p.accuracyKm = group.map((s) => s.accuracyKm).find((a) => a !== null && a !== undefined) ?? null;
     p.kind = dst ? "destination" : src.length ? "source" : "hop";
@@ -179,24 +203,29 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
 
   // The textual route: consecutive stops in one place become one step ("Frankfurt · hops 3–5").
   const remote = geo.sources.some((s) => s.kind === "probe");
-  const steps: { stop: MapStop; hopNos: number[]; lines: string[] }[] = [];
+  const steps: { stop: MapStop; hopNos: number[]; lines: string[]; networks: string[] }[] = [];
   for (const stop of stops) {
     const prev = steps[steps.length - 1];
     if (prev && prev.stop.kind === "hop" && stop.kind === "hop" && (near(prev.stop, stop) || (stop.place && prev.stop.place === stop.place))) {
       prev.hopNos.push(...stop.hopNos);
       prev.lines.push(...stop.lines);
+      stop.networks.forEach((n) => addNetwork(prev.networks, n));
       continue;
     }
-    steps.push({ stop, hopNos: [...stop.hopNos], lines: [...stop.lines] });
+    steps.push({ stop, hopNos: [...stop.hopNos], lines: [...stop.lines], networks: [...stop.networks] });
   }
-  const route: RouteStep[] = steps.map(({ stop, hopNos, lines }) => ({
+  const route: RouteStep[] = steps.map(({ stop, hopNos, lines, networks }) => ({
     place: stop.place || "unknown place",
     kind: stop.kind,
     what: stop.kind === "source" ? (remote ? "probe" : "monitor") : stop.kind === "destination" ? (hopNos.length ? `hop ${hopNos[0]}, ${destWord.toLowerCase()}` : destWord.toLowerCase()) : hopsWord(hopNos),
     placeId: places.find((p) => near(p, stop))?.id ?? "",
     lines,
+    networks,
   }));
-  return { stops, paths: paths.filter((p) => p.length > 1), places, route };
+  // The networks the path crosses, start to end, each once at its first appearance.
+  const networks: string[] = [];
+  stops.forEach((s) => s.networks.forEach((n) => addNetwork(networks, n)));
+  return { stops, paths: paths.filter((p) => p.length > 1), places, route, networks };
 }
 
 /** Marker word for the far end: the target itself, or for DNS checks the resolver asked or the answer's address. */
@@ -269,6 +298,7 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
           <h2 className="chart-heading"><MapIcon size={15} /> {pathProbe ? "Path map" : "Location map"}<HelpTip label="path map">
             <p>Every address of the latest run is placed with the MaxMind GeoLite2 City database. The dashed line follows the hops in order, from the {remote ? "Globalping probe" : "monitor"} to the target.</p>
             <p className="mt-2">A marker stands for a place, not a hop: the numbers on it are the hops located there, so "Target · 7, 8" means hops 7 and 8 were placed in the target's city. GeoLite2 knows a city at best, and it often registers backbone routers at their operator's head office, so a path can appear to double back or to reach the target's city several hops early. That is the database's estimate, not a routing fault.</p>
+            <p className="mt-2">Each step and marker also names the networks it crosses: the autonomous system number and the organisation behind it from the GeoLite2 ASN database, downloaded with the City database. The number mtr reported for a hop is kept; the database only adds the name (or the number when mtr reported none). The "Networks" line lists them in path order.</p>
             <p className="mt-2">The {remote ? "probe is placed where it reports itself" : "monitor is placed by its own address, or by the public address it is seen from when it sits behind NAT"}. The far end is the address the run talked to: for HTTP the URL's host, for a DNS check the resolver it asked, or, with no resolver configured, the address in the answer. Hops with private addresses and addresses missing from the database are listed under the map instead of being drawn.</p>
           </HelpTip></h2>
           <p className="chart-caption">
@@ -312,6 +342,7 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
                 >
                   <span className="font-medium">{step.place}</span>
                   <span className="text-faint">{step.what}</span>
+                  {step.networks.length > 0 && <span className="route-step-network text-faint" title={step.networks.join(", ")}>{step.networks.join(" · ")}</span>}
                   <ChevronDown size={11} className="route-step-caret text-faint" />
                 </button>
               </li>
@@ -320,7 +351,7 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
           {openStep !== null && built.route[openStep] && (
             <div id="route-step-details" className="mt-1.5 rounded-lg border border-border px-3 py-2 text-xs" style={{ background: "var(--surface-2)" }} role="region" aria-label={`${built.route[openStep].place} details`}>
               <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-                <span className="font-semibold">{built.route[openStep].place} <span className="font-normal text-faint">· {built.route[openStep].what}{built.places.find((p) => p.id === built.route[openStep!].placeId)?.accuracyKm != null ? ` · GeoLite2 accuracy ${accuracyText(built.places.find((p) => p.id === built.route[openStep!].placeId)!.accuracyKm)}` : ""}</span></span>
+                <span className="font-semibold">{built.route[openStep].place} <span className="font-normal text-faint">· {built.route[openStep].what}{built.route[openStep].networks.length ? ` · ${built.route[openStep].networks.join(", ")}` : ""}{built.places.find((p) => p.id === built.route[openStep!].placeId)?.accuracyKm != null ? ` · GeoLite2 accuracy ${accuracyText(built.places.find((p) => p.id === built.route[openStep!].placeId)!.accuracyKm)}` : ""}</span></span>
                 <span className="text-faint">Shown on the map · select again to close</span>
               </div>
               {built.route[openStep].lines.length ? (
@@ -333,6 +364,20 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
             </div>
           )}
         </div>
+      )}
+      {geo.available && geo.run_id && built && (built.networks.length > 0 || !geo.asn_available) && (
+        <p className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-faint" data-testid="path-networks">
+          <Network size={12} aria-hidden="true" /><span>Networks:</span>
+          {built.networks.map((n, i) => (
+            <span key={n} className="inline-flex items-center gap-1.5">
+              {i > 0 && <ChevronRight size={12} className="text-faint" aria-label="then" />}
+              <span className="font-mono text-muted">{n}</span>
+            </span>
+          ))}
+          {!geo.asn_available && (
+            <span>{built.networks.length ? "· " : ""}names appear once the GeoLite2 ASN database is downloaded; it is fetched with the City database (<Link to="/settings" className="text-accent hover:underline">Download now</Link> under Settings).</span>
+          )}
+        </p>
       )}
       {(unlocated.length > 0 || destMissing) && geo.available && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
