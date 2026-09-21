@@ -42,7 +42,8 @@ RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh && mkdir -p /data && chown mt
 VOLUME ["/data"]
 EXPOSE 8899
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+# The start period covers waiting for PostgreSQL and, on an upgraded installation, the one-time SQLite import.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${MTR_TRACKER_PORT:-8899}/healthz" || exit 1
 
 # The entrypoint fixes the ownership of /data as root and then drops to the "mtr" user (see docker-entrypoint.sh).

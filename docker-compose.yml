@@ -1,28 +1,59 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: mtr-tracker-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mtr
+      # Change the password in one place: set MTR_TRACKER_DB_PASSWORD in the shell or in a .env file next to this
+      # file (copy .env.example). Both services read it.
+      POSTGRES_PASSWORD: ${MTR_TRACKER_DB_PASSWORD:-mtr}
+      POSTGRES_DB: mtr_tracker
+    volumes:
+      - mtr-tracker-postgres:/var/lib/postgresql/data
+    healthcheck:
+      # -h forces TCP: while the image initialises on its first run, a temporary server answers on the socket only.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U mtr -d mtr_tracker"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    # Uncomment to reach the database from the host (psql, pg_dump, or the backend tests against this server).
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
   mtr-tracker:
     build: .
     image: mtr-tracker:latest
     container_name: mtr-tracker
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "8899:8899"
     volumes:
+      # GeoIP databases and, on an installation upgraded from the SQLite releases, the imported mtr-tracker.db.migrated.
       - mtr-tracker-data:/data
     environment:
+      MTR_TRACKER_DATABASE_URL: postgresql://mtr:${MTR_TRACKER_DB_PASSWORD:-mtr}@db:5432/mtr_tracker
       # Runs older than the retention setting (default 30 days) are purged hourly.
       MTR_TRACKER_MAX_CONCURRENT_RUNS: "8"
       MTR_TRACKER_LOG_LEVEL: "info"
       # Set to "1" to generate synthetic data without sending packets (demos, dev machines).
       MTR_TRACKER_SIMULATE: "0"
-      # Optional: MTR_TRACKER_MTR_BINARY, MTR_TRACKER_PORT, MTR_TRACKER_API_TOKEN.
+      # Optional: MTR_TRACKER_MTR_BINARY, MTR_TRACKER_PORT, MTR_TRACKER_API_TOKEN, MTR_TRACKER_AUTO_MIGRATE,
+      # MTR_TRACKER_DB_POOL_SIZE, MTR_TRACKER_DB_CONNECT_TIMEOUT.
       # Optional: MTR_TRACKER_RUN_AS_ROOT=1 keeps the process as root, only needed for probe intervals below 1 s.
     # The process runs as an unprivileged user; mtr-packet and ping carry the cap_net_raw file capability,
     # which only takes effect when NET_RAW is in the container's capability set (Docker's default includes it).
     cap_add:
       - NET_RAW
-    # Optional: uncomment to probe from the host network stack (sees the host's real first hop).
+    # Optional: uncomment to probe from the host network stack (sees the host's real first hop). The app then leaves
+    # the Compose network: publish the db port above and use 127.0.0.1 instead of db in MTR_TRACKER_DATABASE_URL.
     # network_mode: host
     # The image's HEALTHCHECK (curl on /healthz) applies; it reads MTR_TRACKER_PORT inside the container.
 
 volumes:
   mtr-tracker-data:
+  mtr-tracker-postgres:
