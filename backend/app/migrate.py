@@ -18,6 +18,7 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import os
 import sqlite3
 import sys
@@ -27,7 +28,7 @@ from typing import Any, Callable, Iterator
 
 import asyncpg
 
-from .db import DEFAULT_SETTINGS, ID_TABLES, INDEXES, Database, Transaction, translate
+from .db import DEFAULT_DATABASE_URL, DEFAULT_SETTINGS, ID_TABLES, INDEXES, Database, Transaction
 
 log = logging.getLogger("mtr-tracker.migrate")
 
@@ -36,13 +37,17 @@ RUN_BATCH = 5000
 PROGRESS_EVERY = 100_000
 # meta keys that describe imports; never copied from the source, always written by the importer.
 IMPORT_KEYS = ("migrated_from", "migrated_at", "migrated_counts", "migration_failed")
-JSON_COLUMNS = {"targets": ("options", "tags"), "runs": ("details",), "events": ("details",), "settings": ("value",)}
+JSON_COLUMNS = {"targets": ("options", "tags"), "runs": ("details",), "events": ("details",)}
 UPSERT_META = "INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
 UPSERT_SETTING = "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
 
 
 class MigrationError(RuntimeError):
     """The import was refused or failed; the message is written for the operator."""
+
+
+class SourceChangedError(MigrationError):
+    """The file gained rows while it was being read: an old instance is still writing. Retrying is cheap."""
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +130,8 @@ def _to_int(value: Any) -> tuple[Any, str | None]:
     if value is None or isinstance(value, int):
         return value, None
     if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{value} is not a finite number")
         return int(value), ("fractional" if value != int(value) else None)
     if isinstance(value, bytes):
         value = value.decode("utf-8", "replace")
@@ -132,7 +139,7 @@ def _to_int(value: Any) -> tuple[Any, str | None]:
         try:
             return int(value), "text"
         except ValueError:
-            return int(float(value)), "text"
+            return _to_int(float(value))[0], "text"  # the float branch refuses inf and nan
     raise TypeError(f"cannot store {type(value).__name__} in an integer column")
 
 
@@ -219,7 +226,7 @@ class _Import:
         for name, fn in zip(cols, coercers):
             try:
                 value, kind = fn(row[name])
-            except (TypeError, ValueError) as exc:
+            except (TypeError, ValueError, OverflowError) as exc:
                 raise MigrationError(f"{table} id {row['id'] if 'id' in row.keys() else '?'}: column {name}: {exc}") from exc
             if kind:
                 key = f"{table}.{kind}"
@@ -249,7 +256,8 @@ class _Import:
         if "id" not in cols:
             raise MigrationError(f"{table}: the SQLite table has no id column")
         size = batch or self.batch
-        last_id = 0
+        lowest = self.src.execute(f"SELECT MIN(id) FROM {table}").fetchone()[0]
+        last_id = min(0, int(lowest) - 1) if lowest is not None else 0  # a hand-edited file may hold ids at or below zero
         total = 0
         first: dict[str, Any] | None = None
         last: dict[str, Any] | None = None
@@ -332,7 +340,7 @@ async def import_sqlite(db: Database, path: Path, *, replace: bool = False, all_
     import is refused unless PostgreSQL holds no target, run or event. `all_history` keeps runs and events older
     than the retention window, which the scheduler would otherwise purge on its first tick.
     """
-    path = Path(path)
+    path = Path(path).resolve()
     stats: dict[str, int] = {}
     src = _open_source(path, stats)
     log.info("importing %s (%.1f MB; the database needs roughly the same space again)", path, _size(path) / 1e6)
@@ -341,7 +349,11 @@ async def import_sqlite(db: Database, path: Path, *, replace: bool = False, all_
         src.execute("BEGIN")
         meta_rows = [(r["key"], r["value"]) for r in src.execute("SELECT key, value FROM meta")] if "meta" in _tables(src) else []
         settings_rows = [(r["key"], r["value"]) for r in src.execute("SELECT key, value FROM settings")] if "settings" in _tables(src) else []
-        retention_days = int(_read_setting(settings_rows, "retention_days", DEFAULT_SETTINGS["retention_days"]) or DEFAULT_SETTINGS["retention_days"])
+        # The window the running installation will enforce: the file's saved value, else the one already saved in
+        # PostgreSQL (the import never removes settings), else the default.
+        retention_days = int(
+            _read_setting(settings_rows, "retention_days", None) or (await db.get_settings()).get("retention_days") or DEFAULT_SETTINGS["retention_days"]
+        )
         cutoff = None if all_history else time.time() - retention_days * 86400
         high_water = {t: max(_sqlite_high_water(src, t), _max_id(src, t)) for t in ID_TABLES}
 
@@ -369,6 +381,9 @@ async def import_sqlite(db: Database, path: Path, *, replace: bool = False, all_
                 log.warning("settings: %s already had a value in PostgreSQL; the imported one replaces it", key)
             await tx.executemany(UPSERT_SETTING, settings_keep)
             imp.copied["settings"] = len(settings_keep)
+            for key, value in ((settings_keep[0], settings_keep[-1]) if settings_keep else ()):
+                if await conn.fetchval("SELECT value FROM settings WHERE key = $1", key) != value:
+                    raise MigrationError(f"settings {key}: the value did not survive the copy byte for byte")
 
             # Building the indexes once after the copy is several times faster than maintaining them per row.
             for name in INDEXES:
@@ -446,7 +461,7 @@ async def import_sqlite(db: Database, path: Path, *, replace: bool = False, all_
             src.execute("COMMIT")
             moved = [t for t in ID_TABLES if _max_id(src, t) > high_water[t] or _sqlite_high_water(src, t) > high_water[t]]
             if moved:
-                raise MigrationError(f"{path} changed while it was being imported ({', '.join(moved)}); stop the old MTR Tracker instance and retry")
+                raise SourceChangedError(f"{path} changed while it was being imported ({', '.join(moved)}); stop the old MTR Tracker instance and retry")
 
             result: dict[str, Any] = {
                 **{t: imp.copied.get(t, 0) for t in TABLES},
@@ -505,8 +520,14 @@ async def _get_meta(db: Database, key: str) -> str | None:
 
 
 def _fingerprint(path: Path) -> dict[str, Any]:
-    st = path.stat()
-    return {"path": str(path), "size": st.st_size, "mtime": st.st_mtime}
+    """What identifies the file's content cheaply: size and mtime of the file and of its -wal/-shm siblings."""
+    files: dict[str, list[float]] = {}
+    for suffix in ("", "-wal", "-shm"):
+        p = Path(str(path) + suffix)
+        if p.exists():
+            st = p.stat()
+            files[suffix or "db"] = [st.st_size, st.st_mtime]
+    return {"path": str(path), "files": files}
 
 
 async def _record_failure(db: Database, path: Path, error: BaseException) -> None:
@@ -521,7 +542,7 @@ async def auto_import(db: Database, path: Path) -> dict[str, Any] | None:
     the failure is remembered in `meta.migration_failed` and reported again without re-reading the file until the
     file changes. `MTR_TRACKER_AUTO_MIGRATE=0` skips all of this.
     """
-    path = Path(path)
+    path = Path(path).resolve()
     if not path.exists():
         return None
     if not await db.is_fresh():
@@ -542,21 +563,25 @@ async def auto_import(db: Database, path: Path) -> dict[str, Any] | None:
             marker = json.loads(raw_marker)
         except ValueError:
             marker = {}
-        if {k: marker.get(k) for k in ("path", "size", "mtime")} == _fingerprint(path):
+        if {k: marker.get(k) for k in ("path", "files")} == _fingerprint(path):
             raise MigrationError(
                 f"the import of {path} failed earlier and the file has not changed: {marker.get('message')}. "
-                "Fix or remove the file, or set MTR_TRACKER_AUTO_MIGRATE=0"
+                "Fix, move or remove the file, import it by hand with `python -m app.migrate`, or set MTR_TRACKER_AUTO_MIGRATE=0"
             )
     try:
         counts = await import_sqlite(db, path)
+    except SourceChangedError:
+        raise  # no marker: once the old instance is stopped, the retry is cheap and expected to succeed
     except MigrationError as exc:
         await _record_failure(db, path, exc)
         raise
     except Exception as exc:  # noqa: BLE001
         await _record_failure(db, path, exc)
         raise MigrationError(f"importing {path} failed: {exc}") from exc
-    rename_imported(path)
-    log.info("SQLite data imported from %s; the file is kept as %s.migrated", path, path)
+    if rename_imported(path):
+        log.info("SQLite data imported from %s; the file is kept as %s.migrated", path, path)
+    else:
+        log.warning("SQLite data imported from %s, but the file could not be renamed; move or remove it yourself (it is ignored while PostgreSQL holds data)", path)
     return counts
 
 
@@ -581,7 +606,7 @@ async def _run(args: argparse.Namespace) -> int:
     try:
         await db.connect()
         result = await import_sqlite(db, Path(args.sqlite), replace=args.replace, all_history=args.all_history, batch=args.batch)
-    except MigrationError as exc:
+    except (MigrationError, RuntimeError) as exc:  # RuntimeError: connect() could not reach or use the database
         print(f"error: {exc}", file=sys.stderr)
         return 1
     finally:
@@ -596,12 +621,18 @@ async def _run(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    from .config import config  # evaluated here, not at import: the module must stay usable without the environment
+def _defaults() -> dict[str, Any]:
+    """The defaults config.py applies, read from the environment here so that `--help` never creates the data directory."""
+    data_dir = Path(os.environ.get("MTR_TRACKER_DATA_DIR", "./data"))
+    return {
+        "sqlite": os.environ.get("MTR_TRACKER_DB_PATH", "").strip() or str(data_dir / "mtr-tracker.db"),
+        "database_url": os.environ.get("MTR_TRACKER_DATABASE_URL", "").strip() or DEFAULT_DATABASE_URL,
+    }
 
+
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
-    parser = build_parser({"sqlite": str(config.sqlite_path), "database_url": config.database_url})
-    return asyncio.run(_run(parser.parse_args(argv)))
+    return asyncio.run(_run(build_parser(_defaults()).parse_args(argv)))
 
 
 if __name__ == "__main__":

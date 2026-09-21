@@ -12,7 +12,6 @@ from typing import Any
 
 import asyncpg
 import pytest
-from httpx import AsyncClient
 
 from helpers import app_client, app_of, fresh_test_database
 
@@ -68,9 +67,10 @@ def seed_legacy(path: Path, *, version: str = "v3", journal: str = "wal", bad_ho
 
     Returns what an import should produce so the tests can compare. Runs: 1 and 3 reached, 2 failed with a NUL in its
     error, 4 older than the retention window, 5 belongs to a missing target, 6 was deleted (its id stays in
-    sqlite_sequence). Hops: run 1 has a silent hop; run 3 carries a BLOB, an integer in a text column, a fractional
-    value in an integer column and an invalid UTF-8 text; two hops belong to runs that do not survive. Events: one
-    with its run gone, one of a missing target, one older than retention.
+    sqlite_sequence). Hops: run 1 has a silent hop; run 3 carries a BLOB, a fractional value in an integer column and
+    an invalid UTF-8 text (an integer written to the asn column becomes text on the way in: SQLite's affinity); two
+    hops belong to runs that do not survive. Events: one with its run gone, one of a missing target, one older than
+    retention.
     """
     for p in path.parent.glob(path.name + "*"):
         p.unlink()
@@ -185,7 +185,7 @@ async def test_automatic_import_carries_the_installation_over(tmp_path: Path, mo
         assert await db.fetchval("SELECT nextval(pg_get_serial_sequence('events', 'id'))") == 6
         indexes = {r["indexname"] for r in await db.fetchall("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()")}
         assert {"idx_runs_target_started", "idx_runs_started", "idx_hops_run", "idx_events_created", "idx_events_target", "idx_events_run"} <= indexes
-        assert (await db.fetchone("SELECT value FROM meta WHERE key = 'migrated_from'"))["value"] == str(path)
+        assert (await db.fetchone("SELECT value FROM meta WHERE key = 'migrated_from'"))["value"] == str(path.resolve())
         assert (await db.fetchone("SELECT value FROM meta WHERE key = 'migration_failed'")) is None
 
     holder.close()
@@ -236,7 +236,8 @@ async def test_cli_refuses_a_used_database_and_replaces_on_request(tmp_path: Pat
         names = sorted(t["name"] for t in (await client.get("/api/targets")).json())
         assert names == ["Alpha", "Beta"]  # history replaced
         assert (await client.get("/api/runs/3")).status_code == 200
-        assert (await client.get("/api/runs/4")).status_code == 404  # and the first cleanup tick purged the old run, as it would have anyway
+        await app_of(client).state.db.purge_older_than(30)  # what the cleanup tick does at start, run here so the check cannot race it
+        assert (await client.get("/api/runs/4")).status_code == 404
         settings = (await client.get("/api/settings")).json()
         assert settings["site_name"] == "NOC" and settings["retention_days"] == 30 and settings["pushover_api_token"] == "s3cret"
 
@@ -263,7 +264,7 @@ async def test_failed_import_leaves_the_database_empty_and_is_remembered(tmp_pat
     for table in ("targets", "runs", "hops", "events"):
         assert await _admin_count(dsn, f"SELECT COUNT(*) FROM {table}") == 0, table
     assert await _admin_count(dsn, "SELECT COUNT(*) FROM meta WHERE key = 'migration_failed'") == 1
-    assert await _admin_count(dsn, "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()") == 0
+    assert await _admin_count(dsn, "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'") == 0
 
     # The next start fails at once on the marker; nothing is read again.
     monkeypatch.setattr(migrate, "import_sqlite", None)
@@ -308,3 +309,17 @@ async def test_changed_and_locked_files_are_refused(tmp_path: Path, monkeypatch:
         assert (await migrate.import_sqlite(db, path))["runs"] == 3
     finally:
         await db.close()
+
+
+def test_value_coercions() -> None:
+    """Every kind the importer counts, plus the values it must refuse rather than mangle."""
+    assert migrate._to_text(15169) == ("15169", "number") and migrate._to_text(b"A\xff") == ("A\ufffd", "blob")
+    assert migrate._to_text("a\x00b") == ("a\ufffdb", "nul") and migrate._to_text(None) == (None, None)
+    assert migrate._to_int("12") == (12, "text") and migrate._to_int(2.0) == (2, None) and migrate._to_int(2.5) == (2, "fractional")
+    assert migrate._to_float("2.5") == (2.5, "text") and migrate._to_float(3) == (3.0, None)
+    with pytest.raises(ValueError):
+        migrate._to_int(float("inf"))
+    with pytest.raises(ValueError):
+        migrate._to_int("1e400")
+    with pytest.raises(TypeError):
+        migrate._to_int([1])

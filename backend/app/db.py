@@ -31,8 +31,13 @@ Row = asyncpg.Record
 
 SCHEMA_VERSION = 4
 
+# Matches the credentials of the bundled docker-compose service; a server elsewhere is named in MTR_TRACKER_DATABASE_URL.
+DEFAULT_DATABASE_URL = "postgresql://mtr:mtr@127.0.0.1:5432/mtr_tracker"
 # How long a statement waits for a pooled connection before failing loudly; a saturated pool must never hang silently.
 ACQUIRE_TIMEOUT = 30.0
+# Rows per executemany round trip: asyncpg cannot be cancelled cleanly while it is still transmitting a batch, so a
+# chunk stays well below its write buffers (about 128 KiB).
+EXECUTEMANY_CHUNK = 200
 # Tables with an identity column, in foreign-key order (the migration copies and re-sequences them in this order).
 ID_TABLES = ("targets", "runs", "hops", "events")
 
@@ -261,12 +266,23 @@ class _Executor:
             return _affected(await conn.execute(translate(sql), *args))
 
     async def executemany(self, sql: str, rows: Iterable[Iterable[Any]]) -> None:
-        """Run one statement for every row, atomically (asyncpg sends the batch in one implicit transaction)."""
+        """Run one statement for every row, atomically.
+
+        The rows go to the server in chunks (a task cancelled while asyncpg is still transmitting a very large batch
+        would never finish cancelling) inside one transaction, unless the caller already holds one.
+        """
         batch = [clean(r) for r in rows]
         if not batch:
             return
+        statement = translate(sql)
         async with self._connection() as conn:
-            await conn.executemany(translate(sql), batch)
+            if conn.is_in_transaction():
+                for i in range(0, len(batch), EXECUTEMANY_CHUNK):
+                    await conn.executemany(statement, batch[i : i + EXECUTEMANY_CHUNK])
+            else:
+                async with conn.transaction():
+                    for i in range(0, len(batch), EXECUTEMANY_CHUNK):
+                        await conn.executemany(statement, batch[i : i + EXECUTEMANY_CHUNK])
 
 
 class Transaction(_Executor):
@@ -303,24 +319,22 @@ class Database(_Executor):
     def describe(self) -> str:
         """The connection URL without its password (and without the query, which may carry one too)."""
         parts = urlsplit(self.dsn)
-        netloc = parts.hostname or ""
-        if parts.port:
-            netloc += f":{parts.port}"
-        if parts.username:
-            netloc = f"{parts.username}@{netloc}"
+        netloc = re.sub(r"^([^@]*?):[^@]*@", r"\1@", parts.netloc)
         return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
     @asynccontextmanager
     async def _connection(self) -> AsyncIterator[asyncpg.Connection]:
+        pool = self.pool
         try:
-            conn = await self.pool.acquire(timeout=ACQUIRE_TIMEOUT)
+            conn = await pool.acquire(timeout=ACQUIRE_TIMEOUT)
         except asyncio.TimeoutError:
             log.error("no database connection became free within %.0f s (pool size %d, MTR_TRACKER_DB_POOL_SIZE)", ACQUIRE_TIMEOUT, self.pool_size)
             raise RuntimeError(f"database connection pool exhausted (MTR_TRACKER_DB_POOL_SIZE={self.pool_size})") from None
         try:
             yield conn
         finally:
-            await self.pool.release(conn)
+            # On the pool bound above: close() may have detached it from the Database meanwhile.
+            await pool.release(conn)
 
     async def connect(self) -> None:
         """Open the pool (waiting for a server that is still starting), create the schema, stamp the version."""
@@ -331,7 +345,12 @@ class Database(_Executor):
             attempt += 1
             try:
                 self._pool = await asyncpg.create_pool(
-                    self.dsn, min_size=1, max_size=self.pool_size, server_settings={"application_name": "mtr-tracker"}
+                    self.dsn,
+                    min_size=1,
+                    max_size=self.pool_size,
+                    # Bound each attempt too: a host that drops packets would otherwise wait asyncpg's 60 s per try.
+                    timeout=max(1.0, min(60.0, deadline - time.monotonic())),
+                    server_settings={"application_name": "mtr-tracker"},
                 )
             except _FATAL_ERRORS as exc:
                 raise RuntimeError(f"cannot connect to PostgreSQL at {self.describe()}: {exc} (check MTR_TRACKER_DATABASE_URL)") from exc
@@ -359,12 +378,14 @@ class Database(_Executor):
     async def close(self) -> None:
         if self._pool is None:
             return
-        pool, self._pool = self._pool, None
+        pool = self._pool
         try:
             await asyncio.wait_for(pool.close(), 10)
         except asyncio.TimeoutError:
             log.warning("database connections did not close in time; terminating them")
             pool.terminate()
+        finally:
+            self._pool = None
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[Transaction]:

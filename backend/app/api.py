@@ -1101,13 +1101,14 @@ async def _load_run(db: Database, run_id: int) -> dict[str, Any]:
     hops = await db.fetchall("SELECT * FROM hops WHERE run_id = ? ORDER BY hop_no ASC", (run_id,))
     run["hops"] = rows_to_dicts(hops)
     await geoip.name_networks(run["hops"], await db.get_settings())
+    # Keyset on (started_at, id): two runs with the same timestamp still reach each other.
     prev = await db.fetchone(
-        "SELECT id FROM runs WHERE target_id = ? AND started_at < ? ORDER BY started_at DESC, id DESC LIMIT 1",
-        (run["target_id"], row["started_at"]),
+        "SELECT id FROM runs WHERE target_id = ? AND (started_at < ? OR (started_at = ? AND id < ?)) ORDER BY started_at DESC, id DESC LIMIT 1",
+        (run["target_id"], row["started_at"], row["started_at"], run_id),
     )
     nxt = await db.fetchone(
-        "SELECT id FROM runs WHERE target_id = ? AND started_at > ? ORDER BY started_at ASC, id ASC LIMIT 1",
-        (run["target_id"], row["started_at"]),
+        "SELECT id FROM runs WHERE target_id = ? AND (started_at > ? OR (started_at = ? AND id > ?)) ORDER BY started_at ASC, id ASC LIMIT 1",
+        (run["target_id"], row["started_at"], row["started_at"], run_id),
     )
     run["prev_run_id"] = prev["id"] if prev else None
     run["next_run_id"] = nxt["id"] if nxt else None

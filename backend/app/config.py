@@ -6,8 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-# Matches the credentials of the bundled docker-compose service; a server elsewhere is named in MTR_TRACKER_DATABASE_URL.
-DEFAULT_DATABASE_URL = "postgresql://mtr:mtr@127.0.0.1:5432/mtr_tracker"
+from .db import DEFAULT_DATABASE_URL
 
 
 def _env_bool(name: str, default: bool) -> bool:
