@@ -419,6 +419,17 @@ def _network_fields(ip: str | None, asn: str | None = None, settings: dict[str, 
     return {"asn": net["asn"], "as_name": net["name"]}
 
 
+async def name_networks(hops: list[dict[str, Any]], settings: dict[str, Any]) -> None:
+    """Add `as_name` to hop dicts in place (and the provider's number as `asn` when the probe stored none).
+
+    The hop tables print the organisation under the number the same way the map does: one batched ip-api.com
+    request for the whole list first, then the same rule as `_network_fields` per hop.
+    """
+    await _prefetch([h.get("ip") for h in hops], settings)
+    for h in hops:
+        h.update(_network_fields(h.get("ip"), h.get("asn"), settings))
+
+
 def _client(**kwargs: Any) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=_TRANSPORT, follow_redirects=True, **kwargs)
 

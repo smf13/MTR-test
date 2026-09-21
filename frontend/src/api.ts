@@ -167,7 +167,10 @@ export interface Hop {
   hop_no: number;
   ip: string | null;
   hostname: string | null;
+  /** "AS64500": the number mtr reported, or the GeoIP provider's when mtr reported none. */
   asn: string | null;
+  /** The organisation behind `asn` from ip-api.com or the GeoLite2 ASN database; null without a provider or when it disagrees with mtr's number. */
+  as_name: string | null;
   loss_pct: number;
   sent: number;
   received: number;
@@ -389,6 +392,8 @@ export interface HopSummaryEntry {
   ip: string | null;
   hostname: string | null;
   asn: string | null;
+  /** The organisation behind `asn`, as on the run's hops. */
+  as_name: string | null;
   runs: number;
   share_pct: number | null;
   sent?: number;

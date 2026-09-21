@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { HopSummary, HopSummaryEntry } from "../api";
 import { fmtNum, lossColor } from "../utils";
+import { NetworkCell } from "./HopTable";
 
 /** Aggregated per-hop statistics over a time range, including alternate (ECMP / rerouted) hops. */
 export function PathSummary({ summary, dstIp }: { summary: HopSummary; dstIp?: string | null }) {
@@ -15,7 +16,7 @@ export function PathSummary({ summary, dstIp }: { summary: HopSummary; dstIp?: s
           <tr>
             <th className="w-10 text-right">#</th>
             <th>Host</th>
-            <th>ASN</th>
+            <th title="Autonomous system number and the organisation behind it">ASN</th>
             <th className="text-right" title="Share of runs in which this hop answered from this address">
               Seen
             </th>
@@ -73,7 +74,7 @@ function Row({ hop, entry, alt, altCount, silentRuns, expanded, onToggle, maxAvg
           </div>
         </div>
       </td>
-      <td className="font-mono text-xs text-muted">{entry.asn || "–"}</td>
+      <td className="font-mono text-xs text-muted"><NetworkCell asn={entry.asn} name={entry.as_name} /></td>
       <td className="text-right text-muted">
         {entry.share_pct !== null ? `${fmtNum(entry.share_pct, 0)}%` : "–"}
         {silentRuns > 0 && entry.ip && (

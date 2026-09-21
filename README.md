@@ -278,7 +278,7 @@ Interactive API documentation is available at `/api/docs`, with the OpenAPI sche
 | `GET` | `/api/targets/{id}/runs` | Paginated runs (`limit`, `offset`, `range`, `status=ok|failed|route_change`) |
 | `GET` | `/api/targets/{id}/series` | Destination latency / loss / jitter time series, auto-bucketed |
 | `GET` | `/api/targets/{id}/hops/history` | Hop-by-run matrix for the heatmap |
-| `GET` | `/api/targets/{id}/hops/summary` | Per-hop aggregates with alternate addresses; runs where the hop was silent are folded into the primary as loss (`silent_runs`) |
+| `GET` | `/api/targets/{id}/hops/summary` | Per-hop aggregates with alternate addresses (each with `asn` and `as_name`); runs where the hop was silent are folded into the primary as loss (`silent_runs`) |
 | `GET` | `/api/targets/{id}/hourly` | Hour buckets (avg, worst, loss, jitter, reached) for the day-by-hour heatmap |
 | `GET` | `/api/targets/{id}/routes` | Contiguous route segments over time and per-route share; silent hops are wildcards, `variants` counts the folded hash variants |
 | `GET` | `/api/targets/{id}/geo` | Locations and networks (`asn`, `as_name`) of the monitor (or remote probes), hops and destination of the latest completed run; `enabled` is false without a MaxMind key, `asn_available` says whether the ASN database is present |
@@ -287,7 +287,7 @@ Interactive API documentation is available at `/api/docs`, with the OpenAPI sche
 | `POST` | `/api/geoip/update` | Download the GeoLite2 City and ASN databases now with the saved MaxMind credentials |
 | `GET` | `/api/overview/series` | Bucketed latency and loss for every target, for the comparison chart |
 | `GET` | `/api/targets/{id}/events` | Events for one target |
-| `GET` | `/api/runs/{id}` | A run with all hops |
+| `GET` | `/api/runs/{id}` | A run with all hops; each hop carries `asn` and `as_name` from the GeoIP provider |
 | `GET` | `/api/runs/{id}/report` | Plain-text mtr-style report |
 | `GET` / `DELETE` | `/api/events` | Global event log (`kind`, `severity`, `target_id`, `range`) |
 | `POST` | `/api/probe` | One-off trace, not stored |

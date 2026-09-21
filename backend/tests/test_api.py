@@ -24,7 +24,10 @@ async def test_target_lifecycle_and_run(client: AsyncClient) -> None:
     assert detail["target_type"] == "mtr" and detail["target_name"] == "Test"
     assert len(detail["hops"]) == run["hop_count"]
     assert detail["hops"][-1]["ip"] == "192.0.2.10"
-    assert {"loss_pct", "avg_ms", "best_ms", "worst_ms", "stdev_ms", "jitter_avg_ms"} <= set(detail["hops"][0])
+    assert {"loss_pct", "avg_ms", "best_ms", "worst_ms", "stdev_ms", "jitter_avg_ms", "asn", "as_name"} <= set(detail["hops"][0])
+    # The hop tables name the network like the map does (simulation fabricates the names; private hops get none).
+    assert detail["hops"][-1]["asn"].startswith("AS") and detail["hops"][-1]["as_name"]
+    assert detail["hops"][0]["ip"] == "192.168.1.1" and detail["hops"][0]["as_name"] is None
 
     report = await client.get(f"/api/runs/{run['id']}/report")
     assert report.status_code == 200 and "Loss%" in report.text
@@ -35,6 +38,7 @@ async def test_target_lifecycle_and_run(client: AsyncClient) -> None:
     assert hist["max_hops"] == run["hop_count"]
     summary = (await client.get(f"/api/targets/{t['id']}/hops/summary?range=1h")).json()
     assert summary["total_runs"] >= 1 and summary["hops"][-1]["primary"]["ip"] == "192.0.2.10"
+    assert summary["hops"][-1]["primary"]["as_name"] and summary["hops"][0]["primary"]["as_name"] is None
 
     full = (await client.get(f"/api/targets/{t['id']}?range=1h")).json()
     assert full["stats"]["runs"] >= 1 and full["last_status"] in {"up", "degraded"}

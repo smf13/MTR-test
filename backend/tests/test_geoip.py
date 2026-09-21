@@ -305,7 +305,7 @@ async def test_ipapi_batches_and_falls_back_to_maxmind(client: AsyncClient, monk
 
     r = await client.post("/api/targets", json={"name": "Live", "host": "192.0.2.31", "interval_sec": 60, "count": 3})
     t = r.json()
-    await wait_for_runs(client, t["id"], 1)
+    run_id = (await wait_for_runs(client, t["id"], 1))[0]["id"]
 
     batches: list[httpx.Request] = []
     mode = {"answer": "ok"}
@@ -363,6 +363,22 @@ async def test_ipapi_batches_and_falls_back_to_maxmind(client: AsyncClient, monk
     # A second poll is served from the cache: no new request.
     again = (await client.get(f"/api/targets/{t['id']}/geo")).json()
     assert len(batches) == 1 and again["sources"][0]["geo"] == src["geo"]
+    # The run's hops, the path summary and a quick trace carry the same names, from the same cache.
+    detail = (await client.get(f"/api/runs/{run_id}")).json()
+    summary = (await client.get(f"/api/targets/{t['id']}/hops/summary?range=1h")).json()
+    for h in [*detail["hops"], *(s["primary"] for s in summary["hops"])]:
+        if h["ip"] in public and h["ip"] != "192.0.2.31":
+            assert h["as_name"] == ("Example Cloud BV" if h["asn"] in (None, "AS64511") else None), h
+        else:
+            assert h["as_name"] is None, h
+    trace = (await client.post("/api/probe", json={"host": "192.0.2.31", "count": 2})).json()
+    # A quick trace is named by the same rule (a hop whose mtr-reported number disagrees keeps it without a name).
+    trace_public = [h["ip"] for h in trace["hops"] if h["ip"] and not geoip.is_unroutable(h["ip"]) and h["ip"] != "192.0.2.31"]
+    assert trace_public and all(ipapi.get(ip) is not None for ip in trace_public)
+    for h in trace["hops"]:
+        expected = "Example Cloud BV" if h["ip"] in trace_public and h["asn"] in (None, "AS64511") else None
+        assert h["as_name"] == expected, h
+    assert len(batches) <= 2
     st = (await client.get("/api/geoip/status")).json()["ip_api"]
     assert st["enabled"] is True and st["ready"] is True and st["requests_total"] == 1 and st["requests_last_minute"] == 1 and st["addresses_total"] == len(asked) and st["last_error"] is None and st["last_success"]
     looked = (await client.get("/api/geoip/lookup", params={"q": "203.0.113.5"})).json()

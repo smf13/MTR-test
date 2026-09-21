@@ -830,6 +830,8 @@ async def get_hop_summary(
         primary["loss_pct"] = round(100.0 * (sent - received) / sent, 2) if sent else 100.0
         primary["max_loss_pct"] = 100.0
         slot["silent_runs"] = s["runs"]
+    # The organisation behind each address, as the map shows it (ip-api.com or the GeoLite2 ASN database).
+    await geoip.name_networks([e for slot in hops.values() for e in (slot["primary"], *slot["alternates"])], await db.get_settings())
     return {"total_runs": total_runs, "hops": [hops[k] for k in sorted(hops)]}
 
 
@@ -1054,6 +1056,7 @@ async def _load_run(db: Database, run_id: int) -> dict[str, Any]:
     run = _run_out(dict(row))
     hops = await db.fetchall("SELECT * FROM hops WHERE run_id = ? ORDER BY hop_no ASC", (run_id,))
     run["hops"] = rows_to_dicts(hops)
+    await geoip.name_networks(run["hops"], await db.get_settings())
     prev = await db.fetchone(
         "SELECT id FROM runs WHERE target_id = ? AND started_at < ? ORDER BY started_at DESC LIMIT 1",
         (run["target_id"], row["started_at"]),
@@ -1069,6 +1072,7 @@ async def _load_run(db: Database, run_id: int) -> dict[str, Any]:
 
 @router.get("/runs/{run_id}")
 async def get_run(request: Request, run_id: int) -> dict[str, Any]:
+    """A run with its hops; each hop carries `as_name` (the organisation behind `asn`) from the GeoIP provider."""
     return await _load_run(_db(request), run_id)
 
 
@@ -1192,6 +1196,8 @@ async def adhoc_probe(request: Request, body: ProbeRequest) -> dict[str, Any]:
         for h in result.hops:
             h.hostname = names.get(h.ip or "")
     final = result.hops[-1]
+    hops = [dict(h.__dict__) for h in result.hops]
+    await geoip.name_networks(hops, settings)
     return {
         "host": body.host,
         "dst_ip": dst_ip,
@@ -1199,5 +1205,5 @@ async def adhoc_probe(request: Request, body: ProbeRequest) -> dict[str, Any]:
         "reached": final.ip == dst_ip and final.received > 0,
         "duration_ms": round(result.duration_ms, 1),
         "command": result.command,
-        "hops": [h.__dict__ for h in result.hops],
+        "hops": hops,
     }

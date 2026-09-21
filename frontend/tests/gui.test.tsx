@@ -13,7 +13,7 @@ import { Dashboard } from "../src/pages/Dashboard";
 
 const timestamp = "2026-09-17T12:00:00Z";
 const hop: Hop = {
-  hop_no: 1, ip: "192.0.2.1", hostname: "router.example", asn: "AS64500",
+  hop_no: 1, ip: "192.0.2.1", hostname: "router.example", asn: "AS64500", as_name: "Example Transit GmbH",
   loss_pct: 0, sent: 10, received: 10, last_ms: 12, avg_ms: 12, best_ms: 10,
   worst_ms: 15, stdev_ms: 2, gmean_ms: 12, jitter_ms: 2, jitter_avg_ms: 2,
   jitter_max_ms: 3, jitter_int_ms: 2,
@@ -115,7 +115,12 @@ describe("hop inspection", () => {
     const cells = within(screen.getAllByRole("row")[1]).getAllByRole("cell");
     expect(within(cells[1]).getByText(detailedHop.hostname)).toBeTruthy();
     expect(within(cells[1]).getByText(hop.ip!)).toBeTruthy();
-    expect(cells.slice(2, 13).map((cell) => cell.textContent)).toEqual(["AS64500", "5.0%", "20", "19", "13.0", "12.0", "10.0", "15.0", "2.0", "2.5", "3.0"]);
+    // The ASN cell carries the organisation's name under the number.
+    expect(within(cells[2]).getByText("AS64500")).toBeTruthy();
+    expect(within(cells[2]).getByTitle("Example Transit GmbH").textContent).toBe("Example Transit GmbH");
+    expect(cells.slice(3, 13).map((cell) => cell.textContent)).toEqual(["5.0%", "20", "19", "13.0", "12.0", "10.0", "15.0", "2.0", "2.5", "3.0"]);
+    render(<HopTable hops={[{ ...detailedHop, hop_no: 2, as_name: null }]} />);
+    expect(within(screen.getAllByRole("row")[3]).getAllByRole("cell")[2].textContent).toBe("AS64500");
     expect(within(cells[13]).getByTitle("best 10.0 · avg 12.0 · worst 15.0 ms")).toBeTruthy();
     expect(screen.getByText("dst")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "All metrics" })).toBeNull();
@@ -180,8 +185,8 @@ describe("detail navigation", () => {
     const user = userEvent.setup();
     localStorage.setItem("mtr-tracker.tab", JSON.stringify("summary"));
     mockDetail();
-    const primary: HopSummaryEntry = { ip: hop.ip, hostname: hop.hostname, asn: hop.asn, runs: 8, share_pct: 80, loss_pct: 1, max_loss_pct: 5, avg_ms: 12, best_ms: 10, worst_ms: 15, stdev_ms: 2, jitter_ms: 3, jitter_max_ms: 4 };
-    vi.mocked(api.hopSummary).mockResolvedValue({ total_runs: 10, hops: [{ hop: 1, primary, alternates: [{ ...primary, ip: "192.0.2.2", hostname: "alternate.example", asn: "AS64501", runs: 2, share_pct: 20 }], silent_runs: 3 }] });
+    const primary: HopSummaryEntry = { ip: hop.ip, hostname: hop.hostname, asn: hop.asn, as_name: hop.as_name, runs: 8, share_pct: 80, loss_pct: 1, max_loss_pct: 5, avg_ms: 12, best_ms: 10, worst_ms: 15, stdev_ms: 2, jitter_ms: 3, jitter_max_ms: 4 };
+    vi.mocked(api.hopSummary).mockResolvedValue({ total_runs: 10, hops: [{ hop: 1, primary, alternates: [{ ...primary, ip: "192.0.2.2", hostname: "alternate.example", asn: "AS64501", as_name: null, runs: 2, share_pct: 20 }], silent_runs: 3 }] });
     renderDetail();
     const table = await screen.findByRole("table");
     expect(screen.getByRole("tab", { name: "Path summary · 24h" }).getAttribute("aria-selected")).toBe("true");
@@ -189,6 +194,8 @@ describe("detail navigation", () => {
     expect(within(table).getAllByRole("row")).toHaveLength(2);
     // Runs where the hop answered nothing are shown as silence on the primary row, never as an extra address.
     expect(within(within(table).getAllByRole("row")[1]).getByText("3 silent")).toBeTruthy();
+    // The ASN cell names the organisation under the number, as the hop table does.
+    expect(within(within(table).getAllByRole("row")[1]).getAllByRole("cell")[2].textContent).toBe("AS64500Example Transit GmbH");
     await user.click(screen.getByRole("button", { name: "1 alternate address seen at this hop" }));
     const rows = within(table).getAllByRole("row");
     expect(rows).toHaveLength(3);

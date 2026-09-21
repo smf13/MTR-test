@@ -2,6 +2,17 @@ import { useMemo } from "react";
 import type { Hop } from "../api";
 import { fmtNum, lossColor, classNames } from "../utils";
 
+/** The ASN cell of the hop tables: the number, with the organisation's name beneath it when a GeoIP provider knows it. */
+export function NetworkCell({ asn, name }: { asn: string | null; name: string | null }) {
+  if (!asn) return <>–</>;
+  return (
+    <div className="leading-tight">
+      <div>{asn}</div>
+      {name && <div className="max-w-[14rem] truncate font-sans text-[11px] text-faint" title={name}>{name}</div>}
+    </div>
+  );
+}
+
 /** Full per-hop metrics table for a single MTR run, styled like mtr's report with a latency bar. */
 export function HopTable({ hops, dstIp, compact = false }: { hops: Hop[]; dstIp?: string | null; compact?: boolean }) {
   const maxAvg = useMemo(() => Math.max(1, ...hops.map((h) => h.worst_ms ?? h.avg_ms ?? 0)), [hops]);
@@ -13,7 +24,7 @@ export function HopTable({ hops, dstIp, compact = false }: { hops: Hop[]; dstIp?
           <tr>
             <th className="w-10 text-right">#</th>
             <th>Host</th>
-            {!compact && <th>ASN</th>}
+            {!compact && <th title="Autonomous system number and the organisation behind it">ASN</th>}
             <th className="text-right">Loss</th>
             <th className="text-right">Snt</th>
             {!compact && <th className="text-right">Rcv</th>}
@@ -60,7 +71,7 @@ export function HopTable({ hops, dstIp, compact = false }: { hops: Hop[]; dstIp?
                     </div>
                   )}
                 </td>
-                {!compact && <td className="font-mono text-xs text-muted">{h.asn || "–"}</td>}
+                {!compact && <td className="font-mono text-xs text-muted"><NetworkCell asn={h.asn} name={h.as_name} /></td>}
                 <td className="text-right">
                   <span className="inline-block min-w-[3.2rem] rounded px-1.5 py-0.5 text-right text-xs font-semibold" style={{ background: h.loss_pct > 0 ? lossColor(h.loss_pct, 0.22) : "var(--surface-2)", color: h.loss_pct > 0 ? lossColor(h.loss_pct) : "var(--text-muted)" }}>
                     {fmtNum(h.loss_pct, 1)}%
