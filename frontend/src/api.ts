@@ -429,6 +429,8 @@ export interface Event {
 
 export interface Settings {
   retention_days: number;
+  /** A run is a route change only when its hop sequence appeared in none of this many recent reached runs (1 = previous run only). */
+  route_memory_runs: number;
   asn_lookup: boolean;
   reverse_dns: boolean;
   webhook_url: string;

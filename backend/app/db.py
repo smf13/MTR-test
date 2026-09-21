@@ -123,6 +123,9 @@ CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id);
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "retention_days": 30,
+    # A path run counts as a route change only when its hop sequence appeared in none of this many recent
+    # runs that reached the destination; 1 compares with the previous run alone. Keeps ECMP flapping silent.
+    "route_memory_runs": 20,
     "asn_lookup": True,
     "reverse_dns": True,
     "webhook_url": "",

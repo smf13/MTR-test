@@ -264,7 +264,7 @@ describe("GeoIP lookup page", () => {
 });
 
 const settings: SettingsT = {
-  retention_days: 30, asn_lookup: true, reverse_dns: true, webhook_url: "", webhook_events: [], pushover_enabled: false,
+  retention_days: 30, route_memory_runs: 20, asn_lookup: true, reverse_dns: true, webhook_url: "", webhook_events: [], pushover_enabled: false,
   pushover_user_key: "", pushover_api_token: "", pushover_device: "", pushover_sound: "", pushover_priority: "auto", pushover_events: [],
   base_url: "", site_name: "MTR Tracker", tag_colors: {}, globalping_token: "", maxmind_account_id: "", maxmind_license_key: "", ip_api_enabled: false,
 };

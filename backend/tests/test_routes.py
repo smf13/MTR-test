@@ -69,3 +69,45 @@ async def test_silent_hop_is_neither_a_new_route_nor_an_alternate_address(client
     summary = (await client.get(f"/api/targets/{tid}/hops/summary?range=1h")).json()
     hop5 = next(h for h in summary["hops"] if h["hop"] == 5)
     assert hop5["primary"]["ip"] is None and hop5["primary"]["loss_pct"] == 100.0 and hop5["silent_runs"] == 1
+
+
+async def test_recently_seen_route_is_not_a_change(client: AsyncClient) -> None:
+    """ECMP flapping between known routes stays silent; a route outside the memory window is still a change."""
+    r = await client.post("/api/targets", json={"name": "Flap", "host": "192.0.2.91", "interval_sec": 60, "enabled": False})
+    tid = r.json()["id"]
+    app = app_of(client)
+    db, sched = app.state.db, app.state.scheduler
+    now = time.time()
+    a, b, c, d, dst = "198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4", "192.0.2.91"
+    route_a, route_b, route_c = [a, b, dst], [a, c, dst], [a, d, dst]
+    for i, ips in enumerate([route_a, route_b, route_a, route_b]):
+        await _insert_run(db, tid, now - 400 + i * 100, ips)
+    sig_a = route_signature([_hop(i + 1, ip) for i, ip in enumerate(route_a)])
+    sig_c = route_signature([_hop(i + 1, ip) for i, ip in enumerate(route_c)])
+
+    # The previous run used route B. With memory 1 that alone counts, so route A looks like a change ...
+    changed, previous, prev_ips = await sched._route_changed(tid, sig_a, route_a, {"route_memory_runs": 1})
+    assert changed is True and prev_ips == route_b and previous["dst_ip"] == dst
+    # ... while a memory of a few runs remembers route A as a known alternate.
+    changed, _, prev_ips = await sched._route_changed(tid, sig_a, route_a, {"route_memory_runs": 4})
+    assert changed is False and prev_ips == route_b
+    # A silent hop on a known route is a wildcard match, not a new route.
+    changed, _, _ = await sched._route_changed(tid, "wild", [a, None, dst], {"route_memory_runs": 4})
+    assert changed is False
+    # A route never seen in the window is a change whatever the memory.
+    for memory in (1, 4, 500):
+        changed, _, _ = await sched._route_changed(tid, sig_c, route_c, {"route_memory_runs": memory})
+        assert changed is True, memory
+    # Two runs on route C push A out of a short window (C, C, B), so A becomes a change again until the window
+    # is long enough to reach it (C, C, B, A).
+    await _insert_run(db, tid, now - 30, route_c)
+    await _insert_run(db, tid, now - 20, route_c)
+    changed, _, prev_ips = await sched._route_changed(tid, sig_a, route_a, {"route_memory_runs": 3})
+    assert changed is True and prev_ips == route_c
+    changed, _, _ = await sched._route_changed(tid, sig_a, route_a, {"route_memory_runs": 4})
+    assert changed is False
+
+    # The setting itself is validated and saved.
+    assert (await client.put("/api/settings", json={"route_memory_runs": 0})).status_code == 422
+    assert (await client.put("/api/settings", json={"route_memory_runs": 50})).json()["route_memory_runs"] == 50
+    assert (await client.get("/api/settings")).json()["route_memory_runs"] == 50

@@ -156,6 +156,11 @@ export function Settings() {
                     <input className="input" value={form.site_name} onChange={(e) => setForm({ ...form, site_name: e.target.value })} />
                     <div className="help">Shown as the source in webhook payloads and Pushover titles.</div>
                   </div>
+                  <div>
+                    <label className="label" htmlFor="route-memory">Route change memory (runs)</label>
+                    <NumberInput id="route-memory" className="input num" min={1} max={500} value={form.route_memory_runs} onChange={(v) => setForm({ ...form, route_memory_runs: v ?? form.route_memory_runs })} />
+                    <div className="help">A run counts as a route change only when its hop sequence appeared in none of this many recent runs that reached the destination. Load-balanced paths that flap between a few routes stay silent; a route not seen in that window is still reported. 1 compares with the previous run alone.</div>
+                  </div>
                   <div className="sm:col-span-2">
                     <label className="label">Public URL (optional)</label>
                     <input className="input font-mono" placeholder="https://mtr.example.com" value={form.base_url} onChange={(e) => setForm({ ...form, base_url: e.target.value })} spellCheck={false} />
