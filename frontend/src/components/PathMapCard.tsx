@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, ChevronRight, Map as MapIcon, MapPin, Network } from "lucide-react";
+import { ChevronDown, ChevronRight, Map as MapIcon, MapPin, Network, Circle } from "lucide-react";
 import type { GeoHop, GeoPoint, PathGeo } from "../api";
 import { useDocumentTheme } from "../hooks";
 import { fmtNum } from "../utils";
@@ -325,10 +325,10 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
       )}
       {built && built.route.length > 0 && geo.available && (
         <div className="mt-2">
-          <ol className="flex flex-wrap items-center gap-x-1 gap-y-1 text-xs" aria-label="Route by place">
+          <ol className="flex flex-col gap-y-1 text-xs sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-1" aria-label="Route by place">
             {built.route.map((step, i) => (
-              <li key={i} className="inline-flex items-center gap-1">
-                {i > 0 && <ChevronRight size={12} className="text-faint" aria-label="then" />}
+              <li key={i} className="flex min-w-0 items-center gap-1">
+                <span className="route-step-marker text-faint">{i > 0 ? <ChevronRight size={12} aria-label="then" /> : <Circle size={7} fill="currentColor" aria-label="start" />}</span>
                 <button
                   type="button"
                   ref={(el) => { stepRefs.current[i] = el; }}

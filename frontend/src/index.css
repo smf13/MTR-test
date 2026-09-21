@@ -193,7 +193,9 @@ body {
 }
 
 /* Path map (Leaflet). The stylesheet of the map chunk loads after this one, so the overrides carry a parent selector. */
-.path-map { width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-2); }
+/* Its own stacking context: Leaflet gives its panes and controls z-indexes of 400 and above, which would otherwise
+   sit on top of the sticky mobile header (z-30) while scrolling. */
+.path-map { position: relative; z-index: 0; isolation: isolate; width: 100%; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-2); }
 .path-map .leaflet-container { font-family: var(--font-sans); background: var(--surface-2); }
 /* One tile provider for every theme: dark themes invert the raster tiles into a muted night map. */
 .path-map-dark .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.82) contrast(0.9) saturate(0.45); }
@@ -210,7 +212,10 @@ body {
 .path-map .path-map-marker-hop span { font-size: 10px; padding: 0 6px; }
 .path-map .path-map-marker-destination span, .path-map .path-map-marker-source span { border-width: 2px; }
 /* Steps of the "Route by place" list: buttons that focus the map and expand their hops. */
-.route-step { display: inline-flex; align-items: baseline; gap: 4px; border-radius: 6px; border: 1px solid transparent; padding: 2px 6px; background: var(--surface-2); color: var(--text); transition: background-color 0.12s, border-color 0.12s; }
+/* One marker column per step (a dot for the start, a chevron for every following place), so the rows line up when
+   the list breaks into one step per line on narrow screens. */
+.route-step-marker { display: inline-flex; width: 12px; flex: none; align-self: center; justify-content: center; }
+.route-step { display: inline-flex; max-width: 100%; align-items: baseline; gap: 4px; border-radius: 6px; border: 1px solid transparent; padding: 2px 6px; background: var(--surface-2); color: var(--text); transition: background-color 0.12s, border-color 0.12s; }
 .route-step:hover { border-color: var(--border-strong); }
 .route-step[data-active="true"] { background: var(--accent-soft); border-color: var(--accent); }
 .route-step .route-step-network { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -808,4 +808,6 @@ async def _monitor_point(src: str | None, settings: dict[str, Any] | None = None
         return _point(None, "public address unknown", kind="monitor", label="This server", ip=src, evidence="the public address could not be determined", asn=None, as_name=None)
     await _prefetch([ip], settings)
     geo, note = locate(ip, settings)
-    return _point(geo, note, kind="public_ip", label="This server (public address)", ip=ip, evidence=f"placed by the public address it is seen from, {ip}, not by its own address {src or 'unknown'}", **_network_fields(ip, None, settings))
+    # mtr reports the local host by name, not by address, so say which it is.
+    own = "unknown" if not src else f"address {src}" if _looks_like_ip(src) else f"host name {src}"
+    return _point(geo, note, kind="public_ip", label="This server (public address)", ip=ip, evidence=f"placed by the public address it is seen from, {ip}, not by its own {own}", **_network_fields(ip, None, settings))
