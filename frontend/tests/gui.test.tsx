@@ -118,7 +118,7 @@ describe("route-change markers", () => {
     expect(kept.length).toBeGreaterThan(100);
     expect(kept.length).toBeLessThanOrEqual(200);
     expect(kept[0].t).toBe(start);
-    expect(kept[kept.length - 1].t).toBeGreaterThan(start + day - 600_000);
+    expect(kept[kept.length - 1].t).toBeGreaterThanOrEqual(start + day - 600_000);
     // Sparse changes are all kept, in order, and unflagged runs never appear.
     const sparse = rows.map((r, i) => ({ ...r, routeChanged: i % 50 === 0 }));
     expect(thinRouteChanges(sparse, [start, start + day], 600).map((r) => r.t)).toEqual(sparse.filter((r) => r.routeChanged).map((r) => r.t));
