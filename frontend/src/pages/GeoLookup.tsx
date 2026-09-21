@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { MapPin, Search, Server } from "lucide-react";
-import { api, type GeoLookup as GeoLookupT } from "../api";
+import { api, GEO_PROVIDER_LABEL, type GeoLookup as GeoLookupT, type GeoProvider } from "../api";
 import { useDocumentTheme } from "../hooks";
 import { ErrorBanner } from "../components/EmptyState";
 import { accuracyText, networkText, placeOf, type MapPlace } from "../components/PathMapCard";
@@ -24,14 +24,15 @@ export function GeoLookup() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GeoLookupT | null>(null);
+  const [provider, setProvider] = useState<GeoProvider>("auto");
 
-  const lookup = async (q: string) => {
+  const lookup = async (q: string, via: GeoProvider = provider) => {
     const value = q.trim();
     if (!value) return;
     setBusy(true);
     setError(null);
     try {
-      setResult(await api.geoipLookup(value));
+      setResult(await api.geoipLookup(value, via));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -59,6 +60,17 @@ export function GeoLookup() {
         </div>
         <button className="btn btn-primary" type="submit" disabled={busy || !query.trim()}><Search size={15} /> {busy ? "Looking up…" : "Look up"}</button>
         <button className="btn" type="button" disabled={busy} onClick={() => { setQuery("self"); void lookup("self"); }} title="Locate this server the way the path map does: by its own address, or by the public address it is seen from"><Server size={15} /> This server</button>
+        <div className="basis-full">
+          <span className="label" id="geoip-provider-label">Provider</span>
+          <div className="seg" role="radiogroup" aria-labelledby="geoip-provider-label">
+            {(Object.keys(GEO_PROVIDER_LABEL) as GeoProvider[]).map((k) => (
+              <button key={k} type="button" data-active={provider === k} role="radio" aria-checked={provider === k} disabled={busy} onClick={() => { setProvider(k); if (result) void lookup(result.query, k); }}>
+                {GEO_PROVIDER_LABEL[k]}
+              </button>
+            ))}
+          </div>
+          <div className="help">Automatic asks exactly as the map does: ip-api.com first when it is switched on, then the GeoLite2 databases. The other two ask one backend alone, so you can compare their answers; ip-api.com can be asked here even while its switch is off (the same request budget applies).</div>
+        </div>
       </form>
       {error && <ErrorBanner message={error} />}
       {result && (
@@ -70,10 +82,10 @@ export function GeoLookup() {
           )}
           {result.configured && !result.available && !result.simulated && (
             <p className="mb-3 rounded-lg px-3 py-2 text-xs" style={{ background: "var(--degraded-soft)", color: "var(--degraded)" }}>
-              {result.ip_api_enabled && !result.ip_api_ready ? "ip-api.com is paused after a failed request and no GeoLite2 database is on disk to fall back to. Lookups resume by themselves; see " : "The GeoLite2 databases have not been downloaded yet. Use Download now under "}<Link to="/settings" className="underline">Settings</Link>.
+              {result.provider === "ip-api" || (result.ip_api_enabled && !result.ip_api_ready && result.provider === "auto") ? "ip-api.com is paused after a failed request" + (result.provider === "ip-api" ? " and was asked alone. Lookups resume by themselves; see " : " and no GeoLite2 database is on disk to fall back to. Lookups resume by themselves; see ") : "The GeoLite2 databases have not been downloaded yet. Use Download now under "}<Link to="/settings" className="underline">Settings</Link>.
             </p>
           )}
-          {result.ip_api_enabled && !result.ip_api_ready && result.available && !result.simulated && (
+          {result.provider === "auto" && result.ip_api_enabled && !result.ip_api_ready && result.available && !result.simulated && (
             <p className="mb-3 rounded-lg px-3 py-2 text-xs" style={{ background: "var(--degraded-soft)", color: "var(--degraded)" }}>
               ip-api.com is paused after a failed request; the GeoLite2 databases answered instead. See <Link to="/settings" className="underline">Settings</Link>.
             </p>
@@ -81,6 +93,7 @@ export function GeoLookup() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
             <dl className="num grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm" aria-label="Lookup result">
               <dt className="text-muted">Looked up</dt><dd className="font-mono break-all">{result.query}</dd>
+              <dt className="text-muted">Provider</dt><dd>{GEO_PROVIDER_LABEL[result.provider]}{result.provider === "auto" ? " (as the map)" : " alone"}</dd>
               <dt className="text-muted">Kind</dt><dd>{KIND_LABEL[result.kind]}</dd>
               {result.host && result.kind === "host" && <><dt className="text-muted">Resolves to</dt><dd className="font-mono">{result.ip ?? "–"}</dd></>}
               {result.kind !== "host" && result.ip && <><dt className="text-muted">Address</dt><dd className="font-mono">{result.ip}</dd></>}

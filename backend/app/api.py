@@ -9,7 +9,7 @@ import math
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -252,9 +252,14 @@ async def geoip_status(request: Request) -> dict[str, Any]:
 
 
 @router.get("/geoip/lookup")
-async def geoip_lookup(request: Request, q: str = Query(min_length=1, max_length=253)) -> dict[str, Any]:
-    """Locate one address or host name with the configured provider (ip-api.com, then GeoLite2); `q=self` locates this server's public address."""
-    result = await geoip.lookup_query(q, await _db(request).get_settings())
+async def geoip_lookup(request: Request, q: str = Query(min_length=1, max_length=253), provider: Literal["auto", "ip-api", "maxmind"] = "auto") -> dict[str, Any]:
+    """Locate one address or host name; `q=self` locates this server's public address.
+
+    `provider` picks the backend: `auto` asks exactly as the map does (ip-api.com first when switched on, then the
+    GeoLite2 databases), `ip-api` asks the service alone (even with its switch off; its budget and pause apply),
+    `maxmind` asks the databases alone.
+    """
+    result = await geoip.lookup_query(q, await _db(request).get_settings(), provider)
     result["build_epoch"] = _iso(result["build_epoch"])
     return result
 

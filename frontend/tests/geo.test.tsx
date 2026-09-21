@@ -189,12 +189,12 @@ describe("GeoIP lookup page", () => {
   it("looks up an address, shows the evidence and places it on the map", async () => {
     const user = userEvent.setup();
     const lookup = vi.spyOn(api, "geoipLookup").mockImplementation(async (q) => q === "self"
-      ? { query: "self", kind: "public_ip", host: "This server (public address)", ip: "198.51.100.7", geo: berlin, note: null, asn: "AS64499", as_name: "Home ISP AG", configured: true, available: true, asn_available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z", ip_api_enabled: false, ip_api_ready: false, maxmind_configured: true }
-      : { query: q, kind: "host", host: q, ip: "203.0.113.9", geo: { ...frankfurt, accuracy_km: 200 }, note: null, asn: "AS64500", as_name: "Example Transit GmbH", configured: true, available: true, asn_available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z", ip_api_enabled: false, ip_api_ready: false, maxmind_configured: true });
+      ? { query: "self", provider: "auto", kind: "public_ip", host: "This server (public address)", ip: "198.51.100.7", geo: berlin, note: null, asn: "AS64499", as_name: "Home ISP AG", configured: true, available: true, asn_available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z", ip_api_enabled: false, ip_api_ready: false, maxmind_configured: true }
+      : { query: q, provider: "auto", kind: "host", host: q, ip: "203.0.113.9", geo: { ...frankfurt, accuracy_km: 200 }, note: null, asn: "AS64500", as_name: "Example Transit GmbH", configured: true, available: true, asn_available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z", ip_api_enabled: false, ip_api_ready: false, maxmind_configured: true });
     render(<MemoryRouter><GeoLookup /></MemoryRouter>);
     expect(screen.getByRole("button", { name: "Look up" }).hasAttribute("disabled")).toBe(true);
     await user.type(screen.getByLabelText("IP address or host name"), "www.example.com{Enter}");
-    await waitFor(() => expect(lookup).toHaveBeenCalledWith("www.example.com"));
+    await waitFor(() => expect(lookup).toHaveBeenCalledWith("www.example.com", "auto"));
     const result = await screen.findByLabelText("Lookup result");
     expect(result.textContent).toContain("Host name");
     expect(result.textContent).toContain("203.0.113.9");
@@ -205,14 +205,14 @@ describe("GeoIP lookup page", () => {
     expect((await screen.findByTestId("path-map")).textContent).toBe("destination[203.0.113.9]");
 
     await user.click(screen.getByRole("button", { name: "This server" }));
-    await waitFor(() => expect(lookup).toHaveBeenCalledWith("self"));
+    await waitFor(() => expect(lookup).toHaveBeenCalledWith("self", "auto"));
     expect((await screen.findByLabelText("Lookup result")).textContent).toContain("This server, by the public address it is seen from");
     expect(screen.getByTestId("path-map").textContent).toBe("source[Monitor]");
   });
 
   it("explains a private address and a missing database", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "geoipLookup").mockResolvedValue({ query: "10.0.0.1", kind: "address", host: null, ip: "10.0.0.1", geo: null, note: "private address", asn: null, as_name: null, configured: false, available: false, asn_available: false, simulated: false, build_epoch: null, ip_api_enabled: false, ip_api_ready: false, maxmind_configured: false });
+    vi.spyOn(api, "geoipLookup").mockResolvedValue({ query: "10.0.0.1", provider: "auto", kind: "address", host: null, ip: "10.0.0.1", geo: null, note: "private address", asn: null, as_name: null, configured: false, available: false, asn_available: false, simulated: false, build_epoch: null, ip_api_enabled: false, ip_api_ready: false, maxmind_configured: false });
     render(<MemoryRouter><GeoLookup /></MemoryRouter>);
     await user.type(screen.getByLabelText("IP address or host name"), "10.0.0.1{Enter}");
     const result = await screen.findByLabelText("Lookup result");
@@ -224,7 +224,7 @@ describe("GeoIP lookup page", () => {
   it("names ip-api.com as the source and reports a paused service", async () => {
     const user = userEvent.setup();
     const amsterdam: GeoPoint = { lat: 52.37, lon: 4.9, city: "Amsterdam", region: "North Holland", country: "Netherlands", country_code: "NL", accuracy_km: null, provider: "ip-api.com" };
-    const lookup = vi.spyOn(api, "geoipLookup").mockResolvedValue({ query: "203.0.113.5", kind: "address", host: null, ip: "203.0.113.5", geo: amsterdam, note: null, asn: "AS64511", as_name: "Example Cloud BV", configured: true, available: true, asn_available: true, simulated: false, build_epoch: null, ip_api_enabled: true, ip_api_ready: true, maxmind_configured: false });
+    const lookup = vi.spyOn(api, "geoipLookup").mockResolvedValue({ query: "203.0.113.5", provider: "auto", kind: "address", host: null, ip: "203.0.113.5", geo: amsterdam, note: null, asn: "AS64511", as_name: "Example Cloud BV", configured: true, available: true, asn_available: true, simulated: false, build_epoch: null, ip_api_enabled: true, ip_api_ready: true, maxmind_configured: false });
     render(<MemoryRouter><GeoLookup /></MemoryRouter>);
     await user.type(screen.getByLabelText("IP address or host name"), "203.0.113.5{Enter}");
     const result = await screen.findByLabelText("Lookup result");
@@ -234,12 +234,32 @@ describe("GeoIP lookup page", () => {
     expect(result.textContent).toContain("Sourceip-api.com (batched lookup)");
 
     // Paused after a failure with no database to fall back to: the page says so.
-    lookup.mockResolvedValue({ query: "203.0.113.6", kind: "address", host: null, ip: "203.0.113.6", geo: null, note: "ip-api.com unavailable", asn: null, as_name: null, configured: true, available: false, asn_available: false, simulated: false, build_epoch: null, ip_api_enabled: true, ip_api_ready: false, maxmind_configured: false });
+    lookup.mockResolvedValue({ query: "203.0.113.6", provider: "auto", kind: "address", host: null, ip: "203.0.113.6", geo: null, note: "ip-api.com unavailable", asn: null, as_name: null, configured: true, available: false, asn_available: false, simulated: false, build_epoch: null, ip_api_enabled: true, ip_api_ready: false, maxmind_configured: false });
     await user.clear(screen.getByLabelText("IP address or host name"));
     await user.type(screen.getByLabelText("IP address or host name"), "203.0.113.6{Enter}");
     await waitFor(() => expect(screen.getByLabelText("Lookup result").textContent).toContain("ip-api.com unavailable"));
     expect(screen.getByText(/ip-api.com is paused after a failed request and no GeoLite2 database is on disk/)).toBeTruthy();
     expect(screen.getByLabelText("Lookup result").textContent).toContain("unknown (ip-api.com unavailable, no ASN database)");
+  });
+
+  it("lets the reader pick one backend and re-runs the lookup with it", async () => {
+    const user = userEvent.setup();
+    const lookup = vi.spyOn(api, "geoipLookup").mockImplementation(async (q, provider = "auto") => ({ query: q, provider, kind: "address", host: null, ip: q, geo: { ...frankfurt, provider: provider === "ip-api" ? "ip-api.com" : "GeoLite2" }, note: null, asn: "AS64500", as_name: "Example Transit GmbH", configured: true, available: true, asn_available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z", ip_api_enabled: true, ip_api_ready: true, maxmind_configured: true }));
+    render(<MemoryRouter><GeoLookup /></MemoryRouter>);
+    const group = screen.getByRole("radiogroup", { name: "Provider" });
+    expect(within(group).getAllByRole("radio").map((r) => r.textContent)).toEqual(["Automatic", "ip-api.com", "MaxMind GeoLite2"]);
+    expect(within(group).getByRole("radio", { name: "Automatic" }).getAttribute("aria-checked")).toBe("true");
+    await user.type(screen.getByLabelText("IP address or host name"), "203.0.113.5{Enter}");
+    await waitFor(() => expect(lookup).toHaveBeenCalledWith("203.0.113.5", "auto"));
+    expect((await screen.findByLabelText("Lookup result")).textContent).toContain("ProviderAutomatic (as the map)");
+    // Switching the backend with a result on screen asks again straight away.
+    await user.click(within(group).getByRole("radio", { name: "MaxMind GeoLite2" }));
+    await waitFor(() => expect(lookup).toHaveBeenCalledWith("203.0.113.5", "maxmind"));
+    await waitFor(() => expect(screen.getByLabelText("Lookup result").textContent).toContain("ProviderMaxMind GeoLite2 alone"));
+    expect(within(group).getByRole("radio", { name: "MaxMind GeoLite2" }).getAttribute("aria-checked")).toBe("true");
+    await user.click(within(group).getByRole("radio", { name: "ip-api.com" }));
+    await waitFor(() => expect(lookup).toHaveBeenCalledWith("203.0.113.5", "ip-api"));
+    await waitFor(() => expect(screen.getByLabelText("Lookup result").textContent).toContain("Sourceip-api.com (batched lookup)"));
   });
 });
 

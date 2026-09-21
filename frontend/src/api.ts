@@ -524,9 +524,15 @@ export interface GeoSource {
   as_name: string | null;
 }
 
-/** Result of the GeoIP lookup page (GET /api/geoip/lookup?q=). */
+/** Which backend a lookup may use: exactly what the map does, ip-api.com alone, or the GeoLite2 databases alone. */
+export type GeoProvider = "auto" | "ip-api" | "maxmind";
+export const GEO_PROVIDER_LABEL: Record<GeoProvider, string> = { auto: "Automatic", "ip-api": "ip-api.com", maxmind: "MaxMind GeoLite2" };
+
+/** Result of the GeoIP lookup page (GET /api/geoip/lookup?q=&provider=). */
 export interface GeoLookup {
   query: string;
+  /** The backend the lookup was allowed to use. */
+  provider: GeoProvider;
   /** "address", "host" (resolved first), or the monitor kind when q was "self". */
   kind: "address" | "host" | "monitor" | "public_ip" | "probe" | "simulated";
   host: string | null;
@@ -693,7 +699,7 @@ export const api = {
     request<{ ok: boolean; channel: string }>("/api/notifications/test", { method: "POST", body: JSON.stringify({ channel, settings }) }),
   geoipStatus: () => request<GeoIpStatus>("/api/geoip/status"),
   geoipUpdate: () => request<GeoIpStatus>("/api/geoip/update", { method: "POST" }),
-  geoipLookup: (q: string) => request<GeoLookup>(`/api/geoip/lookup?q=${encodeURIComponent(q)}`),
+  geoipLookup: (q: string, provider: GeoProvider = "auto") => request<GeoLookup>(`/api/geoip/lookup?q=${encodeURIComponent(q)}&provider=${provider}`),
 
   targets: () => request<Target[]>("/api/targets"),
   tags: () => request<TagInfo[]>("/api/tags"),

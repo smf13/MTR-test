@@ -348,7 +348,8 @@ async def test_ipapi_batches_and_falls_back_to_maxmind(client: AsyncClient, monk
     assert req.method == "POST" and str(req.url).startswith("http://ip-api.com/batch?fields=") and req.url.params["fields"] == ipapi.FIELDS
     asked = __import__("json").loads(req.read())
     public = [h["ip"] for h in geo["hops"] if h["ip"] and not geoip.is_unroutable(h["ip"])]
-    assert set(asked) == set(public) | {"198.51.100.7"} and len(asked) == len(set(asked)) and "192.168.1.1" not in asked
+    # The destination is always asked, whether or not the simulated run reached it.
+    assert set(asked) == set(public) | {"198.51.100.7", "192.0.2.31"} and len(asked) == len(set(asked)) and "192.168.1.1" not in asked
     src = geo["sources"][0]
     assert src["kind"] == "public_ip" and src["geo"]["city"] == "Amsterdam" and src["geo"]["provider"] == "ip-api.com" and src["geo"]["accuracy_km"] is None
     assert src["asn"] == "AS64511" and src["as_name"] == "Example Cloud BV"
@@ -439,11 +440,23 @@ async def test_ipapi_batches_and_falls_back_to_maxmind(client: AsyncClient, monk
 
     assert geoip_mod._missing_note("203.0.113.99", {"ip_api_enabled": True}, geoip_mod.EDITION) == "not in database"
 
-    # Switched off again: nothing is asked and the databases alone answer.
+    # The lookup page can pick one backend: the databases alone ignore the cached ip-api.com answer ...
+    only_mm = (await client.get("/api/geoip/lookup", params={"q": "203.0.113.5", "provider": "maxmind"})).json()
+    assert only_mm["provider"] == "maxmind" and only_mm["geo"]["provider"] == "GeoLite2" and only_mm["ip_api_ready"] is False and only_mm["available"] is True
+    # ... and ip-api.com alone never falls back, even for an address the service could not place.
+    only_ip = (await client.get("/api/geoip/lookup", params={"q": "192.0.2.31", "provider": "ip-api"})).json()
+    assert only_ip["provider"] == "ip-api" and only_ip["geo"] is None and only_ip["note"] == "not in database" and only_ip["asn"] is None
+    assert (await client.get("/api/geoip/lookup", params={"q": "203.0.113.5", "provider": "bogus"})).status_code == 422
+
+    # Switched off again: nothing is asked and the databases alone answer, unless ip-api.com is chosen outright.
     await client.put("/api/settings", json={"ip_api_enabled": False})
     before = len(batches)
     off = (await client.get("/api/geoip/lookup", params={"q": "203.0.113.5"})).json()
-    assert len(batches) == before and off["geo"]["provider"] == "GeoLite2" and off["ip_api_enabled"] is False
+    assert len(batches) == before and off["geo"]["provider"] == "GeoLite2" and off["ip_api_enabled"] is False and off["provider"] == "auto"
+    ipapi.wake()
+    ipapi._requests.clear()
+    forced = (await client.get("/api/geoip/lookup", params={"q": "203.0.113.40", "provider": "ip-api"})).json()
+    assert len(batches) == before + 1 and forced["geo"]["provider"] == "ip-api.com" and forced["ip_api_enabled"] is False and forced["configured"] is True
 
 
 async def test_ipapi_chunks_large_batches(monkeypatch: pytest.MonkeyPatch) -> None:

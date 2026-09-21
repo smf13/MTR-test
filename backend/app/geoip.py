@@ -79,9 +79,28 @@ def configured(settings: dict[str, Any]) -> bool:
     return maxmind_configured(settings) or ipapi.enabled(settings)
 
 
+PROVIDERS = ("auto", "ip-api", "maxmind")
+
+
+def _provider(settings: dict[str, Any] | None) -> str:
+    """Which provider a call may use: "auto" (ip-api.com first when switched on, then the databases), or one alone.
+
+    The lookup page sets the choice through the private `_provider` key of the settings it passes (`lookup_query`).
+    """
+    return str((settings or {}).get("_provider") or "auto")
+
+
 def _ip_api_on(settings: dict[str, Any] | None) -> bool:
-    """ip-api.com is asked first; never in simulation mode, which fabricates locations without any network call."""
-    return bool(settings) and ipapi.enabled(settings) and not _simulated()
+    """ip-api.com is asked: switched on (auto) or chosen outright; never in simulation mode, which makes no network call."""
+    if not settings or _simulated():
+        return False
+    choice = _provider(settings)
+    return choice == "ip-api" or (choice == "auto" and ipapi.enabled(settings))
+
+
+def _maxmind_on(settings: dict[str, Any] | None) -> bool:
+    """The databases (or the simulator) may answer: always, unless ip-api.com alone was chosen."""
+    return _simulated() or _provider(settings) != "ip-api"
 
 
 async def _prefetch(ips: list[str | None], settings: dict[str, Any] | None) -> None:
@@ -147,12 +166,12 @@ def _maxmind_available(edition: str = EDITION) -> bool:
 
 def available(settings: dict[str, Any] | None = None) -> bool:
     """Location lookups can be answered: ip-api.com is on and awake, the City database is on disk, or simulation."""
-    return _maxmind_available() or (_ip_api_on(settings) and ipapi.ready())
+    return (_maxmind_on(settings) and _maxmind_available()) or (_ip_api_on(settings) and ipapi.ready())
 
 
 def asn_available(settings: dict[str, Any] | None = None) -> bool:
     """Network names can be answered: ip-api.com is on and awake, the ASN database is on disk, or simulation."""
-    return _maxmind_available(ASN_EDITION) or (_ip_api_on(settings) and ipapi.ready())
+    return (_maxmind_on(settings) and _maxmind_available(ASN_EDITION)) or (_ip_api_on(settings) and ipapi.ready())
 
 
 def build_time(edition: str = EDITION) -> float | None:
@@ -289,6 +308,8 @@ def lookup(ip: str | None, settings: dict[str, Any] | None = None) -> dict[str, 
         rec = ipapi.get(ip)
         if rec and rec["geo"]:
             return rec["geo"]
+    if not _maxmind_on(settings):
+        return None
     now = time.time()
     cached = _lookup_cache.get(ip)
     if cached and cached[0] > now:
@@ -311,7 +332,7 @@ def lookup(ip: str | None, settings: dict[str, Any] | None = None) -> dict[str, 
 
 def _missing_note(ip: str, settings: dict[str, Any] | None, edition: str) -> str:
     """Why neither provider placed (or named) a public address."""
-    if _maxmind_available(edition):
+    if _maxmind_on(settings) and _maxmind_available(edition):
         return "not in database"
     if _ip_api_on(settings):
         rec = ipapi.get(ip)
@@ -385,6 +406,8 @@ def network(ip: str | None, asn: str | None = None, settings: dict[str, Any] | N
         rec = ipapi.get(ip)
         if rec and rec["network"]:
             return rec["network"]
+    if not _maxmind_on(settings):
+        return None
     now = time.time()
     cached = _network_cache.get(ip)
     if cached and cached[0] > now:
@@ -719,15 +742,20 @@ def _looks_like_ip(value: str) -> bool:
         return False
 
 
-async def lookup_query(query: str, settings: dict[str, Any]) -> dict[str, Any]:
+async def lookup_query(query: str, settings: dict[str, Any], provider: str = "auto") -> dict[str, Any]:
     """The GeoIP lookup page: an address, a host name (resolved first) or "self" (this server's public address).
 
-    Always answers, even without a database, so the page can explain what is missing.
+    `provider` is "auto" (exactly what the map does), "ip-api" (the service alone, even when its switch is off;
+    the same budget and pause apply) or "maxmind" (the databases alone). Always answers, even without a
+    database, so the page can explain what is missing.
     """
+    if provider not in PROVIDERS:
+        raise ValueError(f"unknown provider {provider!r}")
+    settings = {**settings, "_provider": provider}
     q = query.strip()
     out: dict[str, Any] = {
-        "query": q, "host": None, "ip": None, "geo": None, "note": None, "kind": "address", "asn": None, "as_name": None,
-        "configured": configured(settings), "available": available(settings), "asn_available": asn_available(settings), "simulated": _simulated(), "build_epoch": build_time(),
+        "query": q, "provider": provider, "host": None, "ip": None, "geo": None, "note": None, "kind": "address", "asn": None, "as_name": None,
+        "configured": configured(settings) or provider == "ip-api", "available": available(settings), "asn_available": asn_available(settings), "simulated": _simulated(), "build_epoch": build_time(),
         "ip_api_enabled": ipapi.enabled(settings), "ip_api_ready": _ip_api_on(settings) and ipapi.ready(), "maxmind_configured": maxmind_configured(settings),
     }
     if q.lower() in ("self", "me", "this server"):

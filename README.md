@@ -283,7 +283,7 @@ Interactive API documentation is available at `/api/docs`, with the OpenAPI sche
 | `GET` | `/api/targets/{id}/routes` | Contiguous route segments over time and per-route share; silent hops are wildcards, `variants` counts the folded hash variants |
 | `GET` | `/api/targets/{id}/geo` | Locations and networks (`asn`, `as_name`) of the monitor (or remote probes), hops and destination of the latest completed run; `enabled` is false without a MaxMind key, `asn_available` says whether the ASN database is present |
 | `GET` | `/api/geoip/status` | State of the GeoLite2 City and ASN databases (configured, downloaded, build dates, last error) and, under `ip_api`, of the ip-api.com provider (enabled, ready or paused and why, requests this minute, cache size) |
-| `GET` | `/api/geoip/lookup` | `?q=<ip or host name>` locates one address and names its network through the configured provider (host names are resolved); `q=self` locates this server as the map does; `geo.provider` names who answered |
+| `GET` | `/api/geoip/lookup` | `?q=<ip or host name>` locates one address and names its network (host names are resolved); `q=self` locates this server as the map does; `provider=auto` (as the map), `ip-api` or `maxmind` picks the backend; `geo.provider` names who answered |
 | `POST` | `/api/geoip/update` | Download the GeoLite2 City and ASN databases now with the saved MaxMind credentials |
 | `GET` | `/api/overview/series` | Bucketed latency and loss for every target, for the comparison chart |
 | `GET` | `/api/targets/{id}/events` | Events for one target |
