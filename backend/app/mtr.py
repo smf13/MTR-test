@@ -157,7 +157,9 @@ def parse_report(raw: dict[str, Any]) -> tuple[str | None, list[HopResult]]:
                 jitter_int_ms=metric("Jint"),
             )
         )
-    return meta.get("src"), hops
+    src = meta.get("src")
+    # mtr's JSON is untyped; the database column is text.
+    return (str(src) if src is not None else None), hops
 
 
 def route_signature(hops: list[HopResult]) -> str:

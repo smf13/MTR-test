@@ -6,6 +6,9 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+# Matches the credentials of the bundled docker-compose service; a server elsewhere is named in MTR_TRACKER_DATABASE_URL.
+DEFAULT_DATABASE_URL = "postgresql://mtr:mtr@127.0.0.1:5432/mtr_tracker"
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
@@ -27,7 +30,12 @@ def _env_int(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class Config:
     data_dir: Path
-    db_path: Path
+    database_url: str
+    # The SQLite file of an installation that predates the PostgreSQL backend; read once by the automatic import.
+    sqlite_path: Path
+    auto_migrate: bool
+    db_pool_size: int
+    db_connect_timeout: int
     host: str
     port: int
     mtr_binary: str
@@ -41,7 +49,8 @@ class Config:
     def from_env(cls) -> "Config":
         data_dir = Path(os.environ.get("MTR_TRACKER_DATA_DIR", "./data")).resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
-        db_path = Path(os.environ.get("MTR_TRACKER_DB_PATH", str(data_dir / "mtr-tracker.db"))).resolve()
+        sqlite_path = Path(os.environ.get("MTR_TRACKER_DB_PATH", str(data_dir / "mtr-tracker.db"))).resolve()
+        max_concurrent_runs = max(1, _env_int("MTR_TRACKER_MAX_CONCURRENT_RUNS", 8))
 
         static_env = os.environ.get("MTR_TRACKER_STATIC_DIR")
         static_dir: Path | None = None
@@ -54,12 +63,17 @@ class Config:
 
         return cls(
             data_dir=data_dir,
-            db_path=db_path,
+            database_url=os.environ.get("MTR_TRACKER_DATABASE_URL", "").strip() or DEFAULT_DATABASE_URL,
+            sqlite_path=sqlite_path,
+            auto_migrate=_env_bool("MTR_TRACKER_AUTO_MIGRATE", True),
+            # Every in-flight run and every request may hold a connection; keep a few spare for the API.
+            db_pool_size=max(2, _env_int("MTR_TRACKER_DB_POOL_SIZE", max(4, max_concurrent_runs + 4))),
+            db_connect_timeout=max(1, _env_int("MTR_TRACKER_DB_CONNECT_TIMEOUT", 120)),
             host=os.environ.get("MTR_TRACKER_HOST", "0.0.0.0"),
             port=_env_int("MTR_TRACKER_PORT", 8899),
             mtr_binary=os.environ.get("MTR_TRACKER_MTR_BINARY", "mtr"),
             simulate=_env_bool("MTR_TRACKER_SIMULATE", False),
-            max_concurrent_runs=max(1, _env_int("MTR_TRACKER_MAX_CONCURRENT_RUNS", 8)),
+            max_concurrent_runs=max_concurrent_runs,
             static_dir=static_dir,
             log_level=os.environ.get("MTR_TRACKER_LOG_LEVEL", "info"),
             api_token=os.environ.get("MTR_TRACKER_API_TOKEN", "").strip(),

@@ -91,8 +91,16 @@ async def test_secrets_are_masked_without_the_token(protected_client: AsyncClien
     r2 = await c.post("/api/notifications/test", json={"channel": "webhook", "settings": {"webhook_url": masked["webhook_url"]}}, headers=auth)
     assert r2.status_code == 200 and calls[-1] == body["webhook_url"]
 
-    assert (await c.get("/api/status")).json()["db_path"] is None
-    assert (await c.get("/api/status", headers=auth)).json()["db_path"].endswith("test.db")
+    assert (await c.get("/api/status")).json()["database"] is None
+    status = (await c.get("/api/status", headers=auth)).json()
+    # Token holders see where the data lives, never the password.
+    from urllib.parse import urlsplit
+
+    from helpers import TEST_ADMIN_DSN, TEST_DB_NAME
+
+    assert status["database"].startswith("postgresql://") and status["database"].endswith("/" + TEST_DB_NAME)
+    assert not urlsplit(TEST_ADMIN_DSN).password or urlsplit(TEST_ADMIN_DSN).password not in status["database"]
+    assert status["db_size_bytes"] > 0
 
 
 async def test_quick_trace_concurrency_is_bounded(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -212,7 +220,7 @@ async def test_transaction_is_atomic(client: AsyncClient) -> None:
     assert await runs() == 0
 
     async with db.transaction() as tx:
-        rid = await tx.execute("INSERT INTO runs(target_id, started_at, status) VALUES (?, ?, 'ok')", (t["id"], time.time()))
+        rid = await tx.fetchval("INSERT INTO runs(target_id, started_at, status) VALUES (?, ?, 'ok') RETURNING id", (t["id"], time.time()))
         await tx.executemany("INSERT INTO hops(run_id, hop_no, ip, loss_pct, sent, received) VALUES (?, ?, '10.0.0.1', 0, 3, 3)", [(rid, 1), (rid, 2)])
     assert await runs() == 1
     assert (await db.fetchone("SELECT COUNT(*) AS n FROM hops WHERE run_id = ?", (rid,)))["n"] == 2
@@ -239,5 +247,5 @@ async def test_purge_runs_in_batches_and_keeps_recent_data(client: AsyncClient) 
     assert (await db.fetchone("SELECT COUNT(*) AS n FROM hops"))["n"] == 0
     events = await db.fetchall("SELECT run_id FROM events")
     assert len(events) == 1 and events[0]["run_id"] is None  # recent event kept with its run reference cleared; old one purged
-    indexes = {r["name"] for r in await db.fetchall("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    indexes = {r["name"] for r in await db.fetchall("SELECT indexname AS name FROM pg_indexes WHERE schemaname = current_schema()")}
     assert {"idx_events_run", "idx_runs_started"} <= indexes

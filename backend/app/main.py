@@ -26,8 +26,12 @@ log = logging.getLogger("mtr-tracker")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    db = Database(config.db_path)
-    await db.connect()
+    db = Database(config.database_url, pool_size=config.db_pool_size, connect_timeout=config.db_connect_timeout)
+    try:
+        await db.connect()
+    except BaseException:
+        await db.close()
+        raise
     scheduler = Scheduler(db)
     app.state.db = db
     app.state.scheduler = scheduler

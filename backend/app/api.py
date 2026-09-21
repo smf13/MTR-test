@@ -211,8 +211,8 @@ async def get_status(request: Request) -> dict[str, Any]:
         "active_runs": sched.active_run_ids,
         "runs_completed_since_start": sched.runs_completed,
         "db_size_bytes": await db.db_size_bytes(),
-        # The server's filesystem layout is only shown to callers that hold the API token.
-        "db_path": str(config.db_path) if is_authenticated(request) else None,
+        # The database location is only shown to callers that hold the API token; the password is never included.
+        "database": db.describe() if is_authenticated(request) else None,
         "targets": {k: int(counts[k] or 0) for k in ("total", "enabled", "up", "degraded", "down", "pending")},
         "runs_24h": {"total": int(runs["total"] or 0), "ok": int(runs["ok"] or 0)},
         "runs_total": int(total_runs["n"] or 0),
@@ -335,7 +335,7 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list
     stats = {int(r["target_id"]): dict(r) for r in stat_rows}
 
     timeline_rows = await db.fetchall(
-        f"SELECT r.target_id, CAST((r.started_at - ?) / ? AS INTEGER) AS b, COUNT(*) AS n, AVG(CASE WHEN r.reached = 1 THEN r.avg_ms END) AS avg_ms, "
+        f"SELECT r.target_id, floor((r.started_at - ?) / ?)::int AS b, COUNT(*) AS n, AVG(CASE WHEN r.reached = 1 THEN r.avg_ms END) AS avg_ms, "
         f"MAX(CASE WHEN r.status != 'ok' OR r.reached = 0 THEN 3 "
         f"WHEN (t.alert_loss_pct > 0 AND r.loss_pct >= t.alert_loss_pct) OR (t.alert_latency_ms > 0 AND r.avg_ms >= t.alert_latency_ms) THEN 2 ELSE 1 END) AS worst "
         f"FROM runs r JOIN targets t ON t.id = r.target_id WHERE r.started_at >= ? AND r.target_id IN ({placeholders}) GROUP BY r.target_id, b",
@@ -352,9 +352,9 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list
     # re-evaluated for every run row and took seconds on large histories.
     spark_rows = await db.fetchall(
         f"SELECT target_id, started_at, avg_ms, loss_pct, reached FROM ("
-        f"SELECT target_id, started_at, avg_ms, loss_pct, reached, "
-        f"ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY started_at DESC) AS rn "
-        f"FROM runs WHERE target_id IN ({placeholders})) WHERE rn <= {SPARKLINE_POINTS} ORDER BY started_at ASC",
+        f"SELECT id, target_id, started_at, avg_ms, loss_pct, reached, "
+        f"ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY started_at DESC, id DESC) AS rn "
+        f"FROM runs WHERE target_id IN ({placeholders})) AS ranked WHERE rn <= {SPARKLINE_POINTS} ORDER BY started_at ASC, id ASC",
         ids,
     )
     sparks: dict[int, list[dict[str, Any]]] = {}
@@ -387,7 +387,7 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list
 @router.get("/targets")
 async def list_targets(request: Request) -> list[dict[str, Any]]:
     db = _db(request)
-    rows = await db.fetchall("SELECT * FROM targets ORDER BY name COLLATE NOCASE")
+    rows = await db.fetchall("SELECT * FROM targets ORDER BY lower(name), name")
     targets = [_target_out(dict(r)) for r in rows]
     return await _attach_summaries(db, targets)
 
@@ -410,16 +410,16 @@ async def list_tags(request: Request) -> list[dict[str, Any]]:
 
 async def _insert_target(db: Database, data: dict[str, Any]) -> int:
     now = time.time()
-    return await db.execute(
+    return int(await db.fetchval(
         "INSERT INTO targets(name, host, type, options, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, "
         "ip_version, max_hops, enabled, notify, alert_loss_pct, alert_latency_ms, created_at, updated_at, next_run_at, last_status) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id",
         (
             data["name"], data["host"], data["type"], json.dumps(data["options"]), data["description"], json.dumps(data["tags"]), data["interval_sec"],
             data["count"], data["probe_interval"], data["protocol"], data["port"], data["packet_size"], data["ip_version"], data["max_hops"],
             int(data["enabled"]), int(data.get("notify", True)), data["alert_loss_pct"], data["alert_latency_ms"], now, now, now,
         ),
-    )
+    ))
 
 
 EXPORT_FIELDS = (
@@ -439,7 +439,7 @@ async def create_target(request: Request, body: TargetCreate) -> dict[str, Any]:
 @router.get("/targets/export")
 async def export_targets(request: Request) -> list[dict[str, Any]]:
     """Portable definitions of every target (no runs), suitable for POST /api/targets/import."""
-    rows = await _db(request).fetchall("SELECT * FROM targets ORDER BY name COLLATE NOCASE")
+    rows = await _db(request).fetchall("SELECT * FROM targets ORDER BY lower(name), name")
     return [{k: v for k, v in _target_out(dict(r)).items() if k in EXPORT_FIELDS} for r in rows]
 
 
@@ -464,7 +464,7 @@ async def import_targets(request: Request, body: TargetImport) -> dict[str, Any]
             existing[data["name"].lower()] = await _insert_target(db, data)
             created += 1
     _sched(request).wake()
-    return {"created": created, "updated": updated, "total": len(await db.fetchall("SELECT id FROM targets"))}
+    return {"created": created, "updated": updated, "total": int((await db.fetchone("SELECT COUNT(*) AS n FROM targets"))["n"])}
 
 
 @router.post("/targets/bulk")
@@ -639,7 +639,7 @@ async def list_runs(
     where = " AND ".join(clauses)
     total = await db.fetchone(f"SELECT COUNT(*) AS n FROM runs WHERE {where}", params)
     rows = await db.fetchall(
-        f"SELECT * FROM runs WHERE {where} ORDER BY started_at DESC LIMIT ? OFFSET ?", [*params, limit, offset]
+        f"SELECT * FROM runs WHERE {where} ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?", [*params, limit, offset]
     )
     return {"total": int(total["n"] or 0), "items": [_run_out(dict(r)) for r in rows]}
 
@@ -668,11 +668,11 @@ async def _route_marks(db: Database, target_id: int, since: float, settings: dic
     """Runs in the range (ascending, light columns) and their chart markers, per `route_change_marks`."""
     memory = max(1, min(500, int(settings.get("route_memory_runs") or 1)))
     runs = rows_to_dicts(await db.fetchall(
-        "SELECT id, started_at, status, reached, route_hash, route_changed FROM runs WHERE target_id = ? AND started_at >= ? ORDER BY started_at ASC",
+        "SELECT id, started_at, status, reached, route_hash, route_changed FROM runs WHERE target_id = ? AND started_at >= ? ORDER BY started_at ASC, id ASC",
         (target_id, since),
     ))
     warm_rows = await db.fetchall(
-        "SELECT route_hash FROM runs WHERE target_id = ? AND started_at < ? AND status = 'ok' AND reached = 1 ORDER BY started_at DESC LIMIT ?",
+        "SELECT route_hash FROM runs WHERE target_id = ? AND started_at < ? AND status = 'ok' AND reached = 1 ORDER BY started_at DESC, id DESC LIMIT ?",
         (target_id, since, memory),
     ) if memory > 1 else []
     return runs, route_change_marks(runs, [r["route_hash"] for r in warm_rows], memory)
@@ -698,7 +698,7 @@ async def get_series(
     if n <= max_points:
         rows = await db.fetchall(
             "SELECT id, started_at, status, reached, avg_ms, best_ms, worst_ms, loss_pct, jitter_avg_ms, hop_count, route_changed "
-            "FROM runs WHERE target_id = ? AND started_at >= ? ORDER BY started_at ASC",
+            "FROM runs WHERE target_id = ? AND started_at >= ? ORDER BY started_at ASC, id ASC",
             (target_id, since),
         )
         points = [
@@ -722,7 +722,7 @@ async def get_series(
     bucket = max(10, math.ceil(range_sec / max_points))
     marked_buckets = {int(r["started_at"] / bucket) * bucket for r in marked_runs if r["id"] in marked}
     rows = await db.fetchall(
-        "SELECT CAST(started_at / ? AS INTEGER) * ? AS bucket, COUNT(*) AS n, "
+        "SELECT floor(started_at / ?)::bigint * ? AS bucket, COUNT(*) AS n, "
         "SUM(CASE WHEN status='ok' AND reached=1 THEN 1 ELSE 0 END) AS ok_n, "
         "AVG(CASE WHEN reached=1 THEN avg_ms END) AS avg_ms, MIN(best_ms) AS best_ms, MAX(worst_ms) AS worst_ms, "
         "AVG(loss_pct) AS loss_pct, MAX(loss_pct) AS max_loss, AVG(jitter_avg_ms) AS jitter, MAX(hop_count) AS hops, "
@@ -762,7 +762,7 @@ async def get_hop_history(
     since = time.time() - parse_range(range_)
     runs = await db.fetchall(
         "SELECT id, started_at, hop_count, reached FROM runs WHERE target_id = ? AND started_at >= ? AND status = 'ok' "
-        "ORDER BY started_at ASC",
+        "ORDER BY started_at ASC, id ASC",
         (target_id, since),
     )
     runs = list(runs)
@@ -807,12 +807,12 @@ async def get_hop_summary(
     db = _db(request)
     since = time.time() - parse_range(range)
     rows = await db.fetchall(
-        "SELECT h.hop_no, h.ip, MAX(h.hostname) AS hostname, MAX(h.asn) AS asn, COUNT(*) AS n, "
+        "SELECT h.hop_no, h.ip, MAX(h.hostname COLLATE \"C\") AS hostname, MAX(h.asn COLLATE \"C\") AS asn, COUNT(*) AS n, "
         "SUM(h.sent) AS sent, SUM(h.received) AS received, AVG(h.loss_pct) AS loss_pct, MAX(h.loss_pct) AS max_loss, "
         "AVG(h.avg_ms) AS avg_ms, MIN(h.best_ms) AS best_ms, MAX(h.worst_ms) AS worst_ms, AVG(h.stdev_ms) AS stdev_ms, "
         "AVG(h.jitter_avg_ms) AS jitter_ms, MAX(h.jitter_max_ms) AS jitter_max_ms "
         "FROM hops h JOIN runs r ON r.id = h.run_id WHERE r.target_id = ? AND r.started_at >= ? AND r.status = 'ok' "
-        "GROUP BY h.hop_no, h.ip ORDER BY h.hop_no ASC, n DESC",
+        "GROUP BY h.hop_no, h.ip ORDER BY h.hop_no ASC, n DESC, h.ip",
         (target_id, since),
     )
     total_runs_row = await db.fetchone(
@@ -888,9 +888,9 @@ async def overview_series(
     range_sec = parse_range(range)
     since = time.time() - range_sec
     bucket = max(10, math.ceil(range_sec / max_points))
-    targets = await db.fetchall("SELECT id, name, host, enabled FROM targets ORDER BY name COLLATE NOCASE")
+    targets = await db.fetchall("SELECT id, name, host, enabled FROM targets ORDER BY lower(name), name")
     rows = await db.fetchall(
-        "SELECT target_id, CAST(started_at / ? AS INTEGER) * ? AS bucket, COUNT(*) AS n, "
+        "SELECT target_id, floor(started_at / ?)::bigint * ? AS bucket, COUNT(*) AS n, "
         "SUM(CASE WHEN status='ok' AND reached=1 THEN 1 ELSE 0 END) AS ok_n, "
         "AVG(CASE WHEN reached=1 THEN avg_ms END) AS avg_ms, MAX(loss_pct) AS max_loss "
         "FROM runs WHERE started_at >= ? GROUP BY target_id, bucket ORDER BY bucket ASC",
@@ -925,7 +925,7 @@ async def get_hourly(request: Request, target_id: int, range: str = Query(defaul
     range_sec = parse_range(range)
     since = time.time() - range_sec
     rows = await db.fetchall(
-        "SELECT CAST(started_at / 3600 AS INTEGER) * 3600 AS hour, COUNT(*) AS n, "
+        "SELECT floor(started_at / 3600)::bigint * 3600 AS hour, COUNT(*) AS n, "
         "SUM(CASE WHEN status='ok' AND reached=1 THEN 1 ELSE 0 END) AS ok_n, "
         "AVG(CASE WHEN reached=1 THEN avg_ms END) AS avg_ms, MAX(worst_ms) AS worst_ms, AVG(loss_pct) AS loss_pct, MAX(loss_pct) AS max_loss, "
         "AVG(jitter_avg_ms) AS jitter "
@@ -963,7 +963,7 @@ async def get_routes(request: Request, target_id: int, range: str = Query(defaul
     since = time.time() - range_sec
     rows = await db.fetchall(
         "SELECT id, started_at, finished_at, route_hash, hop_count, reached FROM runs WHERE target_id = ? AND started_at >= ? AND status = 'ok' "
-        "ORDER BY started_at ASC",
+        "ORDER BY started_at ASC, id ASC",
         (target_id, since),
     )
     canonical = await _canonical_routes(db, rows)
@@ -1065,7 +1065,7 @@ async def get_target_geo(request: Request, target_id: int) -> dict[str, Any]:
         raise HTTPException(404, "target not found")
     target = _target_out(dict(row))
     settings = await db.get_settings()
-    run_row = await db.fetchone("SELECT * FROM runs WHERE target_id = ? AND status = 'ok' ORDER BY started_at DESC LIMIT 1", (target_id,))
+    run_row = await db.fetchone("SELECT * FROM runs WHERE target_id = ? AND status = 'ok' ORDER BY started_at DESC, id DESC LIMIT 1", (target_id,))
     run = _run_out(dict(run_row)) if run_row else None
     hops = rows_to_dicts(await db.fetchall("SELECT hop_no, ip, hostname, asn, avg_ms, loss_pct FROM hops WHERE run_id = ? ORDER BY hop_no ASC", (run["id"],))) if run else []
     return await geoip.path_geo(target, run, hops, settings)
@@ -1102,11 +1102,11 @@ async def _load_run(db: Database, run_id: int) -> dict[str, Any]:
     run["hops"] = rows_to_dicts(hops)
     await geoip.name_networks(run["hops"], await db.get_settings())
     prev = await db.fetchone(
-        "SELECT id FROM runs WHERE target_id = ? AND started_at < ? ORDER BY started_at DESC LIMIT 1",
+        "SELECT id FROM runs WHERE target_id = ? AND started_at < ? ORDER BY started_at DESC, id DESC LIMIT 1",
         (run["target_id"], row["started_at"]),
     )
     nxt = await db.fetchone(
-        "SELECT id FROM runs WHERE target_id = ? AND started_at > ? ORDER BY started_at ASC LIMIT 1",
+        "SELECT id FROM runs WHERE target_id = ? AND started_at > ? ORDER BY started_at ASC, id ASC LIMIT 1",
         (run["target_id"], row["started_at"]),
     )
     run["prev_run_id"] = prev["id"] if prev else None

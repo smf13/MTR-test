@@ -19,9 +19,9 @@ def _hop(no: int, ip: str | None, count: int = 10) -> HopResult:
 async def _insert_run(db, target_id: int, started: float, ips: list[str | None], route_changed: bool = False) -> int:
     hops = [_hop(i + 1, ip) for i, ip in enumerate(ips)]
     async with db.transaction() as tx:
-        run_id = await tx.execute(
+        run_id = await tx.fetchval(
             "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, dst_ip, reached, hop_count, sent, loss_pct, avg_ms, route_hash, route_changed) "
-            "VALUES (?, ?, ?, 1000, 'ok', ?, 1, ?, 10, 0, 5, ?, ?)",
+            "VALUES (?, ?, ?, 1000, 'ok', ?, 1, ?, 10, 0, 5, ?, ?) RETURNING id",
             (target_id, started, started + 1, ips[-1], len(ips), route_signature(hops), int(route_changed)),
         )
         await tx.executemany(

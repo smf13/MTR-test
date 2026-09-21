@@ -5,13 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 import time
 from typing import Any, Awaitable, Callable, Iterable
 
 from . import geoip
 from .config import config
-from .db import Database
+from .db import Database, IntegrityError
 from .globalping import PATH_MEASUREMENTS, run_globalping_path
 from .mtr import HopResult, MtrResult, route_signature, routes_equivalent, run_mtr
 from .notify import dispatch_event, target_url
@@ -170,7 +169,7 @@ class Scheduler:
                 await self._execute(t, settings)
             except asyncio.CancelledError:
                 raise
-            except sqlite3.IntegrityError as exc:
+            except IntegrityError as exc:
                 # The foreign key fails when the target row disappeared under a run that was not cancelled
                 # (deleted straight from the database, for example): nothing left to record against.
                 if await self._target_exists(target_id):
@@ -194,12 +193,12 @@ class Scheduler:
     async def _record_internal_error(self, t: dict[str, Any], settings: dict[str, Any], exc: BaseException) -> None:
         now = time.time()
         try:
-            run_id = await self.db.execute(
+            run_id = await self.db.fetchval(
                 "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, reached, hop_count, loss_pct) "
-                "VALUES (?, ?, ?, 0, 'error', ?, 0, 0, 100)",
+                "VALUES (?, ?, ?, 0, 'error', ?, 0, 0, 100) RETURNING id",
                 (t["id"], now, now, f"internal error: {exc}"),
             )
-        except sqlite3.IntegrityError:
+        except IntegrityError:
             log.info("target %s was deleted during its run; error not recorded", t["id"])
             return
         await self._apply_status(t, run_id, "down", settings, error=str(exc))
@@ -242,9 +241,9 @@ class Scheduler:
         details_json = json.dumps(result.details) if result.details else None
 
         if not result.ok:
-            run_id = await self.db.execute(
+            run_id = await self.db.fetchval(
                 "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, src, dst_ip, reached, hop_count, loss_pct, command, details) "
-                "VALUES (?, ?, ?, ?, 'error', ?, ?, ?, 0, 0, 100, ?, ?)",
+                "VALUES (?, ?, ?, ?, 'error', ?, ?, ?, 0, 0, 100, ?, ?) RETURNING id",
                 (t["id"], result.started_at, result.finished_at, result.duration_ms, result.error, result.src, result.dst_ip, result.command or None, details_json),
             )
             await self._apply_status(t, run_id, "down", settings, error=result.error)
@@ -266,7 +265,7 @@ class Scheduler:
         # unreachable run is padded with unknown hops up to max_hops, so comparing across an outage
         # would announce a bogus reroute on top of the down and recovered events.
         previous = await self.db.fetchone(
-            "SELECT id, route_hash, dst_ip FROM runs WHERE target_id = ? AND status = 'ok' AND reached = 1 ORDER BY started_at DESC LIMIT 1",
+            "SELECT id, route_hash, dst_ip FROM runs WHERE target_id = ? AND status = 'ok' AND reached = 1 ORDER BY started_at DESC, id DESC LIMIT 1",
             (t["id"],),
         )
         route_changed = False
@@ -281,10 +280,10 @@ class Scheduler:
         summary = _summarise(final, reached)
         # The run and its hops land together or not at all.
         async with self.db.transaction() as tx:
-            run_id = await tx.execute(
+            run_id = await tx.fetchval(
                 "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, src, dst_ip, reached, hop_count, sent, "
                 "loss_pct, last_ms, avg_ms, best_ms, worst_ms, stdev_ms, jitter_avg_ms, jitter_max_ms, route_hash, route_changed, command, details) "
-                "VALUES (?, ?, ?, ?, 'ok', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, 'ok', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
                 (
                     t["id"], result.started_at, result.finished_at, result.duration_ms, result.src, dst_ip, int(reached), len(hops),
                     final.sent, summary["loss_pct"], summary["last_ms"], summary["avg_ms"], summary["best_ms"], summary["worst_ms"],
@@ -321,18 +320,18 @@ class Scheduler:
         """Ping / HTTP / TCP / DNS / Globalping ping: one summary row per run, no hops."""
         o = await run_probe(t, settings)
         if not o.ok:
-            run_id = await self.db.execute(
+            run_id = await self.db.fetchval(
                 "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, dst_ip, reached, hop_count, sent, loss_pct, command, details) "
-                "VALUES (?, ?, ?, ?, 'error', ?, ?, 0, 0, ?, 100, ?, ?)",
+                "VALUES (?, ?, ?, ?, 'error', ?, ?, 0, 0, ?, 100, ?, ?) RETURNING id",
                 (t["id"], o.started_at, o.finished_at, o.duration_ms, o.error, o.dst_ip, o.sent, o.command, json.dumps(o.details) if o.details else None),
             )
             await self._apply_status(t, run_id, "down", settings, error=o.error)
             return
         summary = o.summary()
-        run_id = await self.db.execute(
+        run_id = await self.db.fetchval(
             "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, error, dst_ip, reached, hop_count, sent, "
             "loss_pct, last_ms, avg_ms, best_ms, worst_ms, stdev_ms, jitter_avg_ms, jitter_max_ms, command, details) "
-            "VALUES (?, ?, ?, ?, 'ok', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, 'ok', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
             (
                 t["id"], o.started_at, o.finished_at, o.duration_ms, o.error if not o.reached else None, o.dst_ip, int(o.reached), o.sent,
                 summary["loss_pct"], summary["last_ms"], summary["avg_ms"], summary["best_ms"], summary["worst_ms"], summary["stdev_ms"],

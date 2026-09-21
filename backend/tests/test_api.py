@@ -1,4 +1,4 @@
-"""API tests running the app in simulation mode against a temporary database (fixtures live in conftest.py)."""
+"""API tests running the app in simulation mode against a fresh PostgreSQL database (fixtures live in conftest.py)."""
 
 from __future__ import annotations
 
@@ -256,17 +256,16 @@ async def test_hop_history_downsamples_when_over_max_runs(client: AsyncClient) -
     total = 150
     for i in range(total):
         started = now - (total - i) * 10
-        run_id = await db.execute(
-            "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, reached, hop_count, loss_pct, avg_ms) "
-            "VALUES (?, ?, ?, 100, 'ok', 1, 2, 0, 10)",
-            (t["id"], started, started + 0.1),
-            commit=False,
-        )
-        await db.executemany(
-            "INSERT INTO hops(run_id, hop_no, ip, loss_pct, sent, received, avg_ms) VALUES (?, ?, ?, 0, 3, 3, ?)",
-            [(run_id, 1, "10.0.0.1", 1.0), (run_id, 2, "192.0.2.20", 10.0)],
-            commit=True,
-        )
+        async with db.transaction() as tx:
+            run_id = await tx.fetchval(
+                "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, reached, hop_count, loss_pct, avg_ms) "
+                "VALUES (?, ?, ?, 100, 'ok', 1, 2, 0, 10) RETURNING id",
+                (t["id"], started, started + 0.1),
+            )
+            await tx.executemany(
+                "INSERT INTO hops(run_id, hop_no, ip, loss_pct, sent, received, avg_ms) VALUES (?, ?, ?, 0, 3, 3, ?)",
+                [(run_id, 1, "10.0.0.1", 1.0), (run_id, 2, "192.0.2.20", 10.0)],
+            )
 
     r = await client.get(f"/api/targets/{t['id']}/hops/history?range=1h&max_runs=50")
     assert r.status_code == 200, r.text
@@ -278,3 +277,10 @@ async def test_hop_history_downsamples_when_over_max_runs(client: AsyncClient) -
 
     r = await client.get(f"/api/targets/{t['id']}/hops/history?range=1h")
     assert r.status_code == 200 and len(r.json()["runs"]) == 120
+
+
+async def test_overview_series_survives_a_huge_range(client: AsyncClient) -> None:
+    """Regression: bucket arithmetic stays in 64-bit integers (a range of decades overflowed a 32-bit multiplier)."""
+    r = await client.get("/api/overview/series?range=99999999w&max_points=24")
+    assert r.status_code == 200, r.text
+    assert r.json()["bucket_sec"] > 10 and r.json()["targets"] == []

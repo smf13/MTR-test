@@ -1,15 +1,64 @@
-"""Shared test machinery: build the app in simulation mode against a temporary database."""
+"""Shared test machinery: build the app in simulation mode against a fresh PostgreSQL database."""
 
 from __future__ import annotations
 
 import asyncio
 import importlib
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
+from urllib.parse import urlsplit, urlunsplit
 
+import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
+
+# A superuser (or a role with CREATEDB) on the test server; every app fixture drops and recreates its own database.
+TEST_ADMIN_DSN = os.environ.get("MTR_TRACKER_TEST_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:5432/postgres")
+# One fixed name per pytest worker: DROP IF EXISTS ... WITH (FORCE) before CREATE makes a crashed run self-healing and
+# leaves the last database behind for a post-mortem. It also means a test holds at most one app fixture at a time.
+TEST_DB_NAME = "mtr_tracker_test_" + os.environ.get("PYTEST_XDIST_WORKER", "main").replace("-", "_")
+SKIP_HINT = (
+    "PostgreSQL is not reachable at MTR_TRACKER_TEST_DATABASE_URL; start one with "
+    "`docker run --rm -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine` or point the variable at a server"
+)
+
+_server: dict[str, str | None] = {}
+
+
+async def _admin_error() -> str | None:
+    """Probe the admin DSN once per session; the error text when the server cannot be reached, else None."""
+    if "error" not in _server:
+        try:
+            conn = await asyncpg.connect(TEST_ADMIN_DSN, timeout=5)
+            await conn.close()
+            _server["error"] = None
+        except (OSError, asyncio.TimeoutError, asyncpg.PostgresError) as exc:
+            _server["error"] = f"{exc.__class__.__name__}: {exc}"
+    return _server["error"]
+
+
+async def fresh_test_database() -> str:
+    """Drop and recreate this worker's test database and return its URL.
+
+    Without a server the app fixtures are skipped with a hint; in CI (the CI variable is set) that is a failure.
+    """
+    error = await _admin_error()
+    if error:
+        message = f"{SKIP_HINT} ({error})"
+        if os.environ.get("CI"):
+            raise RuntimeError(message)
+        pytest.skip(message)
+    conn = await asyncpg.connect(TEST_ADMIN_DSN, timeout=5)
+    try:
+        # Two separate statements: neither may run inside a transaction block.
+        await conn.execute(f'DROP DATABASE IF EXISTS "{TEST_DB_NAME}" WITH (FORCE)')
+        await conn.execute(f'CREATE DATABASE "{TEST_DB_NAME}"')
+    finally:
+        await conn.close()
+    parts = urlsplit(TEST_ADMIN_DSN)
+    return urlunsplit((parts.scheme, parts.netloc, f"/{TEST_DB_NAME}", parts.query, ""))
 
 
 def reload_app_modules() -> Any:
@@ -25,12 +74,21 @@ def reload_app_modules() -> Any:
 
 
 @asynccontextmanager
-async def app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, token: str = "", static_dir: Path | None = None) -> AsyncIterator[AsyncClient]:
-    """A running app (lifespan started) behind an in-process HTTP client."""
+async def app_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, token: str = "", static_dir: Path | None = None, fresh_database: bool = True
+) -> AsyncIterator[AsyncClient]:
+    """A running app (lifespan started) behind an in-process HTTP client.
+
+    `fresh_database=False` starts the app against the database of an earlier `app_client` in the same test.
+    """
     monkeypatch.setenv("MTR_TRACKER_SIMULATE", "1")
     monkeypatch.setenv("MTR_TRACKER_DATA_DIR", str(tmp_path))
+    # The legacy SQLite location: empty unless a migration test puts a file there before the app starts.
     monkeypatch.setenv("MTR_TRACKER_DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("MTR_TRACKER_DB_CONNECT_TIMEOUT", "5")
     monkeypatch.setenv("MTR_TRACKER_STATIC_DIR", str(static_dir or tmp_path / "missing"))
+    if fresh_database:
+        monkeypatch.setenv("MTR_TRACKER_DATABASE_URL", await fresh_test_database())
     if token:
         monkeypatch.setenv("MTR_TRACKER_API_TOKEN", token)
     else:

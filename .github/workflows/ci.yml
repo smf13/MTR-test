@@ -9,6 +9,21 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    # The backend tests run against a real PostgreSQL; each app fixture drops and recreates its own database.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h localhost -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      MTR_TRACKER_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     defaults:
       run:
         working-directory: backend
@@ -41,6 +56,8 @@ jobs:
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
+      # Validates the two-service Compose file (interpolation, healthcheck, depends_on) without starting anything.
+      - run: docker compose config -q
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:

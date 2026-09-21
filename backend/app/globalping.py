@@ -51,6 +51,11 @@ def _sim() -> bool:
     return config.simulate and not _FORCE_LIVE
 
 
+def _text(value: Any) -> str | None:
+    """A value from the API's JSON as the database's text column wants it (never a number)."""
+    return None if value is None else str(value)
+
+
 def probe_label(probe: dict[str, Any]) -> str:
     """'Frankfurt, DE · AS24940 Hetzner Online' for a Globalping probe description."""
     where = ", ".join(str(x) for x in (probe.get("city"), probe.get("country")) if x)
@@ -440,7 +445,7 @@ def _check_outcome(started: float, finished: float, probes: list[dict[str, Any]]
     failed = [p for p in probes if not p.get("passed")]
     n = len(probes)
     reasons = "; ".join(f"{p['label']}: {p.get('reason') or 'failed'}" for p in failed)
-    o = ProbeOutcome(True, bool(passed), started, finished, dst_ip=next((p.get("resolved") for p in passed if p.get("resolved")), None), sent=n or None, details=details, command=command)
+    o = ProbeOutcome(True, bool(passed), started, finished, dst_ip=_text(next((p.get("resolved") for p in passed if p.get("resolved")), None)), sent=n or None, details=details, command=command)
     o.loss_pct = round(100.0 * len(failed) / n, 1) if n else 100.0
     _apply_stats(o, [float(p["total_ms"]) for p in passed if p.get("total_ms") is not None])
     if not passed:
@@ -457,7 +462,7 @@ def _ping_outcome(started: float, finished: float, probes: list[dict[str, Any]],
         return ProbeOutcome(True, False, started, finished, error=f"no probe completed the ping ({why})", sent=0, loss_pct=100.0, details=details, command=command)
     sent = sum(int(p["sent"]) for p in finished_probes)
     received = sum(int(p.get("received") or 0) for p in finished_probes)
-    o = ProbeOutcome(True, received > 0, started, finished, dst_ip=next((p["resolved"] for p in finished_probes if p.get("resolved")), None), sent=sent, details=details, command=command)
+    o = ProbeOutcome(True, received > 0, started, finished, dst_ip=_text(next((p["resolved"] for p in finished_probes if p.get("resolved")), None)), sent=sent, details=details, command=command)
     o.loss_pct = round(100.0 * (sent - received) / sent, 1) if sent else 100.0
     _apply_stats(o, [r for p in finished_probes for r in p["rtts"]])
     if received == 0:
@@ -545,7 +550,7 @@ async def run_globalping_path(t: dict[str, Any], opts: dict[str, Any], settings:
         hops = [hop_from_traceroute(i, h, per_hop) for i, h in enumerate(raw_hops)]
     else:
         hops = [hop_from_result(i, h) for i, h in enumerate(raw_hops)]
-    dst_ip = res.get("resolvedAddress") or None
+    dst_ip = _text(res.get("resolvedAddress") or None)
     if not hops:
         return MtrResult(False, started, finished, command, src=label, dst_ip=dst_ip, error="Globalping result contains no hops", details=details)
     return MtrResult(True, started, finished, command, src=label, dst_ip=dst_ip, hops=hops, raw=data, details=details)
