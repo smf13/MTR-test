@@ -366,10 +366,23 @@ export interface SeriesPoint {
   n: number;
 }
 
+/** What the chart route memory did to the range: the target page prints `hidden` with a link to the setting. */
+export interface SeriesRouteChanges {
+  /** Stored route changes in the range (the flag behind events, notifications and counts). */
+  stored: number;
+  /** Changes the latency chart marks. */
+  marked: number;
+  /** Changes the memory suppressed (stored minus marked). */
+  hidden: number;
+  /** The chart route memory (runs) the markers were judged with. */
+  memory: number;
+}
+
 export interface Series {
   range_sec: number;
   bucket_sec: number | null;
   points: SeriesPoint[];
+  route_changes: SeriesRouteChanges;
 }
 
 export interface HopHistoryCell {

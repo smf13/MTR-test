@@ -39,7 +39,7 @@ const target: Target = {
 
 function mockDetail(t: Target = target) {
   vi.spyOn(api, "target").mockResolvedValue(t);
-  vi.spyOn(api, "series").mockResolvedValue({ points: [], bucket_sec: null, range_sec: 86400 });
+  vi.spyOn(api, "series").mockResolvedValue({ points: [], bucket_sec: null, range_sec: 86400, route_changes: { stored: 0, marked: 0, hidden: 0, memory: 20 } });
   vi.spyOn(api, "runs").mockResolvedValue({ total: 1, items: [run] });
   vi.spyOn(api, "run").mockResolvedValue(run);
   vi.spyOn(api, "hopHistory").mockResolvedValue({ runs: [], max_hops: 0 });
@@ -124,6 +124,24 @@ describe("route-change markers", () => {
     expect(thinRouteChanges(sparse, [start, start + day], 600).map((r) => r.t)).toEqual(sparse.filter((r) => r.routeChanged).map((r) => r.t));
     // A zero-width plot (before the ResizeObserver reports) still returns a marker rather than throwing.
     expect(thinRouteChanges(rows, [start, start + day], 0).length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("chart route memory note", () => {
+  it("says how many route changes the memory hid and links to the setting", async () => {
+    mockDetail();
+    vi.spyOn(api, "series").mockResolvedValue({ points: [], bucket_sec: null, range_sec: 86400, route_changes: { stored: 7, marked: 2, hidden: 5, memory: 20 } });
+    renderDetail();
+    const note = await screen.findByTestId("route-memory-note");
+    expect(note.textContent).toBe("5 route changes hidden by the chart memory (20 runs) · Chart route memory");
+    expect(within(note).getByRole("link", { name: "Chart route memory" }).getAttribute("href")).toBe("/settings#route-memory");
+  });
+
+  it("stays silent when nothing is hidden", async () => {
+    mockDetail();
+    renderDetail();
+    await screen.findByText("Round-trip time to destination");
+    expect(screen.queryByTestId("route-memory-note")).toBeNull();
   });
 });
 

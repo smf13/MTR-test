@@ -54,6 +54,9 @@ export function TargetDetail() {
   const target = usePoll(() => api.target(targetId, range), 10000, [targetId, range]);
   const pollMs = useMemo(() => Math.min(60000, Math.max(10000, (target.data?.interval_sec ?? 60) * 1000 * 0.5)), [target.data?.interval_sec]);
   const series = usePoll(() => api.series(targetId, range), pollMs, [targetId, range]);
+  // The chart memory never hides route changes silently: the count and a link to the setting go under the caption.
+  const hiddenRoutes = series.data?.route_changes.hidden ?? 0;
+  const routeMemoryRuns = series.data?.route_changes.memory ?? 0;
   const latest = usePoll(async () => {
     const r = await api.runs(targetId, { limit: 1 });
     return r.items[0] ? api.run(r.items[0].id) : null;
@@ -256,8 +259,13 @@ export function TargetDetail() {
           <div>
             <h2 className="text-sm font-semibold">{pathProbe ? "Round-trip time to destination" : `${latencyWord} time per run`}</h2>
             <p className="chart-caption">{series.data?.bucket_sec ? `${fmtDuration(series.data.bucket_sec)} averages` : "Every completed run"} · {range}</p>
+            {hiddenRoutes > 0 && (
+              <p className="chart-caption" data-testid="route-memory-note">
+                {hiddenRoutes} route change{hiddenRoutes === 1 ? "" : "s"} hidden by the chart memory ({routeMemoryRuns} runs) · <Link to="/settings#route-memory" className="text-accent hover:underline">Chart route memory</Link>
+              </p>
+            )}
           </div>
-          <div className="flex flex-wrap items-center gap-2"><Legend /><HelpTip label="latency chart">The line is average latency; the band spans best to worst. Dashed lines mark route changes. Select a point to open its run.</HelpTip></div>
+          <div className="flex flex-wrap items-center gap-2"><Legend /><HelpTip label="latency chart">The line is average latency; the band spans best to worst. Dashed lines mark route changes; a change back to a route seen among the recent runs (the chart route memory) is not marked, and the caption says how many were hidden. Select a point to open its run.</HelpTip></div>
         </div>
         <LatencyChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} onPointClick={(rid) => navigate(`/runs/${rid}`)} />
         {pathProbe && (

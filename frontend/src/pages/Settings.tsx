@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload, Tags as TagsIcon, Globe, MapPin, CloudDownload } from "lucide-react";
 import { api, getApiToken, setApiToken, type Settings as SettingsT, type TargetInput } from "../api";
 import { useNow, usePoll } from "../hooks";
@@ -33,6 +34,16 @@ export function Settings() {
   const [downloading, setDownloading] = useState(false);
   const { refresh: refreshTagColors } = useTagColors();
   const [form, setForm] = useState<SettingsT | null>(null);
+  // A link such as /settings#route-memory (from the latency chart's note) lands on its field once the form is loaded.
+  const { hash } = useLocation();
+  const loaded = form !== null;
+  useEffect(() => {
+    if (!loaded || !hash) return;
+    const el = document.getElementById(hash.slice(1));
+    if (!el) return;
+    if (typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "center" });
+    el.focus({ preventScroll: true });
+  }, [loaded, hash]);
   // Tags in use (with counts) plus any tag that only has a stored colour left over, so it can be reset.
   const tagRows = useMemo(() => {
     const counts = new Map<string, number>((tags.data ?? []).map((t) => [t.name, t.count]));

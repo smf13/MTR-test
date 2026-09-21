@@ -664,8 +664,8 @@ def route_change_marks(runs: list[dict[str, Any]], warm: list[str | None], memor
     return marks
 
 
-async def _route_marks(db: Database, target_id: int, since: float, settings: dict[str, Any]) -> tuple[list[dict[str, Any]], list[bool]]:
-    """Runs in the range (ascending, light columns) and their chart markers, per `route_change_marks`."""
+async def _route_marks(db: Database, target_id: int, since: float, settings: dict[str, Any]) -> tuple[list[dict[str, Any]], list[bool], int]:
+    """Runs in the range (ascending, light columns), their chart markers per `route_change_marks`, and the memory used."""
     memory = max(1, min(500, int(settings.get("route_memory_runs") or 1)))
     runs = rows_to_dicts(await db.fetchall(
         "SELECT id, started_at, status, reached, route_hash, route_changed FROM runs WHERE target_id = ? AND started_at >= ? ORDER BY started_at ASC, id ASC",
@@ -675,7 +675,7 @@ async def _route_marks(db: Database, target_id: int, since: float, settings: dic
         "SELECT route_hash FROM runs WHERE target_id = ? AND started_at < ? AND status = 'ok' AND reached = 1 ORDER BY started_at DESC, id DESC LIMIT ?",
         (target_id, since, memory),
     ) if memory > 1 else []
-    return runs, route_change_marks(runs, [r["route_hash"] for r in warm_rows], memory)
+    return runs, route_change_marks(runs, [r["route_hash"] for r in warm_rows], memory), memory
 
 
 @router.get("/targets/{target_id}/series")
@@ -693,8 +693,11 @@ async def get_series(
     )
     n = int(count_row["n"] or 0)
     # Route-change markers with the chart's memory of recent routes (the stored flag stays previous-run based).
-    marked_runs, marks = await _route_marks(db, target_id, since, await db.get_settings())
+    marked_runs, marks, memory = await _route_marks(db, target_id, since, await db.get_settings())
     marked = {r["id"] for r, m in zip(marked_runs, marks) if m}
+    # The suppression is never silent: the target page prints the hidden count with a link to the setting.
+    stored = sum(1 for r in marked_runs if r["route_changed"])
+    route_changes = {"stored": stored, "marked": len(marked), "hidden": stored - len(marked), "memory": memory}
     if n <= max_points:
         rows = await db.fetchall(
             "SELECT id, started_at, status, reached, avg_ms, best_ms, worst_ms, loss_pct, jitter_avg_ms, hop_count, route_changed "
@@ -717,7 +720,7 @@ async def get_series(
             }
             for r in rows
         ]
-        return {"range_sec": range_sec, "bucket_sec": None, "points": points}
+        return {"range_sec": range_sec, "bucket_sec": None, "points": points, "route_changes": route_changes}
 
     bucket = max(10, math.ceil(range_sec / max_points))
     marked_buckets = {int(r["started_at"] / bucket) * bucket for r in marked_runs if r["id"] in marked}
@@ -747,7 +750,7 @@ async def get_series(
         }
         for r in rows
     ]
-    return {"range_sec": range_sec, "bucket_sec": bucket, "points": points}
+    return {"range_sec": range_sec, "bucket_sec": bucket, "points": points, "route_changes": route_changes}
 
 
 @router.get("/targets/{target_id}/hops/history")

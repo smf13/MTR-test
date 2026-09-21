@@ -99,22 +99,26 @@ async def test_chart_markers_forget_recently_seen_routes(client: AsyncClient) ->
     sequence = "ABABAC" + "AB" * 25
     for i, name in enumerate(sequence):
         await _insert_run(db, tid, now - 3500 + i * 60, routes[name], route_changed=i > 0 and sequence[i - 1] != name)
+    changes = sum(1 for i, n in enumerate(sequence) if i > 0 and sequence[i - 1] != n)
 
     assert (await client.put("/api/settings", json={"route_memory_runs": 0})).status_code == 422
-    # Memory 1: every stored change is a marker (raw points, one per run).
+    # Memory 1: every stored change is a marker (raw points, one per run) and nothing is hidden.
     await client.put("/api/settings", json={"route_memory_runs": 1})
     series = (await client.get(f"/api/targets/{tid}/series?range=1h")).json()
     assert series["bucket_sec"] is None and len(series["points"]) == len(sequence)
     assert [p["route_changed"] for p in series["points"]] == [i > 0 and sequence[i - 1] != n for i, n in enumerate(sequence)]
-    # Memory 20: only the first appearances of B and C are markers.
+    assert series["route_changes"] == {"stored": changes, "marked": changes, "hidden": 0, "memory": 1}
+    # Memory 20: only the first appearances of B and C are markers; the response counts what the memory hid.
     await client.put("/api/settings", json={"route_memory_runs": 20})
     series = (await client.get(f"/api/targets/{tid}/series?range=1h")).json()
     assert [i for i, p in enumerate(series["points"]) if p["route_changed"]] == [1, 5]
-    # Bucketed series apply the same markers per bucket.
+    assert series["route_changes"] == {"stored": changes, "marked": 2, "hidden": changes - 2, "memory": 20}
+    # Bucketed series apply the same markers per bucket; the counts stay per run.
     series = (await client.get(f"/api/targets/{tid}/series?range=1h&max_points=50")).json()
     assert series["bucket_sec"] and len(series["points"]) < len(sequence)
     flagged = [p["t"] for p in series["points"] if p["route_changed"]]
     assert len(flagged) == 2
+    assert series["route_changes"] == {"stored": changes, "marked": 2, "hidden": changes - 2, "memory": 20}
     # The stored flags, and therefore the route-change counts, are untouched.
     detail = (await client.get(f"/api/targets/{tid}?range=1h")).json()
-    assert detail["stats"]["route_changes"] == sum(1 for i, n in enumerate(sequence) if i > 0 and sequence[i - 1] != n)
+    assert detail["stats"]["route_changes"] == changes
