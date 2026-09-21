@@ -618,9 +618,10 @@ export interface SystemStatus {
   max_concurrent_runs: number;
   active_runs: number[];
   runs_completed_since_start: number;
+  /** Size of the PostgreSQL database on disk, including the server's own catalogs (it does not shrink after a purge). */
   db_size_bytes: number;
-  /** Only present when the request carried the API token (or no token is configured). */
-  db_path: string | null;
+  /** Connection URL without its password; only present when the request carried the API token (or no token is configured). */
+  database: string | null;
   targets: { total: number; enabled: number; up: number; degraded: number; down: number; pending: number };
   runs_24h: { total: number; ok: number };
   runs_total: number;

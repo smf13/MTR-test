@@ -395,8 +395,8 @@ export function Settings() {
                 <dt className="text-muted">Active now</dt><dd className="text-right">{s.active_runs.length}</dd>
                 <dt className="text-muted">Runs since start</dt><dd className="text-right">{s.runs_completed_since_start}</dd>
                 <dt className="text-muted">Runs stored</dt><dd className="text-right">{s.runs_total.toLocaleString()}</dd>
-                <dt className="text-muted">Database</dt><dd className="text-right">{fmtBytes(s.db_size_bytes)}</dd>
-                {s.db_path && <><dt className="text-muted">DB path</dt><dd className="truncate text-right font-mono text-[11px]" title={s.db_path}>{s.db_path}</dd></>}
+                <dt className="text-muted">Database size</dt><dd className="text-right">{fmtBytes(s.db_size_bytes)}</dd>
+                {s.database && <><dt className="text-muted">Database</dt><dd className="truncate text-right font-mono text-[11px]" title={s.database}>{s.database}</dd></>}
               </dl>
             ) : (
               <div className="text-sm text-faint">Loading…</div>
@@ -432,6 +432,7 @@ export function Settings() {
             <h2 className="mb-2 text-sm font-semibold text-text">Environment variables</h2>
             <ul className="space-y-1 font-mono">
               <li>MTR_TRACKER_PORT=8899</li>
+              <li>MTR_TRACKER_DATABASE_URL=postgresql://user:password@db:5432/mtr_tracker</li>
               <li>MTR_TRACKER_DATA_DIR=/data</li>
               <li>MTR_TRACKER_MAX_CONCURRENT_RUNS=8</li>
               <li>MTR_TRACKER_MTR_BINARY=mtr</li>
