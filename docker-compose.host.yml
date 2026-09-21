@@ -1,0 +1,17 @@
+# Host networking for the app, so the first hop of every path is the host's real gateway instead of the Docker
+# bridge. Use it on top of the main file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.host.yml up -d --build
+#
+# The app then leaves the Compose network and cannot resolve the service name "db", so the database is published on
+# the host's loopback interface and reached there. Needs Docker Compose 2.24 or newer (for !reset). The host port
+# 5432 must be free; the app listens on the host's port MTR_TRACKER_PORT (8899) directly.
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+  mtr-tracker:
+    network_mode: host
+    ports: !reset []
+    environment:
+      MTR_TRACKER_DATABASE_URL: postgresql://mtr:${MTR_TRACKER_DB_PASSWORD:-mtr}@127.0.0.1:5432/mtr_tracker?sslmode=disable

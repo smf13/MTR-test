@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import socket
 import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Iterable
@@ -229,6 +230,16 @@ def clean(params: Iterable[Any]) -> tuple[Any, ...]:
     return tuple(out)
 
 
+def _hint(exc: BaseException) -> str:
+    """What a connection failure usually means in this deployment, appended to the log line and the final error."""
+    if isinstance(exc, socket.gaierror):
+        return (
+            " (the host name does not resolve: with network_mode: host a Compose service name such as db is unreachable;"
+            " start with docker-compose.host.yml or point MTR_TRACKER_DATABASE_URL at 127.0.0.1)"
+        )
+    return ""
+
+
 def _affected(status: str) -> int:
     """Rows affected from a command tag: 'DELETE 5' -> 5, 'INSERT 0 3' -> 3, 'CREATE TABLE' -> 0."""
     parts = status.split()
@@ -368,11 +379,11 @@ class Database(_Executor):
             except _RETRY_ERRORS as exc:
                 if time.monotonic() >= deadline:
                     raise RuntimeError(
-                        f"PostgreSQL at {self.describe()} did not accept connections within {self.connect_timeout:.0f} s: {exc} "
+                        f"PostgreSQL at {self.describe()} did not accept connections within {self.connect_timeout:.0f} s: {exc}{_hint(exc)} "
                         "(MTR_TRACKER_DATABASE_URL, MTR_TRACKER_DB_CONNECT_TIMEOUT)"
                     ) from exc
                 if attempt == 1 or attempt % 5 == 0:
-                    log.warning("waiting for PostgreSQL at %s (attempt %d): %s", self.describe(), attempt, exc)
+                    log.warning("waiting for PostgreSQL at %s (attempt %d): %s%s", self.describe(), attempt, exc, _hint(exc))
                 await asyncio.sleep(delay)
                 delay = min(5.0, delay * 2)
         async with self._connection() as conn:

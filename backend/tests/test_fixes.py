@@ -267,3 +267,20 @@ async def test_connect_fails_fast_on_an_unreadable_home(monkeypatch: pytest.Monk
         await Database("postgresql://mtr:secret@db:5432/mtr_tracker", connect_timeout=30).connect()
     assert "HOME=/root" in str(info.value) and "postgresql.key" in str(info.value) and "secret" not in str(info.value)
     assert time.monotonic() - started < 1, "no retries for a permission error"
+
+
+async def test_connect_names_the_host_network_case_when_the_name_does_not_resolve(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """A service name that does not resolve is what network_mode: host looks like; the log and the error say so."""
+    import socket
+
+    import asyncpg
+
+    from app.db import Database
+
+    async def unresolved(*args: Any, **kwargs: Any) -> Any:
+        raise socket.gaierror(-3, "Temporary failure in name resolution")
+
+    monkeypatch.setattr(asyncpg, "create_pool", unresolved)
+    with pytest.raises(RuntimeError, match="docker-compose.host.yml") as info:
+        await Database("postgresql://mtr@db:5432/mtr_tracker", connect_timeout=1).connect()
+    assert "name resolution" in str(info.value) and "docker-compose.host.yml" in caplog.text
