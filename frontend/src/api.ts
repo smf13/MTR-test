@@ -444,10 +444,33 @@ export interface Settings {
   /** MaxMind account ID (optional, digits) and licence key; the key enables the GeoLite2 download and the map on target pages. */
   maxmind_account_id: string;
   maxmind_license_key: string;
+  /** Ask ip-api.com first (batched, no key needed); the MaxMind databases answer what it cannot. */
+  ip_api_enabled: boolean;
 }
 
-/** State of the MaxMind GeoLite2 City and ASN databases on the server (GET /api/geoip/status). */
+/** State of the ip-api.com provider (the `ip_api` block of GET /api/geoip/status). */
+export interface IpApiStatus {
+  enabled: boolean;
+  simulated: boolean;
+  endpoint: string;
+  /** Not paused after a failure or an exhausted allowance. */
+  ready: boolean;
+  paused_until: string | null;
+  pause_reason: string | null;
+  last_attempt: string | null;
+  last_success: string | null;
+  last_error: string | null;
+  requests_last_minute: number;
+  max_requests_per_minute: number;
+  batch_size: number;
+  requests_total: number;
+  addresses_total: number;
+  cached: number;
+}
+
+/** State of the MaxMind GeoLite2 City and ASN databases on the server (GET /api/geoip/status), plus the ip-api.com provider. */
 export interface GeoIpStatus {
+  /** A MaxMind licence key is saved. */
   configured: boolean;
   /** The City database (locations) is on disk. */
   available: boolean;
@@ -466,6 +489,7 @@ export interface GeoIpStatus {
   last_error: string | null;
   updating: boolean;
   refresh_after_sec: number;
+  ip_api: IpApiStatus;
 }
 
 /** A located address as returned by the geo endpoint. */
@@ -477,6 +501,8 @@ export interface GeoPoint {
   country: string | null;
   country_code: string | null;
   accuracy_km: number | null;
+  /** Who placed the address: "ip-api.com", "GeoLite2", "Globalping" (the probe's own report) or "simulated". */
+  provider: string;
 }
 
 /** Where a run was launched from: this server (its own or its public address), a Globalping probe, or the simulator. */
@@ -504,11 +530,17 @@ export interface GeoLookup {
   note: string | null;
   asn: string | null;
   as_name: string | null;
+  /** Some provider is set up: ip-api.com switched on or a MaxMind key saved. */
   configured: boolean;
+  /** Some provider can answer now: ip-api.com awake, or the City database on disk. */
   available: boolean;
   asn_available: boolean;
   simulated: boolean;
   build_epoch: string | null;
+  ip_api_enabled: boolean;
+  /** ip-api.com is on and not paused after a failure. */
+  ip_api_ready: boolean;
+  maxmind_configured: boolean;
 }
 
 export interface GeoHop {
@@ -539,12 +571,14 @@ export interface GeoDestination {
   as_name: string | null;
 }
 
-/** Geolocation of the latest completed run (GET /api/targets/{id}/geo); `enabled` is false without a MaxMind key. */
+/** Geolocation of the latest completed run (GET /api/targets/{id}/geo); `enabled` is false without ip-api.com or a MaxMind key. */
 export interface PathGeo {
   enabled: boolean;
-  /** The City database is on disk (or simulated): places can be drawn. */
+  /** ip-api.com is switched on (it is asked first; the MaxMind databases answer what it cannot). */
+  ip_api_enabled: boolean;
+  /** Some provider can place addresses now (ip-api.com awake, the City database on disk, or simulated). */
   available: boolean;
-  /** The ASN database is on disk (or simulated): points carry network names. */
+  /** Some provider can name networks now (ip-api.com awake, the ASN database on disk, or simulated). */
   asn_available: boolean;
   run_id: number | null;
   sources: GeoSource[];

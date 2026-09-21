@@ -17,7 +17,7 @@ const KIND_LABEL: Record<GeoLookupT["kind"], string> = {
   simulated: "This server (simulated)",
 };
 
-/** A single address or host name against the GeoLite2 database, with the same map marker the target pages use. */
+/** A single address or host name against the configured GeoIP provider (ip-api.com, then GeoLite2), with the same map marker the target pages use. */
 export function GeoLookup() {
   const theme = useDocumentTheme();
   const [query, setQuery] = useState("");
@@ -50,7 +50,7 @@ export function GeoLookup() {
     <div className="space-y-5">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">GeoIP lookup</h1>
-        <p className="text-sm text-muted">Where the MaxMind GeoLite2 database places an address. Use it to check a hop, a target, or the address this server is seen from, and to judge how far to trust the map.</p>
+        <p className="text-sm text-muted">Where the GeoIP provider (ip-api.com or the MaxMind GeoLite2 database) places an address. Use it to check a hop, a target, or the address this server is seen from, and to judge how far to trust the map.</p>
       </div>
       <form className="card flex flex-wrap items-end gap-3 p-4" onSubmit={(e) => { e.preventDefault(); void lookup(query); }}>
         <div className="min-w-[16rem] flex-1">
@@ -65,12 +65,17 @@ export function GeoLookup() {
         <div className="card p-4">
           {!result.configured && !result.simulated && (
             <p className="mb-3 rounded-lg px-3 py-2 text-xs" style={{ background: "var(--degraded-soft)", color: "var(--degraded)" }}>
-              No MaxMind licence key is saved, so no database is available. Add one under <Link to="/settings" className="underline">Settings</Link>.
+              No GeoIP provider is set up: no MaxMind licence key is saved and ip-api.com is switched off. Enable one under <Link to="/settings" className="underline">Settings</Link>.
             </p>
           )}
           {result.configured && !result.available && !result.simulated && (
             <p className="mb-3 rounded-lg px-3 py-2 text-xs" style={{ background: "var(--degraded-soft)", color: "var(--degraded)" }}>
-              The GeoLite2 databases have not been downloaded yet. Use Download now under <Link to="/settings" className="underline">Settings</Link>.
+              {result.ip_api_enabled && !result.ip_api_ready ? "ip-api.com is paused after a failed request and no GeoLite2 database is on disk to fall back to. Lookups resume by themselves; see " : "The GeoLite2 databases have not been downloaded yet. Use Download now under "}<Link to="/settings" className="underline">Settings</Link>.
+            </p>
+          )}
+          {result.ip_api_enabled && !result.ip_api_ready && result.available && !result.simulated && (
+            <p className="mb-3 rounded-lg px-3 py-2 text-xs" style={{ background: "var(--degraded-soft)", color: "var(--degraded)" }}>
+              ip-api.com is paused after a failed request; the GeoLite2 databases answered instead. See <Link to="/settings" className="underline">Settings</Link>.
             </p>
           )}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
@@ -91,11 +96,11 @@ export function GeoLookup() {
               {result.ip && (
                 <>
                   <dt className="text-muted">Network</dt>
-                  <dd>{networkText(result.asn, result.as_name) || <span className="text-faint">{result.note === "private address" ? "none (private address)" : !result.asn_available && !result.simulated ? "unknown (ASN database not downloaded)" : "not in database"}</span>}</dd>
+                  <dd>{networkText(result.asn, result.as_name) || <span className="text-faint">{result.note === "private address" ? "none (private address)" : !result.asn_available && !result.simulated ? (result.ip_api_enabled ? "unknown (ip-api.com unavailable, no ASN database)" : "unknown (ASN database not downloaded)") : "not in database"}</span>}</dd>
                 </>
               )}
-              <dt className="text-muted">Database</dt>
-              <dd>{result.simulated ? "simulated (no database in simulation mode)" : result.build_epoch ? `GeoLite2 City built ${result.build_epoch.slice(0, 10)}${result.asn_available ? " and GeoLite2 ASN" : ""}` : "none"}</dd>
+              <dt className="text-muted">Source</dt>
+              <dd>{result.simulated ? "simulated (no provider is asked in simulation mode)" : result.geo?.provider === "ip-api.com" ? `ip-api.com (batched lookup)${result.build_epoch ? `, GeoLite2 City built ${result.build_epoch.slice(0, 10)} as fallback` : ""}` : result.build_epoch ? `GeoLite2 City built ${result.build_epoch.slice(0, 10)}${result.asn_available ? " and GeoLite2 ASN" : ""}${result.ip_api_enabled ? " (ip-api.com did not place this address)" : ""}` : result.ip_api_enabled ? "ip-api.com, no GeoLite2 database as fallback" : "none"}</dd>
             </dl>
             <div>
               {place ? (
@@ -110,7 +115,7 @@ export function GeoLookup() {
             </div>
           </div>
           <p className="mt-3 text-[11px] leading-relaxed text-faint">
-            GeoLite2 knows a city at best and often registers an address at its network operator's head office. The accuracy radius is the database's own estimate; a large radius means the marker could be anywhere inside it.
+            GeoIP data knows a city at best and often registers an address at its network operator's head office. The accuracy radius is GeoLite2's own estimate (ip-api.com states none); a large radius means the marker could be anywhere inside it.
           </p>
         </div>
       )}

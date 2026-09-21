@@ -144,6 +144,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # downloaded with it); the account ID is optional and switches to MaxMind's basic-auth download endpoint.
     "maxmind_account_id": "",
     "maxmind_license_key": "",
+    # ip-api.com as the first GeoIP provider (batched lookups, no key); the MaxMind databases answer what it cannot.
+    "ip_api_enabled": False,
 }
 
 

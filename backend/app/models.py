@@ -250,6 +250,7 @@ class SettingsUpdate(BaseModel):
     globalping_token: str | None = Field(default=None, max_length=200, description="optional Globalping API token for higher rate limits")
     maxmind_account_id: str | None = Field(default=None, max_length=32, description="MaxMind account ID (optional; digits)")
     maxmind_license_key: str | None = Field(default=None, max_length=200, description="MaxMind licence key; enables the GeoLite2 download and the map on target pages")
+    ip_api_enabled: bool | None = Field(default=None, description="ask ip-api.com first (batched, no key); the MaxMind databases answer what it cannot")
 
     @field_validator("maxmind_account_id")
     @classmethod

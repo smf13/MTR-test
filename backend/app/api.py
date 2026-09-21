@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from . import __version__, geoip
+from . import __version__, geoip, ipapi
 from .config import config
 from .db import Database, rows_to_dicts
 from .models import BulkAction, NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, validate_options
@@ -234,21 +234,26 @@ async def put_settings(request: Request, body: SettingsUpdate) -> dict[str, Any]
     if "maxmind_license_key" in patch or "maxmind_account_id" in patch:
         # A newly saved key fetches the database in the background, so the map appears without a restart.
         geoip.schedule_refresh(settings)
+    if "ip_api_enabled" in patch:
+        # A toggled switch ends any pause after a failure, so the next lookup tries the service again.
+        ipapi.wake()
     return settings
 
 
 @router.get("/geoip/status")
 async def geoip_status(request: Request) -> dict[str, Any]:
-    """State of the MaxMind GeoLite2 City and ASN databases: configured, downloaded, build dates, last error."""
+    """State of the MaxMind GeoLite2 City and ASN databases (configured, downloaded, build dates, last error) and, under `ip_api`, of the ip-api.com provider."""
     status = geoip.status(await _db(request).get_settings())
     for key in ("build_epoch", "downloaded_at", "asn_build_epoch", "asn_downloaded_at", "last_attempt", "last_success"):
         status[key] = _iso(status[key])
+    for key in ("paused_until", "last_attempt", "last_success"):
+        status["ip_api"][key] = _iso(status["ip_api"][key])
     return status
 
 
 @router.get("/geoip/lookup")
 async def geoip_lookup(request: Request, q: str = Query(min_length=1, max_length=253)) -> dict[str, Any]:
-    """Locate one address or host name with the GeoLite2 database; `q=self` locates this server's public address."""
+    """Locate one address or host name with the configured provider (ip-api.com, then GeoLite2); `q=self` locates this server's public address."""
     result = await geoip.lookup_query(q, await _db(request).get_settings())
     result["build_epoch"] = _iso(result["build_epoch"])
     return result
@@ -258,7 +263,7 @@ async def geoip_lookup(request: Request, q: str = Query(min_length=1, max_length
 async def geoip_update(request: Request) -> dict[str, Any]:
     """Download the GeoLite2 City and ASN databases now with the saved MaxMind credentials."""
     settings = await _db(request).get_settings()
-    if not geoip.configured(settings):
+    if not geoip.maxmind_configured(settings):
         raise HTTPException(400, "save a MaxMind licence key first")
     try:
         await geoip.download(settings)
@@ -1003,9 +1008,10 @@ async def _canonical_routes(db: Database, runs: list[Any]) -> dict[str, str]:
 async def get_target_geo(request: Request, target_id: int) -> dict[str, Any]:
     """Locations and networks of the monitor (or remote probes), every hop and the destination of the latest completed run.
 
-    `enabled` is false until a MaxMind licence key is saved; the UI then hides the map. Hops without a
-    location carry a `note` (private address, not in database, no database yet). Every point carries `asn`
-    and `as_name` from the GeoLite2 ASN database (`asn_available` says whether it is on disk).
+    `enabled` is false until ip-api.com is switched on or a MaxMind licence key is saved; the UI then hides
+    the map. Hops without a location carry a `note` (private address, not in database, no database yet,
+    ip-api.com unavailable, lookup pending). Every point carries `asn` and `as_name` from ip-api.com or the
+    GeoLite2 ASN database (`asn_available` says whether either can answer); every `geo` names its `provider`.
     """
     db = _db(request)
     row = await db.fetchone("SELECT * FROM targets WHERE id = ?", (target_id,))

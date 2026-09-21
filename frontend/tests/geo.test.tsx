@@ -18,12 +18,13 @@ vi.mock("../src/components/PathMap", () => ({
   ),
 }));
 
-const berlin: GeoPoint = { lat: 52.52, lon: 13.405, city: "Berlin", region: null, country: "Germany", country_code: "DE", accuracy_km: 50 };
-const frankfurt: GeoPoint = { lat: 50.11, lon: 8.68, city: "Frankfurt", region: "Hesse", country: "Germany", country_code: "DE", accuracy_km: 20 };
-const london: GeoPoint = { lat: 51.5, lon: -0.12, city: "London", region: null, country: "United Kingdom", country_code: "GB", accuracy_km: 20 };
+const berlin: GeoPoint = { lat: 52.52, lon: 13.405, city: "Berlin", region: null, country: "Germany", country_code: "DE", accuracy_km: 50, provider: "GeoLite2" };
+const frankfurt: GeoPoint = { lat: 50.11, lon: 8.68, city: "Frankfurt", region: "Hesse", country: "Germany", country_code: "DE", accuracy_km: 20, provider: "GeoLite2" };
+const london: GeoPoint = { lat: 51.5, lon: -0.12, city: "London", region: null, country: "United Kingdom", country_code: "GB", accuracy_km: 20, provider: "GeoLite2" };
 
 const geo: PathGeo = {
   enabled: true,
+  ip_api_enabled: false,
   available: true,
   asn_available: true,
   run_id: 10,
@@ -172,14 +173,24 @@ describe("path map", () => {
     expect(screen.queryByTestId("path-map")).toBeNull();
     expect(screen.queryByRole("list", { name: "Route by place" })).toBeNull();
   });
+
+  it("words the provider and the fallback when ip-api.com is switched on", () => {
+    const { rerender } = render(<MemoryRouter><PathMapCard geo={{ ...geo, ip_api_enabled: true, available: false, asn_available: false }} pathProbe /></MemoryRouter>);
+    expect(screen.getByText(/ip-api.com is paused after a failed request and no GeoLite2 database is on disk/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings");
+    const bare = { ...geo, ip_api_enabled: true, asn_available: false, sources: geo.sources.map((s) => ({ ...s, asn: null, as_name: null })), hops: geo.hops.map((h) => ({ ...h, as_name: null })), destination: { ...geo.destination!, asn: null, as_name: null } };
+    rerender(<MemoryRouter><PathMapCard geo={bare} pathProbe /></MemoryRouter>);
+    expect(screen.getByTestId("path-networks").textContent).toContain("names appear once ip-api.com answers again or the GeoLite2 ASN database is downloaded");
+    expect(screen.getByText(/city-level estimates from ip-api.com and GeoLite2/)).toBeTruthy();
+  });
 });
 
 describe("GeoIP lookup page", () => {
   it("looks up an address, shows the evidence and places it on the map", async () => {
     const user = userEvent.setup();
     const lookup = vi.spyOn(api, "geoipLookup").mockImplementation(async (q) => q === "self"
-      ? { query: "self", kind: "public_ip", host: "This server (public address)", ip: "198.51.100.7", geo: berlin, note: null, asn: "AS64499", as_name: "Home ISP AG", configured: true, available: true, asn_available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z" }
-      : { query: q, kind: "host", host: q, ip: "203.0.113.9", geo: { ...frankfurt, accuracy_km: 200 }, note: null, asn: "AS64500", as_name: "Example Transit GmbH", configured: true, available: true, asn_available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z" });
+      ? { query: "self", kind: "public_ip", host: "This server (public address)", ip: "198.51.100.7", geo: berlin, note: null, asn: "AS64499", as_name: "Home ISP AG", configured: true, available: true, asn_available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z", ip_api_enabled: false, ip_api_ready: false, maxmind_configured: true }
+      : { query: q, kind: "host", host: q, ip: "203.0.113.9", geo: { ...frankfurt, accuracy_km: 200 }, note: null, asn: "AS64500", as_name: "Example Transit GmbH", configured: true, available: true, asn_available: true, simulated: false, build_epoch: "2026-09-01T00:00:00Z", ip_api_enabled: false, ip_api_ready: false, maxmind_configured: true });
     render(<MemoryRouter><GeoLookup /></MemoryRouter>);
     expect(screen.getByRole("button", { name: "Look up" }).hasAttribute("disabled")).toBe(true);
     await user.type(screen.getByLabelText("IP address or host name"), "www.example.com{Enter}");
@@ -201,26 +212,84 @@ describe("GeoIP lookup page", () => {
 
   it("explains a private address and a missing database", async () => {
     const user = userEvent.setup();
-    vi.spyOn(api, "geoipLookup").mockResolvedValue({ query: "10.0.0.1", kind: "address", host: null, ip: "10.0.0.1", geo: null, note: "private address", asn: null, as_name: null, configured: false, available: false, asn_available: false, simulated: false, build_epoch: null });
+    vi.spyOn(api, "geoipLookup").mockResolvedValue({ query: "10.0.0.1", kind: "address", host: null, ip: "10.0.0.1", geo: null, note: "private address", asn: null, as_name: null, configured: false, available: false, asn_available: false, simulated: false, build_epoch: null, ip_api_enabled: false, ip_api_ready: false, maxmind_configured: false });
     render(<MemoryRouter><GeoLookup /></MemoryRouter>);
     await user.type(screen.getByLabelText("IP address or host name"), "10.0.0.1{Enter}");
     const result = await screen.findByLabelText("Lookup result");
     expect(result.textContent).toContain("private address");
-    expect(screen.getByText(/No MaxMind licence key is saved/)).toBeTruthy();
+    expect(screen.getByText(/No GeoIP provider is set up: no MaxMind licence key is saved and ip-api.com is switched off/)).toBeTruthy();
     expect(screen.getByText("Nothing to place on a map.")).toBeTruthy();
+  });
+
+  it("names ip-api.com as the source and reports a paused service", async () => {
+    const user = userEvent.setup();
+    const amsterdam: GeoPoint = { lat: 52.37, lon: 4.9, city: "Amsterdam", region: "North Holland", country: "Netherlands", country_code: "NL", accuracy_km: null, provider: "ip-api.com" };
+    const lookup = vi.spyOn(api, "geoipLookup").mockResolvedValue({ query: "203.0.113.5", kind: "address", host: null, ip: "203.0.113.5", geo: amsterdam, note: null, asn: "AS64511", as_name: "Example Cloud BV", configured: true, available: true, asn_available: true, simulated: false, build_epoch: null, ip_api_enabled: true, ip_api_ready: true, maxmind_configured: false });
+    render(<MemoryRouter><GeoLookup /></MemoryRouter>);
+    await user.type(screen.getByLabelText("IP address or host name"), "203.0.113.5{Enter}");
+    const result = await screen.findByLabelText("Lookup result");
+    expect(result.textContent).toContain("Amsterdam, North Holland, Netherlands");
+    expect(result.textContent).toContain("not stated by the database");
+    expect(result.textContent).toContain("NetworkAS64511 Example Cloud BV");
+    expect(result.textContent).toContain("Sourceip-api.com (batched lookup)");
+
+    // Paused after a failure with no database to fall back to: the page says so.
+    lookup.mockResolvedValue({ query: "203.0.113.6", kind: "address", host: null, ip: "203.0.113.6", geo: null, note: "ip-api.com unavailable", asn: null, as_name: null, configured: true, available: false, asn_available: false, simulated: false, build_epoch: null, ip_api_enabled: true, ip_api_ready: false, maxmind_configured: false });
+    await user.clear(screen.getByLabelText("IP address or host name"));
+    await user.type(screen.getByLabelText("IP address or host name"), "203.0.113.6{Enter}");
+    await waitFor(() => expect(screen.getByLabelText("Lookup result").textContent).toContain("ip-api.com unavailable"));
+    expect(screen.getByText(/ip-api.com is paused after a failed request and no GeoLite2 database is on disk/)).toBeTruthy();
+    expect(screen.getByLabelText("Lookup result").textContent).toContain("unknown (ip-api.com unavailable, no ASN database)");
   });
 });
 
 const settings: SettingsT = {
   retention_days: 30, asn_lookup: true, reverse_dns: true, webhook_url: "", webhook_events: [], pushover_enabled: false,
   pushover_user_key: "", pushover_api_token: "", pushover_device: "", pushover_sound: "", pushover_priority: "auto", pushover_events: [],
-  base_url: "", site_name: "MTR Tracker", tag_colors: {}, globalping_token: "", maxmind_account_id: "", maxmind_license_key: "",
+  base_url: "", site_name: "MTR Tracker", tag_colors: {}, globalping_token: "", maxmind_account_id: "", maxmind_license_key: "", ip_api_enabled: false,
 };
 const geoipStatus: GeoIpStatus = {
   configured: false, available: false, simulated: false, edition: "GeoLite2-City", path: "/data/geoip/GeoLite2-City.mmdb", build_epoch: null,
   downloaded_at: null, asn_available: false, asn_edition: "GeoLite2-ASN", asn_build_epoch: null, asn_downloaded_at: null,
   last_attempt: null, last_success: null, last_error: null, updating: false, refresh_after_sec: 604800,
+  ip_api: { enabled: false, simulated: false, endpoint: "http://ip-api.com/batch", ready: true, paused_until: null, pause_reason: null, last_attempt: null, last_success: null, last_error: null, requests_last_minute: 0, max_requests_per_minute: 6, batch_size: 100, requests_total: 0, addresses_total: 0, cached: 0 },
 };
+
+describe("settings · ip-api.com GeoIP", () => {
+  it("switches the provider on and reports its state", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "settings").mockResolvedValue(settings);
+    vi.spyOn(api, "status").mockRejectedValue(new Error("offline"));
+    vi.spyOn(api, "tags").mockResolvedValue([]);
+    const statusMock = vi.spyOn(api, "geoipStatus").mockResolvedValue(geoipStatus);
+    const update = vi.spyOn(api, "updateSettings").mockImplementation(async (patch) => ({ ...settings, ...patch } as SettingsT));
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+
+    const section = (await screen.findByRole("heading", { name: "ip-api.com GeoIP" })).closest("section")!;
+    expect(within(section).getByText(/Switched off. Target pages show no map unless a MaxMind licence key is saved./)).toBeTruthy();
+    expect(within(section).getByText(/at most 6 such requests per minute, well below the service's limit of 15/)).toBeTruthy();
+    const toggle = within(section).getByLabelText("Use ip-api.com") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+
+    statusMock.mockResolvedValue({ ...geoipStatus, ip_api: { ...geoipStatus.ip_api, enabled: true, requests_last_minute: 1, requests_total: 3, addresses_total: 41, cached: 41, last_success: new Date().toISOString() } });
+    await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ ip_api_enabled: true })));
+    expect(await within(section).findByText(/Ready · 1 of 6 requests used this minute · 41 addresses cached./)).toBeTruthy();
+    expect(within(section).getByText(/3 requests for 41 addresses since start/)).toBeTruthy();
+    expect(within(section).getByText(/No MaxMind key is saved, so nothing answers while ip-api.com is paused/)).toBeTruthy();
+    // The MaxMind section explains that a key is now only a fallback.
+    const maxmind = screen.getByRole("heading", { name: "MaxMind GeoIP" }).closest("section")!;
+    expect(within(maxmind).getByText(/Locations come from ip-api.com alone; a key here adds a fallback/)).toBeTruthy();
+
+    // A pause after a failure is reported with its reason.
+    statusMock.mockResolvedValue({ ...geoipStatus, configured: true, ip_api: { ...geoipStatus.ip_api, enabled: true, ready: false, paused_until: new Date(Date.now() + 240000).toISOString(), pause_reason: "ip-api.com returned HTTP 503", last_error: "ip-api.com returned HTTP 503" } });
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(await within(section).findByText(/Paused until in [34]m.*\(ip-api.com returned HTTP 503\)/)).toBeTruthy();
+    expect(within(section).getByText("Last request failed: ip-api.com returned HTTP 503")).toBeTruthy();
+    expect(within(section).getByText(/The MaxMind databases answer whatever ip-api.com cannot/)).toBeTruthy();
+  });
+});
 
 describe("settings · MaxMind GeoIP", () => {
   it("saves the credentials and downloads the database on demand", async () => {

@@ -303,12 +303,40 @@ export function Settings() {
 
               <section className="card p-5">
                 <div className="mb-1 flex items-center justify-between gap-2">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold"><MapPin size={15} /> ip-api.com GeoIP</h2>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={form.ip_api_enabled} onChange={(e) => setForm({ ...form, ip_api_enabled: e.target.checked })} aria-label="Use ip-api.com" />
+                    Enabled
+                  </label>
+                </div>
+                <p className="mb-3 text-xs text-faint">Locates addresses and names their networks through the free ip-api.com service, without a key or a download. Every address of a run is asked in one batched request (up to {geoip.data?.ip_api.batch_size ?? 100} addresses), answers are cached for hours, and the server sends at most {geoip.data?.ip_api.max_requests_per_minute ?? 6} such requests per minute, well below the service's limit of 15. When a request fails or the service throttles, lookups pause for a few minutes and the MaxMind databases below answer instead, so both can be set up together. The free endpoint uses plain HTTP and is for non-commercial use.</p>
+                <div className="text-xs text-muted" aria-live="polite" data-testid="ip-api-status">
+                  {geoip.data ? (
+                    !geoip.data.ip_api.enabled ? (
+                      <span>Switched off. {geoip.data.configured ? "Locations come from the MaxMind databases." : "Target pages show no map unless a MaxMind licence key is saved."}</span>
+                    ) : geoip.data.ip_api.simulated ? (
+                      <span>Simulation mode: locations are synthetic and ip-api.com is not asked.</span>
+                    ) : (
+                      <span>
+                        <span>{geoip.data.ip_api.ready ? "Ready" : `Paused until ${geoip.data.ip_api.paused_until ? relTime(geoip.data.ip_api.paused_until, now) : "shortly"}${geoip.data.ip_api.pause_reason ? ` (${geoip.data.ip_api.pause_reason})` : ""}`} · {geoip.data.ip_api.requests_last_minute} of {geoip.data.ip_api.max_requests_per_minute} requests used this minute · {geoip.data.ip_api.cached} addresses cached.</span>
+                        <span className="block">{geoip.data.ip_api.last_success ? `Last answer ${relTime(geoip.data.ip_api.last_success, now)} · ${geoip.data.ip_api.requests_total} requests for ${geoip.data.ip_api.addresses_total} addresses since start.` : "No request sent yet; the first target page or lookup sends one."}{geoip.data.configured ? " The MaxMind databases answer whatever ip-api.com cannot." : " No MaxMind key is saved, so nothing answers while ip-api.com is paused."}</span>
+                      </span>
+                    )
+                  ) : (
+                    <span>Checking the provider…</span>
+                  )}
+                  {geoip.data?.ip_api.enabled && geoip.data.ip_api.last_error && <div className="mt-1 text-down">Last request failed: {geoip.data.ip_api.last_error}</div>}
+                </div>
+              </section>
+
+              <section className="card p-5">
+                <div className="mb-1 flex items-center justify-between gap-2">
                   <h2 className="flex items-center gap-2 text-sm font-semibold"><MapPin size={15} /> MaxMind GeoIP</h2>
                   <button className="btn btn-sm" onClick={downloadGeoIp} disabled={downloading || !geoip.data?.configured || geoip.data?.updating || geoip.data?.simulated} title="Fetch the GeoLite2 City and ASN databases now with the saved credentials">
                     <CloudDownload size={13} /> {downloading || geoip.data?.updating ? "Downloading…" : "Download now"}
                   </button>
                 </div>
-                <p className="mb-3 text-xs text-faint">A free GeoLite2 account at maxmind.com provides a licence key. Once it is saved, the server downloads the GeoLite2 City and GeoLite2 ASN databases into its data directory, refreshes them weekly, and every target page gains a map of the monitor, the hops and the destination with the network (autonomous system) behind each address. The databases are fetched with your key and never bundled.</p>
+                <p className="mb-3 text-xs text-faint">A free GeoLite2 account at maxmind.com provides a licence key. Once it is saved, the server downloads the GeoLite2 City and GeoLite2 ASN databases into its data directory, refreshes them weekly, and every target page gains a map of the monitor, the hops and the destination with the network (autonomous system) behind each address. The databases are fetched with your key and never bundled. With ip-api.com switched on above, they answer whatever that service cannot.</p>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="label">Licence key</label>
@@ -326,7 +354,7 @@ export function Settings() {
                     geoip.data.simulated ? (
                       <span>Simulation mode: locations are synthetic and no database is downloaded. The map appears once a key is saved.</span>
                     ) : !geoip.data.configured ? (
-                      <span>No licence key saved. Target pages show no map.</span>
+                      <span>No licence key saved. {geoip.data.ip_api.enabled ? "Locations come from ip-api.com alone; a key here adds a fallback for when that service is unreachable." : "Target pages show no map."}</span>
                     ) : geoip.data.available ? (
                       <span>
                         <span>Locations: <span className="font-mono">{geoip.data.edition}</span>{geoip.data.build_epoch ? ` built ${geoip.data.build_epoch.slice(0, 10)}` : ""}{geoip.data.downloaded_at ? ` · downloaded ${relTime(geoip.data.downloaded_at, now)}` : ""} · refreshed every {fmtDuration(geoip.data.refresh_after_sec)}.</span>

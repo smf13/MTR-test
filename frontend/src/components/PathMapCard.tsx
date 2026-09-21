@@ -21,7 +21,7 @@ export interface MapStop {
   lines: string[];
   hopNos: number[];
   reached?: boolean;
-  /** GeoLite2 accuracy radius in km for this position, when the database gives one. */
+  /** Accuracy radius in km for this position, when the provider gives one (GeoLite2 does, ip-api.com does not). */
   accuracyKm?: number | null;
   /** Networks at this stop in hop order ("AS64500 Example Transit GmbH"), without repeats. */
   networks: string[];
@@ -45,7 +45,7 @@ export interface MapPlace {
   networks: string[];
 }
 
-/** "about 100 km" for a GeoLite2 accuracy radius; empty when unknown. */
+/** "about 100 km" for an accuracy radius; empty when unknown. */
 export function accuracyText(km: number | null | undefined): string {
   return km === null || km === undefined ? "" : `about ${km} km`;
 }
@@ -233,7 +233,7 @@ export function destinationWord(role: "target" | "resolver" | "answer" | undefin
   return role === "resolver" ? "Resolver" : role === "answer" ? "Answer" : "Target";
 }
 
-/** The map card of a target page: shown once a MaxMind licence key is saved, otherwise a one-line pointer to Settings. */
+/** The map card of a target page: shown once ip-api.com is on or a MaxMind licence key is saved, otherwise a one-line pointer to Settings. */
 export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe: boolean }) {
   const theme = useDocumentTheme();
   const built = useMemo(() => (geo && geo.enabled ? buildStops(geo) : null), [geo]);
@@ -279,7 +279,7 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
     return (
       <div className="card flex flex-wrap items-center gap-2 px-4 py-2.5 text-xs text-muted">
         <MapPin size={13} />
-        <span>Map: add a MaxMind licence key under <Link to="/settings" className="text-accent hover:underline">Settings</Link> to plot {pathProbe ? "the monitor, every hop and the target" : "the monitor and the target"} on a map.</span>
+        <span>Map: switch on ip-api.com or add a MaxMind licence key under <Link to="/settings" className="text-accent hover:underline">Settings</Link> to plot {pathProbe ? "the monitor, every hop and the target" : "the monitor and the target"} on a map.</span>
       </div>
     );
   }
@@ -288,7 +288,7 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
   const remote = geo.sources.some((s) => s.kind === "probe");
   const destWord = destinationWord(geo.destination?.role);
   const destMissing = geo.run_id && (!geo.destination || !geo.destination.geo) ? (geo.destination?.note ?? "no address recorded") : null;
-  // The evidence for the start marker: how the position was obtained and how precise GeoLite2 says it is.
+  // The evidence for the start marker: how the position was obtained and how precise the provider says it is.
   const start = geo.sources[0];
   const startEvidence = start ? `${start.evidence}${start.geo?.accuracy_km !== null && start.geo?.accuracy_km !== undefined ? ` · ${accuracyText(start.geo.accuracy_km)} accuracy` : ""}${start.note ? ` · ${start.note}` : ""}` : "";
   return (
@@ -296,9 +296,9 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="chart-heading"><MapIcon size={15} /> {pathProbe ? "Path map" : "Location map"}<HelpTip label="path map">
-            <p>Every address of the latest run is placed with the MaxMind GeoLite2 City database. The dashed line follows the hops in order, from the {remote ? "Globalping probe" : "monitor"} to the target.</p>
-            <p className="mt-2">A marker stands for a place, not a hop: the numbers on it are the hops located there, so "Target · 7, 8" means hops 7 and 8 were placed in the target's city. GeoLite2 knows a city at best, and it often registers backbone routers at their operator's head office, so a path can appear to double back or to reach the target's city several hops early. That is the database's estimate, not a routing fault.</p>
-            <p className="mt-2">Each step and marker also names the networks it crosses: the autonomous system number and the organisation behind it from the GeoLite2 ASN database, downloaded with the City database. The number mtr reported for a hop is kept; the database only adds the name (or the number when mtr reported none). The "Networks" line lists them in path order.</p>
+            <p>Every address of the latest run is placed with the GeoIP provider set up under Settings: {geo.ip_api_enabled ? "ip-api.com, asked in one batched request per run, with the MaxMind GeoLite2 City database answering whatever it cannot" : "the MaxMind GeoLite2 City database"}. The dashed line follows the hops in order, from the {remote ? "Globalping probe" : "monitor"} to the target.</p>
+            <p className="mt-2">A marker stands for a place, not a hop: the numbers on it are the hops located there, so "Target · 7, 8" means hops 7 and 8 were placed in the target's city. GeoIP data knows a city at best, and it often registers backbone routers at their operator's head office, so a path can appear to double back or to reach the target's city several hops early. That is the provider's estimate, not a routing fault.</p>
+            <p className="mt-2">Each step and marker also names the networks it crosses: the autonomous system number and the organisation behind it, from {geo.ip_api_enabled ? "ip-api.com or " : ""}the GeoLite2 ASN database, downloaded with the City database. The number mtr reported for a hop is kept; the provider only adds the name (or the number when mtr reported none). The "Networks" line lists them in path order.</p>
             <p className="mt-2">The {remote ? "probe is placed where it reports itself" : "monitor is placed by its own address, or by the public address it is seen from when it sits behind NAT"}. The far end is the address the run talked to: for HTTP the URL's host, for a DNS check the resolver it asked, or, with no resolver configured, the address in the answer. Hops with private addresses and addresses missing from the database are listed under the map instead of being drawn.</p>
           </HelpTip></h2>
           <p className="chart-caption">
@@ -314,7 +314,7 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
       </div>
       {!geo.available ? (
         <div className="flex items-center justify-center rounded-lg border border-dashed border-border-strong px-4 py-10 text-center text-sm text-faint" style={{ minHeight: 160 }}>
-          The GeoLite2 database has not been downloaded yet. It is fetched in the background after the key is saved; <Link to="/settings" className="ml-1 text-accent hover:underline">Download now</Link> under Settings fetches it immediately.
+          {geo.ip_api_enabled ? "ip-api.com is paused after a failed request and no GeoLite2 database is on disk to fall back to. Lookups resume by themselves; a MaxMind licence key under" : "The GeoLite2 database has not been downloaded yet. It is fetched in the background after the key is saved;"} <Link to="/settings" className="ml-1 text-accent hover:underline">{geo.ip_api_enabled ? "Settings" : "Download now"}</Link> {geo.ip_api_enabled ? "adds the fallback." : "under Settings fetches it immediately."}
         </div>
       ) : built && built.stops.length ? (
         <Suspense fallback={<div className="flex items-center justify-center text-sm text-faint" style={{ height: 360 }}>Loading map…</div>}>
@@ -375,7 +375,7 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
             </span>
           ))}
           {!geo.asn_available && (
-            <span>{built.networks.length ? "· " : ""}names appear once the GeoLite2 ASN database is downloaded; it is fetched with the City database (<Link to="/settings" className="text-accent hover:underline">Download now</Link> under Settings).</span>
+            <span>{built.networks.length ? "· " : ""}{geo.ip_api_enabled ? <>names appear once ip-api.com answers again or the GeoLite2 ASN database is downloaded (<Link to="/settings" className="text-accent hover:underline">Settings</Link>).</> : <>names appear once the GeoLite2 ASN database is downloaded; it is fetched with the City database (<Link to="/settings" className="text-accent hover:underline">Download now</Link> under Settings).</>}</span>
           )}
         </p>
       )}
@@ -395,7 +395,7 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
       )}
       {geo.available && pathProbe && geo.run_id && (
         <p className="mt-1 text-[11px] leading-relaxed text-faint">
-          Positions are city-level estimates from GeoLite2. Transit routers are often placed at their operator's registered location, so the line may double back or touch the target's city before the last hop. Select a marker, or a step in the route above, to see exactly which hops it holds and how precise the estimate is.
+          Positions are city-level estimates from {geo.ip_api_enabled ? "ip-api.com and GeoLite2" : "GeoLite2"}. Transit routers are often placed at their operator's registered location, so the line may double back or touch the target's city before the last hop. Select a marker, or a step in the route above, to see exactly which hops it holds and how precise the estimate is.
         </p>
       )}
     </div>

@@ -1,4 +1,4 @@
-"""MaxMind GeoLite2 support: record parsing, simulated locations and networks, the download flow (HTTP mocked) and the geo endpoint."""
+"""GeoIP: GeoLite2 record parsing, simulated locations and networks, the download flow (HTTP mocked), the geo endpoint and the ip-api.com provider."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def test_parse_record_and_unroutable() -> None:
     from app import geoip
 
     geo = geoip.parse_record(CITY_RECORD)
-    assert geo == {"lat": 50.1, "lon": 8.7, "city": "Frankfurt", "region": "Hesse", "country": "Germany", "country_code": "DE", "accuracy_km": 20}
+    assert geo == {"lat": 50.1, "lon": 8.7, "city": "Frankfurt", "region": "Hesse", "country": "Germany", "country_code": "DE", "accuracy_km": 20, "provider": "GeoLite2"}
     assert geoip.parse_record({"country": {"iso_code": "DE"}}) is None
     assert geoip.parse_record(None) is None
     for ip in ("10.1.2.3", "172.16.0.1", "192.168.1.1", "100.64.0.9", "127.0.0.1", "169.254.1.1", "fd00::1", "not-an-ip"):
@@ -274,3 +274,177 @@ async def test_license_key_is_masked_without_the_token(protected_client: AsyncCl
     assert masked["maxmind_license_key"] == "********ijkl" and masked["maxmind_account_id"] == "77"
     echoed = (await protected_client.put("/api/settings", json=masked, headers=auth)).json()
     assert echoed["maxmind_license_key"] == "abcdefghijkl"
+
+
+# ---------------------------------------------------------------------------
+# ip-api.com
+# ---------------------------------------------------------------------------
+
+
+def _ipapi_answer(ip: str) -> dict[str, Any]:
+    if ip == "192.0.2.31":
+        return {"status": "fail", "message": "reserved range", "query": ip}
+    return {"status": "success", "country": "Netherlands", "countryCode": "NL", "regionName": "North Holland", "city": "Amsterdam", "lat": 52.37, "lon": 4.9, "as": "AS64511 Example Cloud BV", "asname": "EXAMPLE-CLOUD", "query": ip}
+
+
+def test_ipapi_parse_result() -> None:
+    from app import ipapi
+
+    rec = ipapi.parse_result(_ipapi_answer("203.0.113.5"))
+    assert rec["geo"] == {"lat": 52.37, "lon": 4.9, "city": "Amsterdam", "region": "North Holland", "country": "Netherlands", "country_code": "NL", "accuracy_km": None, "provider": "ip-api.com"}
+    assert rec["network"] == {"asn": "AS64511", "name": "Example Cloud BV"} and rec["message"] is None
+    # The short `asname` stands in when `as` carries only the number; no `as` at all means no network.
+    assert ipapi.parse_result({"status": "success", "lat": 1.0, "lon": 2.0, "as": "AS7", "asname": "SEVEN", "query": "x"})["network"] == {"asn": "AS7", "name": "SEVEN"}
+    assert ipapi.parse_result({"status": "success", "lat": 1.0, "lon": 2.0, "as": "", "query": "x"})["network"] is None
+    assert ipapi.parse_result({"status": "success", "as": "AS7 Seven", "query": "x"}) == {"geo": None, "network": {"asn": "AS7", "name": "Seven"}, "message": None}
+    assert ipapi.parse_result(_ipapi_answer("192.0.2.31")) == {"geo": None, "network": None, "message": "reserved range"}
+
+
+async def test_ipapi_batches_and_falls_back_to_maxmind(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import geoip, ipapi
+
+    r = await client.post("/api/targets", json={"name": "Live", "host": "192.0.2.31", "interval_sec": 60, "count": 3})
+    t = r.json()
+    await wait_for_runs(client, t["id"], 1)
+
+    batches: list[httpx.Request] = []
+    mode = {"answer": "ok"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "ip-api.com":
+            batches.append(request)
+            if mode["answer"] == "down":
+                return httpx.Response(503, text="unavailable")
+            if mode["answer"] == "limited":
+                return httpx.Response(429, headers={"X-Ttl": "42"}, text="Too Many Requests")
+            queries = request.read() and __import__("json").loads(request.read())
+            headers = {"X-Rl": "0", "X-Ttl": "7"} if mode["answer"] == "last" else {"X-Rl": "10", "X-Ttl": "50"}
+            return httpx.Response(200, headers=headers, json=[_ipapi_answer(q) for q in queries])
+        if request.url.host == "download.maxmind.com":
+            return httpx.Response(200, content=_archive("GeoLite2-ASN_20260902/GeoLite2-ASN.mmdb", b"fake-asn-mmdb") if "ASN" in str(request.url) else _archive())
+        return httpx.Response(200, text="198.51.100.7\n")
+
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(geoip, "_FORCE_LIVE", True)
+    monkeypatch.setattr(geoip, "_TRANSPORT", transport)
+    monkeypatch.setattr(ipapi, "_TRANSPORT", transport)
+    monkeypatch.setattr(geoip, "_open_reader", lambda path: FakeReader(str(path)))
+    geoip.close()
+    ipapi.reset()
+
+    # Nothing configured: no provider, no map, and the lookup page says so.
+    off = (await client.get(f"/api/targets/{t['id']}/geo")).json()
+    assert off["enabled"] is False and off["ip_api_enabled"] is False
+    status = (await client.get("/api/geoip/status")).json()
+    assert status["ip_api"] == {**status["ip_api"], "enabled": False, "ready": True, "simulated": False, "requests_last_minute": 0, "max_requests_per_minute": ipapi.MAX_REQUESTS_PER_MINUTE, "batch_size": 100}
+
+    # ip-api.com alone: one batch request answers the monitor, every public hop and the destination.
+    saved = (await client.put("/api/settings", json={"ip_api_enabled": True})).json()
+    assert saved["ip_api_enabled"] is True
+    geo = (await client.get(f"/api/targets/{t['id']}/geo")).json()
+    assert geo["enabled"] is True and geo["ip_api_enabled"] is True and geo["available"] is True and geo["asn_available"] is True
+    assert len(batches) == 1
+    req = batches[0]
+    assert req.method == "POST" and str(req.url).startswith("http://ip-api.com/batch?fields=") and req.url.params["fields"] == ipapi.FIELDS
+    asked = __import__("json").loads(req.read())
+    public = [h["ip"] for h in geo["hops"] if h["ip"] and not geoip.is_unroutable(h["ip"])]
+    assert set(asked) == set(public) | {"198.51.100.7"} and len(asked) == len(set(asked)) and "192.168.1.1" not in asked
+    src = geo["sources"][0]
+    assert src["kind"] == "public_ip" and src["geo"]["city"] == "Amsterdam" and src["geo"]["provider"] == "ip-api.com" and src["geo"]["accuracy_km"] is None
+    assert src["asn"] == "AS64511" and src["as_name"] == "Example Cloud BV"
+    for h in geo["hops"]:
+        if h["ip"] in public and h["ip"] != "192.0.2.31":
+            assert h["geo"]["provider"] == "ip-api.com" and h["geo"]["country_code"] == "NL", h
+            assert h["as_name"] == ("Example Cloud BV" if h["asn"] in (None, "AS64511") else None), h
+    assert geo["hops"][0]["note"] == "private address"
+    # The service could not place the destination (a reserved range) and no database is on disk.
+    assert geo["destination"]["geo"] is None and geo["destination"]["note"] == "not in database"
+
+    # A second poll is served from the cache: no new request.
+    again = (await client.get(f"/api/targets/{t['id']}/geo")).json()
+    assert len(batches) == 1 and again["sources"][0]["geo"] == src["geo"]
+    st = (await client.get("/api/geoip/status")).json()["ip_api"]
+    assert st["enabled"] is True and st["ready"] is True and st["requests_total"] == 1 and st["requests_last_minute"] == 1 and st["addresses_total"] == len(asked) and st["last_error"] is None and st["last_success"]
+    looked = (await client.get("/api/geoip/lookup", params={"q": "203.0.113.5"})).json()
+    assert len(batches) == 2 and looked["geo"]["provider"] == "ip-api.com" and looked["asn"] == "AS64511" and looked["ip_api_enabled"] is True and looked["ip_api_ready"] is True and looked["maxmind_configured"] is False and looked["configured"] is True
+
+    # The service fails: the provider pauses itself, the map reports it, and nothing is retried until the pause ends.
+    mode["answer"] = "down"
+    miss = (await client.get("/api/geoip/lookup", params={"q": "203.0.113.6"})).json()
+    assert len(batches) == 3 and miss["geo"] is None and miss["note"] == "ip-api.com unavailable" and miss["available"] is False and miss["ip_api_ready"] is False
+    st = (await client.get("/api/geoip/status")).json()["ip_api"]
+    assert st["ready"] is False and st["paused_until"] and st["pause_reason"] == "ip-api.com returned HTTP 503" and st["last_error"] == "ip-api.com returned HTTP 503"
+    assert (await client.get("/api/geoip/lookup", params={"q": "203.0.113.6"})).json()["note"] == "ip-api.com unavailable" and len(batches) == 3
+    # Cached answers keep serving while the service is paused.
+    assert (await client.get("/api/geoip/lookup", params={"q": "203.0.113.5"})).json()["geo"]["city"] == "Amsterdam"
+
+    # With the MaxMind databases on disk they answer what ip-api.com cannot.
+    await client.put("/api/settings", json={"maxmind_license_key": "lic_key"})
+    # The save started a background download (live mode); replace it with an explicit one.
+    await geoip.cancel_refresh()
+    upd = await client.post("/api/geoip/update")
+    assert upd.status_code == 200, upd.text
+    fallback = (await client.get("/api/geoip/lookup", params={"q": "203.0.113.6"})).json()
+    assert len(batches) == 3 and fallback["geo"]["city"] == "Frankfurt" and fallback["geo"]["provider"] == "GeoLite2" and fallback["asn"] == "AS64500" and fallback["available"] is True
+    assert (await client.get("/api/geoip/lookup", params={"q": "203.0.113.5"})).json()["geo"]["provider"] == "ip-api.com"
+    geo = (await client.get(f"/api/targets/{t['id']}/geo")).json()
+    assert geo["destination"]["note"] == "not in database" and geo["destination"]["asn"] == (next((h["asn"] for h in geo["hops"] if h["ip"] == "192.0.2.31" and h["asn"]), None) or "AS64510")
+
+    # Toggling the switch ends the pause; a 429 pauses for the X-Ttl the service states.
+    mode["answer"] = "limited"
+    await client.put("/api/settings", json={"ip_api_enabled": True})
+    limited = (await client.get("/api/geoip/lookup", params={"q": "203.0.113.7"})).json()
+    assert len(batches) == 4 and limited["geo"]["provider"] == "GeoLite2"
+    st = (await client.get("/api/geoip/status")).json()["ip_api"]
+    assert st["ready"] is False and "429" in st["pause_reason"]
+    paused_for = ipapi._paused_until - __import__("time").time()
+    assert 40 <= paused_for <= 43.5
+
+    # X-Rl: 0 means the allowance is spent: the answers are kept, the next batch waits for X-Ttl.
+    ipapi.wake()
+    mode["answer"] = "last"
+    last = (await client.get("/api/geoip/lookup", params={"q": "203.0.113.8"})).json()
+    assert len(batches) == 5 and last["geo"]["provider"] == "ip-api.com"
+    st = (await client.get("/api/geoip/status")).json()["ip_api"]
+    assert st["ready"] is False and st["pause_reason"] == "ip-api.com allowance used up for this minute" and st["last_error"] is None
+    assert (await client.get("/api/geoip/lookup", params={"q": "203.0.113.9"})).json()["geo"]["provider"] == "GeoLite2" and len(batches) == 5
+
+    # The local budget: no more than MAX_REQUESTS_PER_MINUTE batch requests in a minute, the rest wait.
+    ipapi.wake()
+    mode["answer"] = "ok"
+    # Five requests were sent within this minute already, so only the difference is still allowed.
+    for i in range(ipapi.MAX_REQUESTS_PER_MINUTE + 2):
+        waited = (await client.get("/api/geoip/lookup", params={"q": f"203.0.113.{20 + i}"})).json()
+    assert len(batches) == ipapi.MAX_REQUESTS_PER_MINUTE and len(ipapi._requests) == ipapi.MAX_REQUESTS_PER_MINUTE
+    assert waited["geo"]["provider"] == "GeoLite2" and waited["ip_api_ready"] is True
+    assert (await client.get("/api/geoip/status")).json()["ip_api"]["requests_last_minute"] == ipapi.MAX_REQUESTS_PER_MINUTE
+    # Without the databases such an address would say so instead of "not in database".
+    from app import geoip as geoip_mod
+
+    assert geoip_mod._missing_note("203.0.113.99", {"ip_api_enabled": True}, geoip_mod.EDITION) == "not in database"
+
+    # Switched off again: nothing is asked and the databases alone answer.
+    await client.put("/api/settings", json={"ip_api_enabled": False})
+    before = len(batches)
+    off = (await client.get("/api/geoip/lookup", params={"q": "203.0.113.5"})).json()
+    assert len(batches) == before and off["geo"]["provider"] == "GeoLite2" and off["ip_api_enabled"] is False
+
+
+async def test_ipapi_chunks_large_batches(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import ipapi
+
+    sizes: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        queries = __import__("json").loads(request.read())
+        sizes.append(len(queries))
+        return httpx.Response(200, json=[_ipapi_answer(q) for q in queries])
+
+    monkeypatch.setattr(ipapi, "_TRANSPORT", httpx.MockTransport(handler))
+    ipapi.reset()
+    ips = [f"203.0.{i // 250}.{i % 250 + 1}" for i in range(230)] + ["10.0.0.1", "not an ip", "203.0.0.1"]
+    await ipapi.prefetch(ips)
+    assert sizes == [100, 100, 30]
+    assert ipapi.get("203.0.0.1")["geo"]["city"] == "Amsterdam" and ipapi.get("10.0.0.1") is None and ipapi.get("not an ip") is None
+    assert ipapi.status({"ip_api_enabled": True})["cached"] == 230
+    ipapi.reset()

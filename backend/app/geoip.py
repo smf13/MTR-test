@@ -1,9 +1,10 @@
-"""MaxMind GeoLite2 support: database download with the operator's licence key, cached lookups and path geolocation.
+"""GeoIP: MaxMind GeoLite2 databases (downloaded with the operator's licence key), ip-api.com, cached lookups and path geolocation.
 
 The GeoLite2 City and GeoLite2 ASN databases are fetched from MaxMind with the account's licence key (never
-bundled: their licence forbids redistribution), stored under the data directory and refreshed weekly. Lookups turn
-the IPs of a run (the monitoring host, every hop and the destination) into coordinates and network names
-(autonomous system number and organisation) for the map on the target page.
+bundled: their licence forbids redistribution), stored under the data directory and refreshed weekly. With the
+ip-api.com switch on, that service is asked first (in batches, see `ipapi.py`) and the databases answer whatever
+it could not. Lookups turn the IPs of a run (the monitoring host, every hop and the destination) into coordinates
+and network names (autonomous system number and organisation) for the map on the target page.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from . import ipapi
 from .config import config
 from .resolver import resolve_host
 
@@ -67,9 +69,25 @@ def db_path(edition: str = EDITION) -> Path:
     return config.data_dir / "geoip" / f"{edition}.mmdb"
 
 
-def configured(settings: dict[str, Any]) -> bool:
-    """A licence key is saved: the map is offered and the database is kept up to date."""
+def maxmind_configured(settings: dict[str, Any]) -> bool:
+    """A licence key is saved: the GeoLite2 databases are downloaded and kept up to date."""
     return bool(str(settings.get("maxmind_license_key") or "").strip())
+
+
+def configured(settings: dict[str, Any]) -> bool:
+    """Some provider is set up (ip-api.com switched on, or a MaxMind licence key saved): the map is offered."""
+    return maxmind_configured(settings) or ipapi.enabled(settings)
+
+
+def _ip_api_on(settings: dict[str, Any] | None) -> bool:
+    """ip-api.com is asked first; never in simulation mode, which fabricates locations without any network call."""
+    return bool(settings) and ipapi.enabled(settings) and not _simulated()
+
+
+async def _prefetch(ips: list[str | None], settings: dict[str, Any] | None) -> None:
+    """One batched ip-api.com request for every public address of a run that is not cached yet."""
+    if _ip_api_on(settings):
+        await ipapi.prefetch([ip for ip in ips if ip and not is_unroutable(ip)])
 
 
 # ---------------------------------------------------------------------------
@@ -122,14 +140,19 @@ def reader(edition: str = EDITION) -> Any:
     return opened[0]
 
 
-def available() -> bool:
-    """Location lookups can be answered: the City database is on disk, or simulation fabricates locations."""
-    return _simulated() or reader() is not None
+def _maxmind_available(edition: str = EDITION) -> bool:
+    """The edition is on disk, or simulation fabricates its answers."""
+    return _simulated() or reader(edition) is not None
 
 
-def asn_available() -> bool:
-    """Network names can be answered: the ASN database is on disk, or simulation fabricates them."""
-    return _simulated() or reader(ASN_EDITION) is not None
+def available(settings: dict[str, Any] | None = None) -> bool:
+    """Location lookups can be answered: ip-api.com is on and awake, the City database is on disk, or simulation."""
+    return _maxmind_available() or (_ip_api_on(settings) and ipapi.ready())
+
+
+def asn_available(settings: dict[str, Any] | None = None) -> bool:
+    """Network names can be answered: ip-api.com is on and awake, the ASN database is on disk, or simulation."""
+    return _maxmind_available(ASN_EDITION) or (_ip_api_on(settings) and ipapi.ready())
 
 
 def build_time(edition: str = EDITION) -> float | None:
@@ -150,16 +173,17 @@ def _downloaded_at(edition: str) -> float | None:
 
 
 def status(settings: dict[str, Any]) -> dict[str, Any]:
+    """The MaxMind side (`configured` = key saved, `available` = City on disk) plus the ip-api.com provider under `ip_api`."""
     path = db_path()
     return {
-        "configured": configured(settings),
-        "available": available(),
+        "configured": maxmind_configured(settings),
+        "available": _maxmind_available(),
         "simulated": _simulated(),
         "edition": EDITION,
         "path": str(path),
         "build_epoch": build_time(),
         "downloaded_at": _downloaded_at(EDITION),
-        "asn_available": asn_available(),
+        "asn_available": _maxmind_available(ASN_EDITION),
         "asn_edition": ASN_EDITION,
         "asn_build_epoch": build_time(ASN_EDITION),
         "asn_downloaded_at": _downloaded_at(ASN_EDITION),
@@ -168,6 +192,7 @@ def status(settings: dict[str, Any]) -> dict[str, Any]:
         "last_error": _last_error,
         "updating": _update_lock.locked(),
         "refresh_after_sec": int(REFRESH_AFTER),
+        "ip_api": {**ipapi.status(settings), "simulated": _simulated()},
     }
 
 
@@ -215,6 +240,7 @@ def parse_record(rec: dict[str, Any] | None) -> dict[str, Any] | None:
         "country": (country.get("names") or {}).get("en"),
         "country_code": country.get("iso_code"),
         "accuracy_km": loc.get("accuracy_radius"),
+        "provider": "GeoLite2",
     }
 
 
@@ -231,6 +257,7 @@ def _simulated_geo(ip: str) -> dict[str, Any]:
         "country": city["country"],
         "country_code": city["cc"],
         "accuracy_km": 50,
+        "provider": "simulated",
     }
 
 
@@ -250,10 +277,18 @@ _SIM_CITIES = [
 ]
 
 
-def lookup(ip: str | None) -> dict[str, Any] | None:
-    """Location of a public address, or None (private address, unknown address, no database)."""
+def lookup(ip: str | None, settings: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Location of a public address, or None (private address, unknown address, no provider).
+
+    With ip-api.com switched on its cached answer wins (see `_prefetch`); the GeoLite2 City database answers
+    when the service could not place the address, has not answered it, or is paused after a failure.
+    """
     if not ip or is_unroutable(ip):
         return None
+    if _ip_api_on(settings):
+        rec = ipapi.get(ip)
+        if rec and rec["geo"]:
+            return rec["geo"]
     now = time.time()
     cached = _lookup_cache.get(ip)
     if cached and cached[0] > now:
@@ -274,16 +309,28 @@ def lookup(ip: str | None) -> dict[str, Any] | None:
     return geo
 
 
-def locate(ip: str | None) -> tuple[dict[str, Any] | None, str | None]:
+def _missing_note(ip: str, settings: dict[str, Any] | None, edition: str) -> str:
+    """Why neither provider placed (or named) a public address."""
+    if _maxmind_available(edition):
+        return "not in database"
+    if _ip_api_on(settings):
+        rec = ipapi.get(ip)
+        if rec is not None:
+            return "not in database"
+        return "ip-api.com unavailable" if not ipapi.ready() else "lookup pending"
+    return "no database"
+
+
+def locate(ip: str | None, settings: dict[str, Any] | None = None) -> tuple[dict[str, Any] | None, str | None]:
     """(geo, note): the note explains a missing location in the operator's terms."""
     if not ip:
         return None, "no response"
     if is_unroutable(ip):
         return None, "private address"
-    if not available():
-        return None, "no database"
-    geo = lookup(ip)
-    return geo, None if geo else "not in database"
+    geo = lookup(ip, settings)
+    if geo:
+        return geo, None
+    return None, _missing_note(ip, settings, EDITION)
 
 
 def parse_network(rec: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -325,14 +372,19 @@ def _simulated_network(ip: str, asn: str | None) -> dict[str, Any]:
     return {"asn": number, "name": _SIM_AS_NAMES[number]}
 
 
-def network(ip: str | None, asn: str | None = None) -> dict[str, Any] | None:
-    """{"asn", "name"} of the autonomous system announcing a public address, or None (private, unknown, no database).
+def network(ip: str | None, asn: str | None = None, settings: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """{"asn", "name"} of the autonomous system announcing a public address, or None (private, unknown, no provider).
 
     `asn` is the number the probe itself reported for the address, if any; simulation keeps the fabricated name
-    consistent with it, a real database ignores it.
+    consistent with it, a real provider ignores it. ip-api.com's cached answer wins when the switch is on; the
+    GeoLite2 ASN database answers the rest.
     """
     if not ip or is_unroutable(ip):
         return None
+    if _ip_api_on(settings):
+        rec = ipapi.get(ip)
+        if rec and rec["network"]:
+            return rec["network"]
     now = time.time()
     cached = _network_cache.get(ip)
     if cached and cached[0] > now:
@@ -353,13 +405,13 @@ def network(ip: str | None, asn: str | None = None) -> dict[str, Any] | None:
     return net
 
 
-def _network_fields(ip: str | None, asn: str | None = None) -> dict[str, Any]:
-    """`asn` and `as_name` for a point: the probe's own number when it reported one, the database's otherwise.
+def _network_fields(ip: str | None, asn: str | None = None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    """`asn` and `as_name` for a point: the probe's own number when it reported one, the provider's otherwise.
 
     The name is printed only when it belongs to the number shown, so a hop whose mtr-reported ASN disagrees with
-    the database keeps its number and gets no name rather than a misleading one.
+    the provider keeps its number and gets no name rather than a misleading one.
     """
-    net = network(ip, asn)
+    net = network(ip, asn, settings)
     if net is None:
         return {"asn": asn, "as_name": None}
     if asn and asn != net["asn"]:
@@ -523,7 +575,7 @@ def needs_refresh() -> bool:
 
 async def maybe_refresh(settings: dict[str, Any]) -> None:
     """Download when a key is configured and a database is missing or older than a week; errors are logged."""
-    if not configured(settings) or _simulated() or not needs_refresh() or _update_lock.locked():
+    if not maxmind_configured(settings) or _simulated() or not needs_refresh() or _update_lock.locked():
         return
     if _last_attempt and _last_error and time.time() - _last_attempt < RETRY_AFTER:
         return
@@ -538,7 +590,7 @@ def schedule_refresh(settings: dict[str, Any]) -> None:
     global _refresh_task
     if _refresh_task is not None and not _refresh_task.done():
         return
-    if not configured(settings) or _simulated() or not needs_refresh():
+    if not maxmind_configured(settings) or _simulated() or not needs_refresh():
         return
     _refresh_task = asyncio.create_task(maybe_refresh(settings), name="mtr-tracker-geoip-refresh")
 
@@ -575,7 +627,7 @@ def _probe_point(probe: dict[str, Any], kind: str) -> dict[str, Any] | None:
     if lat is None or lon is None:
         return None
     return _point(
-        {"lat": float(lat), "lon": float(lon), "city": probe.get("city"), "region": None, "country": probe.get("country"), "country_code": probe.get("country"), "accuracy_km": None},
+        {"lat": float(lat), "lon": float(lon), "city": probe.get("city"), "region": None, "country": probe.get("country"), "country_code": probe.get("country"), "accuracy_km": None, "provider": "Globalping"},
         None,
         kind=kind,
         label=str(probe.get("label") or probe.get("city") or "Globalping probe"),
@@ -588,28 +640,40 @@ def _probe_point(probe: dict[str, Any], kind: str) -> dict[str, Any] | None:
 
 async def path_geo(target: dict[str, Any], run: dict[str, Any] | None, hops: list[dict[str, Any]], settings: dict[str, Any]) -> dict[str, Any]:
     """Sources (monitor or remote probes), hops and destination of a run with their locations and networks."""
-    out: dict[str, Any] = {"enabled": configured(settings), "available": available(), "asn_available": asn_available(), "run_id": None, "sources": [], "hops": [], "destination": None}
+    out: dict[str, Any] = {"enabled": configured(settings), "ip_api_enabled": ipapi.enabled(settings), "available": available(settings), "asn_available": asn_available(settings), "run_id": None, "sources": [], "hops": [], "destination": None}
     if not out["enabled"] or run is None:
         return out
     out["run_id"] = run["id"]
     details = run.get("details") or {}
-    if target.get("type") == "globalping":
+    remote = target.get("type") == "globalping"
+    dst_ip, role, host, failure = await _destination(target, run)
+    # One ip-api.com request for the whole run: the monitor, every hop and the destination.
+    wanted: list[str | None] = [h.get("ip") for h in hops] + [dst_ip]
+    if not remote:
+        src = run.get("src")
+        if src and not is_unroutable(src):
+            wanted.append(src)
+        elif _ip_api_on(settings):
+            # Behind NAT the monitor is placed by its public address (cached, so _monitor_point asks no second time).
+            wanted.append(await public_ip())
+    await _prefetch(wanted, settings)
+    out["available"], out["asn_available"] = available(settings), asn_available(settings)
+    if remote:
         probes = [details["probe"]] if isinstance(details.get("probe"), dict) else [p for p in details.get("probes") or [] if isinstance(p, dict)]
         out["sources"] = [p for p in (_probe_point(pr, "probe") for pr in probes) if p]
     else:
-        out["sources"] = [await _monitor_point(run.get("src"))]
-    dst_ip, role, host, failure = await _destination(target, run)
+        out["sources"] = [await _monitor_point(run.get("src"), settings)]
     simulated_route = _simulated_route(out["sources"], dst_ip, hops) if _simulated() else {}
     for h in hops:
         if h.get("ip") in simulated_route:
             geo, note = simulated_route[h["ip"]], None
         else:
-            geo, note = locate(h.get("ip"))
-        out["hops"].append(_point(geo, note, hop_no=h["hop_no"], ip=h.get("ip"), hostname=h.get("hostname"), **_network_fields(h.get("ip"), h.get("asn")), avg_ms=h.get("avg_ms"), loss_pct=h.get("loss_pct")))
+            geo, note = locate(h.get("ip"), settings)
+        out["hops"].append(_point(geo, note, hop_no=h["hop_no"], ip=h.get("ip"), hostname=h.get("hostname"), **_network_fields(h.get("ip"), h.get("asn"), settings), avg_ms=h.get("avg_ms"), loss_pct=h.get("loss_pct")))
     if dst_ip:
-        geo, note = locate(dst_ip)
+        geo, note = locate(dst_ip, settings)
         dst_asn = next((h.get("asn") for h in hops if h.get("ip") == dst_ip and h.get("asn")), None)
-        out["destination"] = _point(geo, note, ip=dst_ip, host=host, role=role, reached=bool(run.get("reached")), **_network_fields(dst_ip, dst_asn))
+        out["destination"] = _point(geo, note, ip=dst_ip, host=host, role=role, reached=bool(run.get("reached")), **_network_fields(dst_ip, dst_asn, settings))
     elif failure:
         out["destination"] = _point(None, failure, ip=None, host=host, role=role, reached=bool(run.get("reached")), asn=None, as_name=None)
     return out
@@ -652,10 +716,12 @@ async def lookup_query(query: str, settings: dict[str, Any]) -> dict[str, Any]:
     q = query.strip()
     out: dict[str, Any] = {
         "query": q, "host": None, "ip": None, "geo": None, "note": None, "kind": "address", "asn": None, "as_name": None,
-        "configured": configured(settings), "available": available(), "asn_available": asn_available(), "simulated": _simulated(), "build_epoch": build_time(),
+        "configured": configured(settings), "available": available(settings), "asn_available": asn_available(settings), "simulated": _simulated(), "build_epoch": build_time(),
+        "ip_api_enabled": ipapi.enabled(settings), "ip_api_ready": _ip_api_on(settings) and ipapi.ready(), "maxmind_configured": maxmind_configured(settings),
     }
     if q.lower() in ("self", "me", "this server"):
-        point = await _monitor_point(None)
+        point = await _monitor_point(None, settings)
+        out["available"], out["asn_available"], out["ip_api_ready"] = available(settings), asn_available(settings), _ip_api_on(settings) and ipapi.ready()
         out.update({k: point[k] for k in ("kind", "ip", "geo", "note", "asn", "as_name")})
         out["host"] = point["label"]
         return out
@@ -669,8 +735,10 @@ async def lookup_query(query: str, settings: dict[str, Any]) -> dict[str, Any]:
             out["note"] = "host could not be resolved"
             return out
     out["ip"] = ip
-    out["geo"], out["note"] = locate(ip)
-    out.update(_network_fields(ip))
+    await _prefetch([ip], settings)
+    out["available"], out["asn_available"], out["ip_api_ready"] = available(settings), asn_available(settings), _ip_api_on(settings) and ipapi.ready()
+    out["geo"], out["note"] = locate(ip, settings)
+    out.update(_network_fields(ip, None, settings))
     return out
 
 
@@ -723,19 +791,21 @@ def _simulated_route(sources: list[dict[str, Any]], dst_ip: str | None, hops: li
         lat = start["lat"] + (end["lat"] - start["lat"]) * f + ((seed >> 8) % 100 - 50) / 40.0
         lon = start["lon"] + (end["lon"] - start["lon"]) * f + ((seed >> 16) % 100 - 50) / 40.0
         nearest = min(_SIM_CITIES, key=lambda c: (c["lat"] - lat) ** 2 + (c["lon"] - lon) ** 2)
-        route[ip] = {"lat": round(lat, 4), "lon": round(lon, 4), "city": nearest["city"], "region": None, "country": nearest["country"], "country_code": nearest["cc"], "accuracy_km": 100}
+        route[ip] = {"lat": round(lat, 4), "lon": round(lon, 4), "city": nearest["city"], "region": None, "country": nearest["country"], "country_code": nearest["cc"], "accuracy_km": 100, "provider": "simulated"}
     return route
 
 
-async def _monitor_point(src: str | None) -> dict[str, Any]:
+async def _monitor_point(src: str | None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
     """Where this server runs from: its own address when public, otherwise the address it is seen from."""
     if _simulated():
-        return _point({"lat": 52.52, "lon": 13.405, "city": "Berlin", "region": None, "country": "Germany", "country_code": "DE", "accuracy_km": 50}, None, kind="simulated", label="This server (simulated)", ip=src, evidence="simulated location", asn="AS24940", as_name=_SIM_AS_NAMES["AS24940"])
+        return _point({"lat": 52.52, "lon": 13.405, "city": "Berlin", "region": None, "country": "Germany", "country_code": "DE", "accuracy_km": 50, "provider": "simulated"}, None, kind="simulated", label="This server (simulated)", ip=src, evidence="simulated location", asn="AS24940", as_name=_SIM_AS_NAMES["AS24940"])
     if src and not is_unroutable(src):
-        geo, note = locate(src)
-        return _point(geo, note, kind="monitor", label="This server", ip=src, evidence=f"placed by its own address {src}", **_network_fields(src))
+        await _prefetch([src], settings)
+        geo, note = locate(src, settings)
+        return _point(geo, note, kind="monitor", label="This server", ip=src, evidence=f"placed by its own address {src}", **_network_fields(src, None, settings))
     ip = await public_ip()
     if not ip:
         return _point(None, "public address unknown", kind="monitor", label="This server", ip=src, evidence="the public address could not be determined", asn=None, as_name=None)
-    geo, note = locate(ip)
-    return _point(geo, note, kind="public_ip", label="This server (public address)", ip=ip, evidence=f"placed by the public address it is seen from, {ip}, not by its own address {src or 'unknown'}", **_network_fields(ip))
+    await _prefetch([ip], settings)
+    geo, note = locate(ip, settings)
+    return _point(geo, note, kind="public_ip", label="This server (public address)", ip=ip, evidence=f"placed by the public address it is seen from, {ip}, not by its own address {src or 'unknown'}", **_network_fields(ip, None, settings))
