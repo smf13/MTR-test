@@ -68,7 +68,7 @@ All captures show the current interface running in simulation mode with a week o
 - **Quick trace.** Run a one-off MTR from the server without saving it, then add the host as a target in one click.
 - **GeoIP lookup.** A menu page that places any IP address or host name with the GeoLite2 database (or this server itself, the way the map does) and shows the place, coordinates, accuracy radius, network (AS number and organisation) and database build date on a map. The path map states its own evidence: how the monitor was placed and how precise GeoLite2 says each position is.
 - **Text report export** of any run in the familiar `mtr --report` layout.
-- **Retention** control, SQLite storage (WAL mode), dark, true-black OLED and light themes, responsive layout for phones and wall displays.
+- **Retention** control, PostgreSQL storage, dark, true-black OLED and light themes, responsive layout for phones and wall displays.
 - **Simulation mode** to demo or develop without raw-socket privileges.
 
 ## Quick start (Docker)
@@ -81,7 +81,7 @@ docker compose up -d --build
 
 Open <http://localhost:8899>, click **Add target**, enter a host and an interval, and the first run starts immediately.
 
-Data lives in the `mtr-tracker-data` volume (`/data` inside the container). The process runs as an unprivileged user (uid 1000): `mtr-packet` and `ping` carry the `cap_net_raw` file capability, so raw sockets work without root as long as `NET_RAW` is in the container's capability set (Docker's default, and `docker-compose.yml` grants it explicitly). At start the entrypoint changes the owner of `/data` to that user, which also applies to a bind-mounted host directory. Uncomment `network_mode: host` if you want the first hop to be your host's real gateway instead of the Docker bridge.
+Two containers start: the app (`mtr-tracker`) and PostgreSQL 16 (`db`). Monitoring data lives in the `mtr-tracker-postgres` volume; the `mtr-tracker-data` volume (`/data` inside the app container) holds the GeoIP databases and, on an installation upgraded from the SQLite releases, the imported `mtr-tracker.db.migrated`. The database password defaults to `mtr`; to change it, set `MTR_TRACKER_DB_PASSWORD` in the shell or in a `.env` file next to `docker-compose.yml` (copy `.env.example`) before the first start, since both services read it. The process runs as an unprivileged user (uid 1000): `mtr-packet` and `ping` carry the `cap_net_raw` file capability, so raw sockets work without root as long as `NET_RAW` is in the container's capability set (Docker's default, and `docker-compose.yml` grants it explicitly). At start the entrypoint changes the owner of `/data` to that user, which also applies to a bind-mounted host directory. Uncomment `network_mode: host` if you want the first hop to be your host's real gateway instead of the Docker bridge; the app then leaves the Compose network, so also publish the `db` port and use `127.0.0.1` instead of `db` in `MTR_TRACKER_DATABASE_URL`.
 
 mtr only accepts probe intervals below one second when it runs as root, so such intervals are raised to 1 s in the container. Set `MTR_TRACKER_RUN_AS_ROOT=1` to keep the process as root if you need them.
 
@@ -95,7 +95,27 @@ git pull --ff-only origin main
 docker compose up -d --build
 ```
 
-The existing data volume is reused. Reload the browser after the container starts to load the rebuilt interface. Configuration and monitoring history remain in the volume; do not use `docker compose down -v` unless you intend to delete that data.
+Both volumes are reused. Reload the browser after the container starts to load the rebuilt interface. Do not use `docker compose down -v` unless you intend to delete the data: it removes the PostgreSQL volume as well.
+
+**Upgrading from a release that stored its data in SQLite:** the first start finds `/data/mtr-tracker.db`, imports it into the still empty PostgreSQL database and renames it `mtr-tracker.db.migrated`. Targets, settings, events and the runs within the retention window come over with their ids, so bookmarked run pages keep working; older runs are left behind because the retention purge would delete them straight away (`python -m app.migrate --all` imports them too). A long history takes a few minutes, during which `/healthz` does not answer yet and `docker compose up --wait` may time out; the database volume needs roughly the space of the SQLite file again. Keep the `.migrated` file until the dashboard shows what you expect, then delete it. See [Migrating from SQLite](#migrating-from-sqlite) for the manual command and what happens when the import fails.
+
+### Migrating from SQLite
+
+Releases before the PostgreSQL backend kept everything in one SQLite file. The app imports it on its own when three things hold at start: `MTR_TRACKER_AUTO_MIGRATE` is not `0`, the file exists at `MTR_TRACKER_DB_PATH` (`<data directory>/mtr-tracker.db`) and PostgreSQL holds no target, run or event yet. The file is read once, read-only, from a single snapshot (SQLite's WAL mode still needs write access to the file's directory or to an existing `-shm` file, which the container's `/data` provides); every row is copied with its id and the id sequences continue above every id SQLite ever handed out. Settings and the remaining `meta` keys are copied verbatim. Runs and events older than the retention window are skipped, as are runs and hops whose parent row is missing; an event whose target or run is gone keeps its row with that reference cleared. Values that PostgreSQL would refuse are converted and counted in the log: NUL bytes and invalid UTF-8 in text, binary blobs, numbers stored in text columns, fractions stored in integer columns. Everything lands in one transaction and is verified (row counts, id ranges, a byte-for-byte check of the JSON columns) before it commits; afterwards the file and its `-wal`/`-shm` siblings are renamed `.migrated`.
+
+When the import fails, the app does not start (it would otherwise probe into an empty database while the history sits unimported), the reason is logged with the table and row, and a marker in the `meta` table makes the next start fail at once with the same message instead of repeating a long import. Fix or remove the file, or set `MTR_TRACKER_AUTO_MIGRATE=0` to start without importing. When the file appears next to a database that already holds data, the app only logs a warning.
+
+The same import runs by hand, also into a database that already holds data:
+
+```bash
+# Docker (stop the app first when replacing)
+docker compose exec mtr-tracker python -m app.migrate --sqlite /data/mtr-tracker.db.migrated --replace
+
+# Source installation
+cd backend && python -m app.migrate --sqlite ./data/mtr-tracker.db --database-url postgresql://mtr:mtr@127.0.0.1:5432/mtr_tracker
+```
+
+`--replace` empties targets, runs, hops and events first (settings and `meta` are only ever updated, never wiped), `--all` keeps runs and events older than the retention window, `--rename` renames the file afterwards, `--batch` sets the rows per COPY. The command refuses a database that already holds data without `--replace`, a file another process is writing, and a file that changed while it was being read. Only one app process may use a database at a time.
 
 ### Configuration
 
@@ -105,8 +125,13 @@ Environment variables (read at startup):
 | --- | --- | --- |
 | `MTR_TRACKER_HOST` | `0.0.0.0` | Bind address when starting with `python -m app.main` (including Docker) |
 | `MTR_TRACKER_PORT` | `8899` | HTTP port when starting with `python -m app.main` (including Docker) |
-| `MTR_TRACKER_DATA_DIR` | `./data` (`/data` in the image) | Directory for the SQLite database |
-| `MTR_TRACKER_DB_PATH` | `<data directory>/mtr-tracker.db` | Override the SQLite file location; the process must be able to create/write its parent directory |
+| `MTR_TRACKER_DATABASE_URL` | `postgresql://mtr:mtr@127.0.0.1:5432/mtr_tracker` (`...@db:5432/...` in the Compose file) | PostgreSQL 13+ connection URL. The role must own an existing database; the app creates its tables itself. Add `?sslmode=require` for a server elsewhere. Transaction-pooling proxies such as PgBouncer are not supported: connect to the server directly |
+| `MTR_TRACKER_DB_POOL_SIZE` | `MTR_TRACKER_MAX_CONCURRENT_RUNS + 4`, at least 4 | Connections in the pool; every running probe and every request may hold one |
+| `MTR_TRACKER_DB_CONNECT_TIMEOUT` | `120` | Seconds to wait at start for PostgreSQL to accept connections |
+| `MTR_TRACKER_DB_PASSWORD` | `mtr` | Compose only: the password of the bundled PostgreSQL, read by both services (shell or `.env`, see `.env.example`) |
+| `MTR_TRACKER_DATA_DIR` | `./data` (`/data` in the image) | Directory for the GeoIP databases and, on an upgraded installation, the legacy SQLite file |
+| `MTR_TRACKER_DB_PATH` | `<data directory>/mtr-tracker.db` | Where the SQLite file of an earlier release is looked for at start (see [Migrating from SQLite](#migrating-from-sqlite)) |
+| `MTR_TRACKER_AUTO_MIGRATE` | `1` | `0` skips the automatic import of that file |
 | `MTR_TRACKER_STATIC_DIR` | Auto-detect `frontend/dist` (`/app/static` in the image) | Directory containing the built web UI; without a build, only the API is served |
 | `MTR_TRACKER_MAX_CONCURRENT_RUNS` | `8` | Maximum simultaneous scheduled or Run now jobs across all probe types; quick traces have a separate limit |
 | `MTR_TRACKER_MTR_BINARY` | `mtr` | Path to the mtr binary |
@@ -175,7 +200,7 @@ With both set up, ip-api.com is asked first and the databases answer whatever it
 
 The UI is a thin client over a JSON API, so anything you do by hand can be scripted. Interactive docs with every schema live at `/api/docs`.
 
-Set `MTR_TRACKER_API_TOKEN` on the server to require `Authorization: Bearer <token>` (or `X-Api-Token`) on `/api/` requests using `POST`, `PUT`, `PATCH` or `DELETE`. Reads stay open so dashboards and wall displays work without credentials, but with a token set, `GET /api/settings` masks the Pushover credentials, Globalping token and the path/query of the webhook URL unless the request carries the token, and `GET /api/status` omits the database path. A masked value sent back in a `PUT` leaves the stored one untouched. When a token is set, the UI prompts after an unauthorized write and keeps the token in this browser; save it and retry the action, or enter it under **Settings → API access**.
+Set `MTR_TRACKER_API_TOKEN` on the server to require `Authorization: Bearer <token>` (or `X-Api-Token`) on `/api/` requests using `POST`, `PUT`, `PATCH` or `DELETE`. Reads stay open so dashboards and wall displays work without credentials, but with a token set, `GET /api/settings` masks the Pushover credentials, Globalping token and the path/query of the webhook URL unless the request carries the token, and `GET /api/status` omits `database` (the connection URL without its password). A masked value sent back in a `PUT` leaves the stored one untouched. When a token is set, the UI prompts after an unauthorized write and keeps the token in this browser; save it and retry the action, or enter it under **Settings → API access**.
 
 `POST /api/probe` (quick trace) runs at most two traces at a time; further requests wait up to 30 s and then get `429`.
 
@@ -237,10 +262,13 @@ curl -s -X DELETE $BASE/api/targets/3 -H "$AUTH"
 # Bulk: pause | resume | run | delete
 curl -s -X POST $BASE/api/targets/bulk -H "$AUTH" -H 'content-type: application/json' -d '{ "action": "pause", "ids": [1, 2, 3] }'
 
-# Backup and restore (upsert matches on name; create always adds; replace wipes first)
+# Backup and restore of the target definitions (upsert matches on name; create always adds; replace wipes first)
 curl -s $BASE/api/targets/export > targets.json
 curl -s -X POST $BASE/api/targets/import -H "$AUTH" -H 'content-type: application/json' \
   -d "{ \"mode\": \"upsert\", \"targets\": $(cat targets.json) }"
+
+# Full backup, history included, with the bundled PostgreSQL
+docker compose exec db pg_dump -U mtr mtr_tracker > mtr-tracker.sql
 
 # Read results
 curl -s "$BASE/api/targets/3/runs?limit=5"
@@ -267,11 +295,11 @@ Interactive API documentation is available at `/api/docs`, with the OpenAPI sche
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/status` | Engine status, counters, mtr version |
+| `GET` | `/api/status` | Engine status, counters, mtr version, `db_size_bytes` (the database on disk, catalogs included) and, with the token, `database` (the connection URL without its password) |
 | `GET` / `PUT` | `/api/settings` | Global settings |
-| `GET` / `POST` | `/api/targets` | List (with 24h stats, sparkline and status timeline) / create |
+| `GET` / `POST` | `/api/targets` | List (with 24h stats, sparkline and status timeline; sorted by name, case-insensitively) / create |
 | `GET` | `/api/tags` | Tags in use with target counts and configured colours (`settings.tag_colors`) |
-| `GET` | `/api/targets/export` | Portable target definitions (no runs) |
+| `GET` | `/api/targets/export` | Portable target definitions (no runs), sorted by name, case-insensitively |
 | `POST` | `/api/targets/import` | Bulk create/update: `{ "mode": "upsert" \| "create" \| "replace", "targets": [...] }` |
 | `POST` | `/api/targets/bulk` | `{ "action": "pause" \| "resume" \| "mute" \| "unmute" \| "run" \| "delete", "ids": [...] }` |
 | `GET` / `PUT` / `DELETE` | `/api/targets/{id}` | Detail with range stats (`?range=24h`) / update / delete |
@@ -298,7 +326,7 @@ Ranges accept `1h`, `6h`, `24h`, `7d`, `30d` or a number of seconds.
 
 ## Development
 
-Run the backend and frontend in separate terminals, starting each set of commands from the repository root. The backend supports Python 3.11+; CI and Docker use Python 3.12. The frontend uses Node.js **22.22.2 or newer in the 22.x line**, which satisfies the checked-in Vite, Vitest and jsdom requirements.
+Run the backend and frontend in separate terminals, starting each set of commands from the repository root. The backend supports Python 3.11+; CI and Docker use Python 3.12. It needs a PostgreSQL 13 or newer: either the bundled one (uncomment the `ports` lines of the `db` service in `docker-compose.yml`, then `docker compose up -d db`; the default `MTR_TRACKER_DATABASE_URL` matches it) or any other server named in `MTR_TRACKER_DATABASE_URL`. The frontend uses Node.js **22.22.2 or newer in the 22.x line**, which satisfies the checked-in Vite, Vitest and jsdom requirements.
 
 Backend:
 
@@ -307,7 +335,7 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
-MTR_TRACKER_SIMULATE=1 MTR_TRACKER_DATA_DIR=./data python -m uvicorn app.main:app --reload --port 8899
+MTR_TRACKER_SIMULATE=1 MTR_TRACKER_DATA_DIR=./data MTR_TRACKER_DATABASE_URL=postgresql://mtr:mtr@127.0.0.1:5432/mtr_tracker python -m uvicorn app.main:app --reload --port 8899
 ```
 
 Frontend:
@@ -320,10 +348,10 @@ npm run dev        # http://localhost:5173, proxies /api to :8899
 
 Vite also proxies `/healthz`. Set `MTR_TRACKER_API` before starting Vite to use another backend URL, for example `MTR_TRACKER_API=http://127.0.0.1:9000 npm run dev`. This variable affects the development proxy, not a production build.
 
-After installing dependencies, run checks from the repository root in a separate terminal:
+After installing dependencies, run checks from the repository root in a separate terminal. The backend tests need a PostgreSQL role that may create databases, named in `MTR_TRACKER_TEST_DATABASE_URL` (default `postgresql://postgres:postgres@127.0.0.1:5432/postgres`; the bundled `db` service works with `postgresql://mtr:mtr@127.0.0.1:5432/mtr_tracker`); every app test gets a freshly created database, and without a reachable server those tests are skipped:
 
 ```bash
-(cd backend && .venv/bin/python -m pytest -q)
+(cd backend && MTR_TRACKER_TEST_DATABASE_URL=postgresql://mtr:mtr@127.0.0.1:5432/mtr_tracker .venv/bin/python -m pytest -q)
 (cd frontend && npm test)
 (cd frontend && npm run build)
 ```
@@ -334,9 +362,9 @@ Running real probes outside Docker requires the `mtr` binary (`apt install mtr-t
 
 Simulation produces synthetic measurements, but local MTR/ping/TCP hostname resolution, local MTR reverse DNS and configured notifications can still access the network. For an isolated UI demo, use IP-literal targets, disable reverse DNS and leave notification channels disabled.
 
-- **Backend tests:** `backend/tests`; `conftest.py` provides `client` (open instance), `protected_client` (with an API token) and `static_client` (with a stub frontend build), all built by `helpers.app_client`.
+- **Backend tests:** `backend/tests`; `conftest.py` provides `client` (open instance), `protected_client` (with an API token) and `static_client` (with a stub frontend build), all built by `helpers.app_client` against a PostgreSQL database that is dropped and recreated per test (`MTR_TRACKER_TEST_DATABASE_URL`). `test_migrate.py` builds legacy SQLite files and checks the automatic import, the CLI and every refusal.
 - **Frontend tests:** `frontend/tests`, using Vitest, jsdom and Testing Library. Coverage includes target action menus, keyboard navigation, tab/probe compatibility, all hop metrics, path-summary alternate addresses, run pagination/filtering, help popovers, heatmap legends, dashboard filtering, clone prefill, the path map card (marker grouping, unlocated hops, networks per step, the Settings pointer, the ip-api.com wording), the GeoIP lookup page and the ip-api.com and MaxMind settings sections. API calls and browser-only sizing are mocked; these are component tests, not screenshot tests.
-- **CI:** pushes to `main` and pull requests run backend tests plus the frontend production build and component tests. A Docker build runs after both jobs pass; CI does not publish the image.
+- **CI:** pushes to `main` and pull requests run the backend tests against a `postgres:16-alpine` service container plus the frontend production build and component tests. `docker compose config` and a Docker build run after both jobs pass; CI does not publish the image.
 
 ## Project layout
 
@@ -352,7 +380,8 @@ backend/app/
   ipapi.py       ip-api.com client: batched lookups, request budget, failure pause, cache
   notify.py      webhook + Pushover delivery, event fan-out
   resolver.py    forward DNS and cached reverse DNS
-  db.py          SQLite schema, transactions, batched retention purge
+  db.py          PostgreSQL schema, connection pool, transactions, batched retention purge
+  migrate.py     one-time import of a legacy SQLite file (automatic at start, or python -m app.migrate)
   models.py      request schemas
   config.py      environment configuration
 backend/tests/   pytest API, scheduler and probe regressions
@@ -362,7 +391,9 @@ frontend/src/
   index.css      theme tokens and shared controls
 frontend/tests/  Vitest component interactions with Testing Library
 docs/            interface guide and screenshots
-.github/workflows/ci.yml  backend tests, frontend build/tests, Docker build
+.github/workflows/ci.yml  backend tests (with a PostgreSQL service), frontend build/tests, Compose check, Docker build
+Dockerfile       frontend build stage, then python:3.12-slim with mtr, ping and the backend
+docker-compose.yml  the app plus a postgres:16-alpine service, one volume each
 docker-entrypoint.sh  fixes /data ownership as root, then drops to the unprivileged user
 ```
 
