@@ -157,9 +157,9 @@ export function Settings() {
                     <div className="help">Shown as the source in webhook payloads and Pushover titles.</div>
                   </div>
                   <div>
-                    <label className="label" htmlFor="route-memory">Route change memory (runs)</label>
+                    <label className="label" htmlFor="route-memory">Chart route memory (runs)</label>
                     <NumberInput id="route-memory" className="input num" min={1} max={500} value={form.route_memory_runs} onChange={(v) => setForm({ ...form, route_memory_runs: v ?? form.route_memory_runs })} />
-                    <div className="help">A run counts as a route change only when its hop sequence appeared in none of this many recent runs that reached the destination. Load-balanced paths that flap between a few routes stay silent; a route not seen in that window is still reported. 1 compares with the previous run alone.</div>
+                    <div className="help">Latency chart only. A route-change marker is dropped when the run's route already appeared among this many recent runs that reached the destination, so a load-balanced path flapping between a few routes does not paper the chart with markers; a route not seen in that window is still marked. Events, notifications and the route-change counts are unaffected. 1 shows every stored change.</div>
                   </div>
                   <div className="sm:col-span-2">
                     <label className="label">Public URL (optional)</label>

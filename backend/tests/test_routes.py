@@ -16,13 +16,13 @@ def _hop(no: int, ip: str | None, count: int = 10) -> HopResult:
     return HopResult(no, ip, None, 100.0 if silent else 0.0, count, 0 if silent else count, *(None if silent else 5.0 for _ in range(10)))
 
 
-async def _insert_run(db, target_id: int, started: float, ips: list[str | None]) -> int:
+async def _insert_run(db, target_id: int, started: float, ips: list[str | None], route_changed: bool = False) -> int:
     hops = [_hop(i + 1, ip) for i, ip in enumerate(ips)]
     async with db.transaction() as tx:
         run_id = await tx.execute(
             "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, dst_ip, reached, hop_count, sent, loss_pct, avg_ms, route_hash, route_changed) "
-            "VALUES (?, ?, ?, 1000, 'ok', ?, 1, ?, 10, 0, 5, ?, 0)",
-            (target_id, started, started + 1, ips[-1], len(ips), route_signature(hops)),
+            "VALUES (?, ?, ?, 1000, 'ok', ?, 1, ?, 10, 0, 5, ?, ?)",
+            (target_id, started, started + 1, ips[-1], len(ips), route_signature(hops), int(route_changed)),
         )
         await tx.executemany(
             "INSERT INTO hops(run_id, hop_no, ip, loss_pct, sent, received, avg_ms, best_ms, worst_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -71,43 +71,50 @@ async def test_silent_hop_is_neither_a_new_route_nor_an_alternate_address(client
     assert hop5["primary"]["ip"] is None and hop5["primary"]["loss_pct"] == 100.0 and hop5["silent_runs"] == 1
 
 
-async def test_recently_seen_route_is_not_a_change(client: AsyncClient) -> None:
-    """ECMP flapping between known routes stays silent; a route outside the memory window is still a change."""
+async def test_chart_markers_forget_recently_seen_routes(client: AsyncClient) -> None:
+    """The latency chart drops markers for routes seen among the last N reached runs; the stored flag and events do not change."""
+    from app.api import route_change_marks
+
+    def run(sig: str, changed: bool = True, reached: bool = True) -> dict:
+        return {"status": "ok", "reached": reached, "route_hash": sig, "route_changed": changed}
+
+    flapping = [run("A", False), run("B"), run("A"), run("B"), run("A"), run("C"), run("B"), run("A")]
+    # Memory 1 is the stored flag as it is.
+    assert route_change_marks(flapping, [], 1) == [False, True, True, True, True, True, True, True]
+    # Memory 3: A and B are known alternates once both were seen; C is new; A and B stay known afterwards.
+    assert route_change_marks(flapping, [], 3) == [False, True, False, False, False, True, False, False]
+    # The runs just before the range warm the memory, so the first points of the range are judged like the rest.
+    assert route_change_marks(flapping[1:3], ["A"], 3) == [True, False]
+    assert route_change_marks(flapping[1:3], ["B", "A"], 3) == [False, False]
+    # Runs that did not reach the destination neither mark nor enter the memory.
+    assert route_change_marks([run("A", False), run("B", False, reached=False), run("B")], [], 5) == [False, False, True]
+
     r = await client.post("/api/targets", json={"name": "Flap", "host": "192.0.2.91", "interval_sec": 60, "enabled": False})
     tid = r.json()["id"]
-    app = app_of(client)
-    db, sched = app.state.db, app.state.scheduler
+    db = app_of(client).state.db
     now = time.time()
-    a, b, c, d, dst = "198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4", "192.0.2.91"
-    route_a, route_b, route_c = [a, b, dst], [a, c, dst], [a, d, dst]
-    for i, ips in enumerate([route_a, route_b, route_a, route_b]):
-        await _insert_run(db, tid, now - 400 + i * 100, ips)
-    sig_a = route_signature([_hop(i + 1, ip) for i, ip in enumerate(route_a)])
-    sig_c = route_signature([_hop(i + 1, ip) for i, ip in enumerate(route_c)])
+    a, b, c, dst = "198.51.100.1", "198.51.100.2", "198.51.100.3", "192.0.2.91"
+    routes = {"A": [a, b, dst], "B": [a, c, dst], "C": [b, c, dst]}
+    # 56 runs a minute apart: more than the smallest max_points, so the bucketed branch can be exercised too.
+    sequence = "ABABAC" + "AB" * 25
+    for i, name in enumerate(sequence):
+        await _insert_run(db, tid, now - 3500 + i * 60, routes[name], route_changed=i > 0 and sequence[i - 1] != name)
 
-    # The previous run used route B. With memory 1 that alone counts, so route A looks like a change ...
-    changed, previous, prev_ips = await sched._route_changed(tid, sig_a, route_a, {"route_memory_runs": 1})
-    assert changed is True and prev_ips == route_b and previous["dst_ip"] == dst
-    # ... while a memory of a few runs remembers route A as a known alternate.
-    changed, _, prev_ips = await sched._route_changed(tid, sig_a, route_a, {"route_memory_runs": 4})
-    assert changed is False and prev_ips == route_b
-    # A silent hop on a known route is a wildcard match, not a new route.
-    changed, _, _ = await sched._route_changed(tid, "wild", [a, None, dst], {"route_memory_runs": 4})
-    assert changed is False
-    # A route never seen in the window is a change whatever the memory.
-    for memory in (1, 4, 500):
-        changed, _, _ = await sched._route_changed(tid, sig_c, route_c, {"route_memory_runs": memory})
-        assert changed is True, memory
-    # Two runs on route C push A out of a short window (C, C, B), so A becomes a change again until the window
-    # is long enough to reach it (C, C, B, A).
-    await _insert_run(db, tid, now - 30, route_c)
-    await _insert_run(db, tid, now - 20, route_c)
-    changed, _, prev_ips = await sched._route_changed(tid, sig_a, route_a, {"route_memory_runs": 3})
-    assert changed is True and prev_ips == route_c
-    changed, _, _ = await sched._route_changed(tid, sig_a, route_a, {"route_memory_runs": 4})
-    assert changed is False
-
-    # The setting itself is validated and saved.
     assert (await client.put("/api/settings", json={"route_memory_runs": 0})).status_code == 422
-    assert (await client.put("/api/settings", json={"route_memory_runs": 50})).json()["route_memory_runs"] == 50
-    assert (await client.get("/api/settings")).json()["route_memory_runs"] == 50
+    # Memory 1: every stored change is a marker (raw points, one per run).
+    await client.put("/api/settings", json={"route_memory_runs": 1})
+    series = (await client.get(f"/api/targets/{tid}/series?range=1h")).json()
+    assert series["bucket_sec"] is None and len(series["points"]) == len(sequence)
+    assert [p["route_changed"] for p in series["points"]] == [i > 0 and sequence[i - 1] != n for i, n in enumerate(sequence)]
+    # Memory 20: only the first appearances of B and C are markers.
+    await client.put("/api/settings", json={"route_memory_runs": 20})
+    series = (await client.get(f"/api/targets/{tid}/series?range=1h")).json()
+    assert [i for i, p in enumerate(series["points"]) if p["route_changed"]] == [1, 5]
+    # Bucketed series apply the same markers per bucket.
+    series = (await client.get(f"/api/targets/{tid}/series?range=1h&max_points=50")).json()
+    assert series["bucket_sec"] and len(series["points"]) < len(sequence)
+    flagged = [p["t"] for p in series["points"] if p["route_changed"]]
+    assert len(flagged) == 2
+    # The stored flags, and therefore the route-change counts, are untouched.
+    detail = (await client.get(f"/api/targets/{tid}?range=1h")).json()
+    assert detail["stats"]["route_changes"] == sum(1 for i, n in enumerate(sequence) if i > 0 and sequence[i - 1] != n)

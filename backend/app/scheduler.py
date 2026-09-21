@@ -262,8 +262,21 @@ class Scheduler:
         reached = final.ip == dst_ip and final.received > 0
         sig = route_signature(hops)
 
-        route_changed, previous, prev_ips = await self._route_changed(t["id"], sig, [h.ip for h in hops], settings) if reached else (False, None, [])
-        dst_changed = route_changed and previous is not None and bool(previous["dst_ip"]) and previous["dst_ip"] != dst_ip
+        # Route changes are only judged between two runs that both reached the destination. An
+        # unreachable run is padded with unknown hops up to max_hops, so comparing across an outage
+        # would announce a bogus reroute on top of the down and recovered events.
+        previous = await self.db.fetchone(
+            "SELECT id, route_hash, dst_ip FROM runs WHERE target_id = ? AND status = 'ok' AND reached = 1 ORDER BY started_at DESC LIMIT 1",
+            (t["id"],),
+        )
+        route_changed = False
+        dst_changed = False
+        prev_ips: list[str | None] = []
+        if reached and previous is not None and previous["route_hash"] and previous["route_hash"] != sig:
+            prev_rows = await self.db.fetchall("SELECT ip FROM hops WHERE run_id = ? ORDER BY hop_no", (previous["id"],))
+            prev_ips = [r["ip"] for r in prev_rows]
+            route_changed = not routes_equivalent(prev_ips, [h.ip for h in hops])
+            dst_changed = bool(previous["dst_ip"]) and previous["dst_ip"] != dst_ip
 
         summary = _summarise(final, reached)
         # The run and its hops land together or not at all.
@@ -303,40 +316,6 @@ class Scheduler:
 
         status = _classify(t, reached, summary)
         await self._apply_status(t, run_id, status, settings, summary=summary)
-
-    async def _route_changed(self, target_id: int, sig: str, current: list[str | None], settings: dict[str, Any]) -> tuple[bool, Any, list[str | None]]:
-        """(changed, previous reached run, its hop ips): is this hop sequence new, or a route seen recently?
-
-        Route changes are only judged between runs that reached the destination. An unreachable run is padded
-        with unknown hops up to max_hops, so comparing across an outage would announce a bogus reroute on top
-        of the down and recovered events. A run differing from the previous one is still not a change when its
-        sequence (hash, or wildcard-equivalent) appeared among the last `route_memory_runs` reached runs: a
-        load-balanced path flaps between the same few routes every run, and that is not a reroute. Memory 1
-        compares with the previous run alone.
-        """
-        memory = max(1, min(500, int(settings.get("route_memory_runs") or 1)))
-        recent = await self.db.fetchall(
-            "SELECT id, route_hash, dst_ip FROM runs WHERE target_id = ? AND status = 'ok' AND reached = 1 ORDER BY started_at DESC LIMIT ?",
-            (target_id, memory),
-        )
-        if not recent or not recent[0]["route_hash"]:
-            return False, recent[0] if recent else None, []
-        previous = recent[0]
-        prev_rows = await self.db.fetchall("SELECT ip FROM hops WHERE run_id = ? ORDER BY hop_no", (previous["id"],))
-        prev_ips = [r["ip"] for r in prev_rows]
-        if previous["route_hash"] == sig or routes_equivalent(prev_ips, current):
-            return False, previous, prev_ips
-        seen: set[str] = {str(previous["route_hash"])}
-        for r in recent[1:]:
-            if not r["route_hash"] or r["route_hash"] in seen:
-                continue
-            seen.add(str(r["route_hash"]))
-            if r["route_hash"] == sig:
-                return False, previous, prev_ips
-            rows = await self.db.fetchall("SELECT ip FROM hops WHERE run_id = ? ORDER BY hop_no", (r["id"],))
-            if routes_equivalent([x["ip"] for x in rows], current):
-                return False, previous, prev_ips
-        return True, previous, prev_ips
 
     async def _execute_probe(self, t: dict[str, Any], settings: dict[str, Any]) -> None:
         """Ping / HTTP / TCP / DNS / Globalping ping: one summary row per run, no hops."""

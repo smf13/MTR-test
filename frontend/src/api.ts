@@ -429,7 +429,7 @@ export interface Event {
 
 export interface Settings {
   retention_days: number;
-  /** A run is a route change only when its hop sequence appeared in none of this many recent reached runs (1 = previous run only). */
+  /** Latency chart only: a route-change marker is dropped when the route appeared among this many recent reached runs (1 shows every stored change). Events are unaffected. */
   route_memory_runs: number;
   asn_lookup: boolean;
   reverse_dns: boolean;

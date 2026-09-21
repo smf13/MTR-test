@@ -233,7 +233,7 @@ class TargetUpdate(_TargetValidators):
 
 class SettingsUpdate(BaseModel):
     retention_days: int | None = Field(default=None, ge=1, le=3650)
-    route_memory_runs: int | None = Field(default=None, ge=1, le=500, description="a run is a route change only when its hop sequence appeared in none of this many recent reached runs; 1 = previous run only")
+    route_memory_runs: int | None = Field(default=None, ge=1, le=500, description="latency chart only: a route-change marker is dropped when the route appeared among this many recent reached runs; 1 shows every stored change")
     asn_lookup: bool | None = None
     reverse_dns: bool | None = None
     webhook_url: str | None = Field(default=None, max_length=2048)

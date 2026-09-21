@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import hmac
 import json
 import math
@@ -643,6 +644,40 @@ async def list_runs(
     return {"total": int(total["n"] or 0), "items": [_run_out(dict(r)) for r in rows]}
 
 
+def route_change_marks(runs: list[dict[str, Any]], warm: list[str | None], memory: int) -> list[bool]:
+    """Which runs (ascending) the latency chart marks as route changes.
+
+    The stored `route_changed` flag says a run differed from the previous reached run (the events, notifications
+    and dashboard counts keep that meaning). The chart is quieter: a flagged run whose route hash appeared among
+    the previous `memory` reached runs is a known alternate (load balancing), not a marker. `warm` holds the
+    hashes of the reached runs just before the range, newest first, so the first points of the range are judged
+    like the rest. Memory 1 reproduces the stored flag.
+    """
+    recent: deque[str] = deque((h for h in reversed(warm) if h), maxlen=max(1, memory))
+    marks: list[bool] = []
+    for r in runs:
+        reached = bool(r.get("status") == "ok" and r.get("reached"))
+        sig = r.get("route_hash")
+        marks.append(bool(r.get("route_changed")) and not (memory > 1 and sig in recent))
+        if reached and sig:
+            recent.append(str(sig))
+    return marks
+
+
+async def _route_marks(db: Database, target_id: int, since: float, settings: dict[str, Any]) -> tuple[list[dict[str, Any]], list[bool]]:
+    """Runs in the range (ascending, light columns) and their chart markers, per `route_change_marks`."""
+    memory = max(1, min(500, int(settings.get("route_memory_runs") or 1)))
+    runs = rows_to_dicts(await db.fetchall(
+        "SELECT id, started_at, status, reached, route_hash, route_changed FROM runs WHERE target_id = ? AND started_at >= ? ORDER BY started_at ASC",
+        (target_id, since),
+    ))
+    warm_rows = await db.fetchall(
+        "SELECT route_hash FROM runs WHERE target_id = ? AND started_at < ? AND status = 'ok' AND reached = 1 ORDER BY started_at DESC LIMIT ?",
+        (target_id, since, memory),
+    ) if memory > 1 else []
+    return runs, route_change_marks(runs, [r["route_hash"] for r in warm_rows], memory)
+
+
 @router.get("/targets/{target_id}/series")
 async def get_series(
     request: Request,
@@ -657,6 +692,9 @@ async def get_series(
         "SELECT COUNT(*) AS n FROM runs WHERE target_id = ? AND started_at >= ?", (target_id, since)
     )
     n = int(count_row["n"] or 0)
+    # Route-change markers with the chart's memory of recent routes (the stored flag stays previous-run based).
+    marked_runs, marks = await _route_marks(db, target_id, since, await db.get_settings())
+    marked = {r["id"] for r, m in zip(marked_runs, marks) if m}
     if n <= max_points:
         rows = await db.fetchall(
             "SELECT id, started_at, status, reached, avg_ms, best_ms, worst_ms, loss_pct, jitter_avg_ms, hop_count, route_changed "
@@ -674,7 +712,7 @@ async def get_series(
                 "jitter": r["jitter_avg_ms"],
                 "hops": r["hop_count"],
                 "ok": bool(r["status"] == "ok" and r["reached"]),
-                "route_changed": bool(r["route_changed"]),
+                "route_changed": r["id"] in marked,
                 "n": 1,
             }
             for r in rows
@@ -682,6 +720,7 @@ async def get_series(
         return {"range_sec": range_sec, "bucket_sec": None, "points": points}
 
     bucket = max(10, math.ceil(range_sec / max_points))
+    marked_buckets = {int(r["started_at"] / bucket) * bucket for r in marked_runs if r["id"] in marked}
     rows = await db.fetchall(
         "SELECT CAST(started_at / ? AS INTEGER) * ? AS bucket, COUNT(*) AS n, "
         "SUM(CASE WHEN status='ok' AND reached=1 THEN 1 ELSE 0 END) AS ok_n, "
@@ -703,7 +742,7 @@ async def get_series(
             "jitter": round(r["jitter"], 3) if r["jitter"] is not None else None,
             "hops": r["hops"],
             "ok": int(r["ok_n"] or 0) == int(r["n"] or 0),
-            "route_changed": int(r["route_changes"] or 0) > 0,
+            "route_changed": int(r["bucket"]) in marked_buckets,
             "n": int(r["n"] or 0),
         }
         for r in rows
