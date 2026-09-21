@@ -111,9 +111,32 @@ function TooltipBox({ active, payload, rangeSec, bucketSec }: { active?: boolean
   );
 }
 
+/** Y-axis width plus the right margin of the latency chart: what the time axis does not get. */
+const LATENCY_PLOT_INSET = 64 + 12;
+
+/**
+ * Route-change markers to draw: every flagged run across the whole range, thinned so no two markers sit closer
+ * than `minGapPx`. Density therefore stays uniform from the oldest run to the newest instead of the markers
+ * being cut off after a fixed count, which used to hide everything older than the last few hours on a
+ * load-balanced path that flags most runs.
+ */
+export function thinRouteChanges<T extends { t: number; routeChanged: boolean }>(rows: T[], domain: [number, number], plotWidth: number, minGapPx = 3): T[] {
+  const span = Math.max(1, domain[1] - domain[0]);
+  const pxPerMs = Math.max(1, plotWidth) / span;
+  const out: T[] = [];
+  let lastX = -Infinity;
+  for (const r of rows) {
+    if (!r.routeChanged) continue;
+    const x = (r.t - domain[0]) * pxPerMs;
+    if (x - lastX < minGapPx) continue;
+    out.push(r);
+    lastX = x;
+  }
+  return out;
+}
+
 export function LatencyChart({ points, rangeSec, bucketSec, height = 260, onPointClick }: { points: SeriesPoint[]; rangeSec: number; bucketSec: number | null; height?: number; onPointClick?: (runId: number) => void }) {
   const rows = useMemo(() => toRows(points), [points]);
-  const routeChanges = useMemo(() => rows.filter((r) => r.routeChanged).slice(-60), [rows]);
   const domain = useDomain(rows, rangeSec);
   if (!rows.length) return <Empty height={height} />;
   return (
@@ -133,7 +156,7 @@ export function LatencyChart({ points, rangeSec, bucketSec, height = 260, onPoin
         <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={48} />
         <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
         <Tooltip content={<TooltipBox rangeSec={rangeSec} bucketSec={bucketSec} />} cursor={{ stroke: "var(--border-strong)" }} isAnimationActive={false} />
-        {routeChanges.map((r) => (
+        {thinRouteChanges(rows, domain, width - LATENCY_PLOT_INSET).map((r) => (
           <ReferenceLine key={r.t} x={r.t} stroke="var(--chart-jitter)" strokeDasharray="3 3" strokeOpacity={0.7} />
         ))}
         <Area type="monotone" dataKey="band" stroke="none" fill="url(#latBand)" isAnimationActive={false} connectNulls={false} dot={false} activeDot={false} />

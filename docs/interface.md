@@ -88,7 +88,7 @@ Timing columns use milliseconds and loss uses percent. Tables show their full he
 
 ## Charts, scales and help
 
-The latency chart's line represents average latency and its band spans best to worst. Dashed markers identify route changes. Select a point to open its associated run. The **Route in use** strip under the chart colours each stretch of time by the path in use; a hop that answered nothing in one run is treated as a wildcard, so rate-limited routers do not create extra routes or split a segment. Hover a route's label to see whether such runs were folded into it. Long ranges may use bucketed averages; read the caption to see the aggregation interval. The latency histogram uses those same series points, so a long-range histogram can describe bucket averages rather than individual runs.
+The latency chart's line represents average latency and its band spans best to worst. Dashed markers identify route changes across the whole range; when changes are denser than a few pixels apart (a load-balanced path flags most runs) the markers are thinned evenly rather than cut off, so old changes stay visible. Select a point to open its associated run. The **Route in use** strip under the chart colours each stretch of time by the path in use; a hop that answered nothing in one run is treated as a wildcard, so rate-limited routers do not create extra routes or split a segment. Hover a route's label to see whether such runs were folded into it. Long ranges may use bucketed averages; read the caption to see the aggregation interval. The latency histogram uses those same series points, so a long-range histogram can describe bucket averages rather than individual runs.
 
 Both heatmaps show numeric legends:
 

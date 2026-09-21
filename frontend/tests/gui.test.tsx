@@ -6,6 +6,7 @@ import { api, type Hop, type HopSummaryEntry, type Target, type RunDetail, type 
 import { TargetActions } from "../src/components/TargetActions";
 import { HelpTip } from "../src/components/Popover";
 import { HopTable } from "../src/components/HopTable";
+import { thinRouteChanges } from "../src/components/Charts";
 import { Sparkline } from "../src/components/Sparkline";
 import { HeatLegend } from "../src/components/HopHeatmap";
 import { TargetDetail } from "../src/pages/TargetDetail";
@@ -103,6 +104,26 @@ describe("target actions", () => {
     await user.click(trigger);
     await user.click(screen.getByRole("button", { name: "Outside" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("route-change markers", () => {
+  it("keeps markers across the whole range, thinned by pixel distance rather than cut off by count", () => {
+    // 288 runs over 24 hours, every one a route change (a load-balanced path), on a 600px plot.
+    const day = 86_400_000;
+    const start = 1_700_000_000_000;
+    const rows = Array.from({ length: 288 }, (_, i) => ({ t: start + i * 300_000, routeChanged: true }));
+    const kept = thinRouteChanges(rows, [start, start + day], 600, 3);
+    // 600px / 3px = 200 slots at most, and the markers reach from the first run to the last.
+    expect(kept.length).toBeGreaterThan(100);
+    expect(kept.length).toBeLessThanOrEqual(200);
+    expect(kept[0].t).toBe(start);
+    expect(kept[kept.length - 1].t).toBeGreaterThan(start + day - 600_000);
+    // Sparse changes are all kept, in order, and unflagged runs never appear.
+    const sparse = rows.map((r, i) => ({ ...r, routeChanged: i % 50 === 0 }));
+    expect(thinRouteChanges(sparse, [start, start + day], 600).map((r) => r.t)).toEqual(sparse.filter((r) => r.routeChanged).map((r) => r.t));
+    // A zero-width plot (before the ResizeObserver reports) still returns a marker rather than throwing.
+    expect(thinRouteChanges(rows, [start, start + day], 0).length).toBeGreaterThanOrEqual(1);
   });
 });
 
