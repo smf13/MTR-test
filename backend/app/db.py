@@ -16,6 +16,7 @@ import asyncio
 import functools
 import json
 import logging
+import os
 import re
 import time
 from contextlib import asynccontextmanager
@@ -356,6 +357,14 @@ class Database(_Executor):
                 raise RuntimeError(f"cannot connect to PostgreSQL at {self.describe()}: {exc} (check MTR_TRACKER_DATABASE_URL)") from exc
             except ValueError as exc:
                 raise RuntimeError(f"MTR_TRACKER_DATABASE_URL is not a valid PostgreSQL URL: {exc}") from exc
+            except PermissionError as exc:
+                # asyncpg looks for libpq client certificates under HOME before it connects; a process dropped to
+                # another user with root's environment fails every attempt this way, so waiting cannot help.
+                raise RuntimeError(
+                    f"cannot connect to PostgreSQL at {self.describe()}: {exc}. asyncpg reads client certificates from "
+                    f"HOME={os.environ.get('HOME', '')}/.postgresql; give the process a readable HOME, or add ?sslmode=disable to "
+                    "MTR_TRACKER_DATABASE_URL when the server speaks no TLS"
+                ) from exc
             except _RETRY_ERRORS as exc:
                 if time.monotonic() >= deadline:
                     raise RuntimeError(

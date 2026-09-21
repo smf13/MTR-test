@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from httpx import AsyncClient
 
-from helpers import wait_for_runs as _wait_for_runs
+from helpers import wait_for_runs as _wait_for_runs, wait_until
 
 
 async def test_target_lifecycle_and_run(client: AsyncClient) -> None:
@@ -69,10 +69,15 @@ async def test_unresolvable_host_marks_target_down(client: AsyncClient) -> None:
     t = r.json()
     runs = await _wait_for_runs(client, t["id"], 1)
     assert runs[0]["status"] == "error" and "DNS" in (runs[0]["error"] or "")
+
+    async def recorded() -> bool:
+        return (await client.get("/api/events", params={"target_id": t["id"]})).json()["total"] >= 1
+
+    assert await wait_until(recorded)
     full = (await client.get(f"/api/targets/{t['id']}")).json()
     assert full["last_status"] == "down"
     events = (await client.get("/api/events", params={"target_id": t["id"]})).json()
-    assert events["total"] >= 1 and events["items"][0]["kind"] == "down"
+    assert events["items"][0]["kind"] == "down"
 
 
 async def test_notification_test_endpoint(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:

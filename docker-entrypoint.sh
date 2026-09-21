@@ -2,7 +2,8 @@
 # Container entrypoint. Starts as root only long enough to make the data directory (GeoIP databases and, on an
 # installation upgraded from the SQLite releases, the legacy database file) writable for the unprivileged "mtr"
 # user, then drops privileges. mtr-packet and ping carry the cap_net_raw file capability (set in the Dockerfile),
-# so raw-socket probing keeps working without root.
+# so raw-socket probing keeps working without root. setpriv keeps the environment, so the image sets HOME=/app:
+# the dropped process must never look into /root (asyncpg searches HOME for client certificates).
 #
 # MTR_TRACKER_RUN_AS_ROOT=1 keeps the process as root, which is only needed for mtr probe intervals
 # below one second (mtr refuses them for non-root users).

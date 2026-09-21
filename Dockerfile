@@ -13,7 +13,10 @@ LABEL org.opencontainers.image.title="MTR Tracker" \
       org.opencontainers.image.description="Continuous MTR monitoring with per-hop history" \
       org.opencontainers.image.source="https://github.com/smf13/MTR-test"
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+# HOME belongs to the unprivileged user: the entrypoint's setpriv keeps root's environment, and asyncpg searches HOME
+# for client certificates before it connects, which must never land in the unreadable /root.
+ENV HOME=/app \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     MTR_TRACKER_DATA_DIR=/data \
     MTR_TRACKER_STATIC_DIR=/app/static \

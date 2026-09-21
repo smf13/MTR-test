@@ -36,7 +36,8 @@ services:
       # GeoIP databases and, on an installation upgraded from the SQLite releases, the imported mtr-tracker.db.migrated.
       - mtr-tracker-data:/data
     environment:
-      MTR_TRACKER_DATABASE_URL: postgresql://mtr:${MTR_TRACKER_DB_PASSWORD:-mtr}@db:5432/mtr_tracker
+      # The bundled server speaks no TLS and the link never leaves the Compose network; a server elsewhere takes ?sslmode=require.
+      MTR_TRACKER_DATABASE_URL: postgresql://mtr:${MTR_TRACKER_DB_PASSWORD:-mtr}@db:5432/mtr_tracker?sslmode=disable
       # Runs older than the retention setting (default 30 days) are purged hourly.
       MTR_TRACKER_MAX_CONCURRENT_RUNS: "8"
       MTR_TRACKER_LOG_LEVEL: "info"

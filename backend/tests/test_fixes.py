@@ -249,3 +249,21 @@ async def test_purge_runs_in_batches_and_keeps_recent_data(client: AsyncClient) 
     assert len(events) == 1 and events[0]["run_id"] is None  # recent event kept with its run reference cleared; old one purged
     indexes = {r["name"] for r in await db.fetchall("SELECT indexname AS name FROM pg_indexes WHERE schemaname = current_schema()")}
     assert {"idx_events_run", "idx_runs_started"} <= indexes
+
+
+async def test_connect_fails_fast_on_an_unreadable_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A permission error while asyncpg looks for client certificates is a configuration mistake, not a server still starting."""
+    import asyncpg
+
+    from app.db import Database
+
+    async def denied(*args: Any, **kwargs: Any) -> Any:
+        raise PermissionError(13, "Permission denied", "/root/.postgresql/postgresql.key")
+
+    monkeypatch.setattr(asyncpg, "create_pool", denied)
+    monkeypatch.setenv("HOME", "/root")
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="sslmode=disable") as info:
+        await Database("postgresql://mtr:secret@db:5432/mtr_tracker", connect_timeout=30).connect()
+    assert "HOME=/root" in str(info.value) and "postgresql.key" in str(info.value) and "secret" not in str(info.value)
+    assert time.monotonic() - started < 1, "no retries for a permission error"

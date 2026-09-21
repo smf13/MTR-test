@@ -7,7 +7,7 @@ import importlib
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
 from urllib.parse import urlsplit, urlunsplit
 
 import asyncpg
@@ -107,6 +107,17 @@ async def app_client(
 def app_of(client: AsyncClient) -> Any:
     """The FastAPI app behind a test client; its state holds the database and the scheduler."""
     return client._transport.app  # type: ignore[attr-defined]
+
+
+async def wait_until(check: Callable[[], Awaitable[bool]], timeout: float = 5.0) -> bool:
+    """Poll an async condition: the scheduler writes a run, its status and its event in separate statements, so a
+    request can see the run before the rest exists."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if await check():
+            return True
+        await asyncio.sleep(0.1)
+    return await check()
 
 
 async def wait_for_runs(c: AsyncClient, target_id: int, n: int, timeout: float = 15.0) -> list[dict]:

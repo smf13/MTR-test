@@ -8,7 +8,7 @@ import httpx
 import pytest
 from httpx import AsyncClient
 
-from helpers import app_of, wait_for_runs
+from helpers import app_of, wait_for_runs, wait_until
 
 from app import notify
 
@@ -43,10 +43,15 @@ async def test_muted_target_records_events_without_delivering_them(client: Async
 
     await wait_for_runs(client, quiet, 1)
     await wait_for_runs(client, loud, 1)
-    await _drain_notifications(client)
 
-    events = {e["target_id"] for e in (await client.get("/api/events", params={"kind": "down"})).json()["items"]}
-    assert {quiet, loud} <= events, "the event itself is recorded for both targets"
+    async def down_events() -> set[int]:
+        return {e["target_id"] for e in (await client.get("/api/events", params={"kind": "down"})).json()["items"]}
+
+    async def both_recorded() -> bool:
+        return {quiet, loud} <= await down_events()
+
+    assert await wait_until(both_recorded), "the event itself is recorded for both targets"
+    await _drain_notifications(client)
     assert [p["target"]["id"] for p in delivered] == [loud], "only the unmuted target reaches the webhook"
 
     # The switch is part of the editable definition: update, export/import and bulk actions carry it.
