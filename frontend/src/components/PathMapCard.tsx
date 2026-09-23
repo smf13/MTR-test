@@ -25,6 +25,8 @@ export interface MapStop {
   accuracyKm?: number | null;
   /** Networks at this stop in hop order ("AS64500 Example Transit GmbH"), without repeats. */
   networks: string[];
+  /** Addresses at this stop in hop order, without repeats. */
+  ips: string[];
 }
 
 /** One marker on the map: every stop that lands in the same place, whether or not they are consecutive. */
@@ -43,6 +45,8 @@ export interface MapPlace {
   accuracyKm?: number | null;
   /** Networks of every stop at this place, in path order, without repeats. */
   networks: string[];
+  /** Addresses of every stop at this place, in path order, without repeats; the marker prints them under its label. */
+  ips: string[];
 }
 
 /** "about 100 km" for an accuracy radius; empty when unknown. */
@@ -85,6 +89,16 @@ function hopLine(h: GeoHop): string {
   return `${h.hop_no}. ${who}${stats ? ` · ${stats}` : ""}`;
 }
 
+/** True for an IPv4 or IPv6 literal. A source's `ip` can hold a name instead ("simulator" in simulation mode). */
+function isAddress(value: string | null | undefined): value is string {
+  return !!value && (/^\d{1,3}(\.\d{1,3}){3}$/.test(value) || (value.includes(":") && /^[0-9a-f:.]+$/i.test(value)));
+}
+
+/** The address line of a marker: the only address, or the first one and how many more the popup lists. */
+export function ipText(ips: string[]): string {
+  return ips.length > 1 ? `${ips[0]} +${ips.length - 1}` : ips[0] ?? "";
+}
+
 /** Append a network to a list in path order, skipping repeats and unknowns. */
 function addNetwork(list: string[], text: string): void {
   if (text && !list.includes(text)) list.push(text);
@@ -122,7 +136,7 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
     .filter((s) => s.geo)
     .map((s, i) => {
       const net = networkText(s.asn, s.as_name);
-      return { id: `src-${i}`, kind: "source" as const, lat: s.geo!.lat, lon: s.geo!.lon, title: s.label, place: placeOf(s.geo), lines: [s.evidence, ...(s.ip && !s.evidence.includes(s.ip) ? [s.ip] : []), ...(net ? [`network ${net}`] : [])].filter(Boolean), hopNos: [], accuracyKm: s.geo!.accuracy_km, networks: net ? [net] : [] };
+      return { id: `src-${i}`, kind: "source" as const, lat: s.geo!.lat, lon: s.geo!.lon, title: s.label, place: placeOf(s.geo), lines: [s.evidence, ...(s.ip && !s.evidence.includes(s.ip) ? [s.ip] : []), ...(net ? [`network ${net}`] : [])].filter(Boolean), hopNos: [], accuracyKm: s.geo!.accuracy_km, networks: net ? [net] : [], ips: isAddress(s.ip) ? [s.ip] : [] };
     });
   const destIp = geo.destination?.ip ?? null;
   const destWord = destinationWord(geo.destination?.role);
@@ -136,6 +150,7 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
       last.hopNos.push(h.hop_no);
       last.lines.push(hopLine(h));
       addNetwork(last.networks, net);
+      addNetwork(last.ips, h.ip ?? "");
       continue;
     }
     chain.push({
@@ -150,12 +165,13 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
       reached: isDest ? geo.destination?.reached : undefined,
       accuracyKm: h.geo.accuracy_km,
       networks: net ? [net] : [],
+      ips: h.ip ? [h.ip] : [],
     });
   }
   if (geo.destination?.geo && !chain.some((s) => s.kind === "destination")) {
     const d = geo.destination;
     const net = networkText(d.asn, d.as_name);
-    chain.push({ id: "dst", kind: "destination", lat: d.geo!.lat, lon: d.geo!.lon, title: `${destWord} · ${d.host}`, place: placeOf(d.geo), lines: [...(d.ip && d.ip !== d.host ? [d.ip] : []), ...(net ? [`network ${net}`] : [])], hopNos: [], reached: d.reached, accuracyKm: d.geo!.accuracy_km, networks: net ? [net] : [] });
+    chain.push({ id: "dst", kind: "destination", lat: d.geo!.lat, lon: d.geo!.lon, title: `${destWord} · ${d.host}`, place: placeOf(d.geo), lines: [...(d.ip && d.ip !== d.host ? [d.ip] : []), ...(net ? [`network ${net}`] : [])], hopNos: [], reached: d.reached, accuracyKm: d.geo!.accuracy_km, networks: net ? [net] : [], ips: d.ip ? [d.ip] : [] });
   }
   const line = chain.map((s) => [s.lat, s.lon] as [number, number]);
   const paths = sources.length ? sources.map((s) => [[s.lat, s.lon] as [number, number], ...line]) : [line];
@@ -169,7 +185,7 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
   for (const stop of stops) {
     let p = places.find((x) => near(x, stop));
     if (!p) {
-      p = { id: `place-${places.length}`, kind: "hop", lat: stop.lat, lon: stop.lon, label: "", title: "", place: stop.place, lines: [], hopNos: [], networks: [] };
+      p = { id: `place-${places.length}`, kind: "hop", lat: stop.lat, lon: stop.lon, label: "", title: "", place: stop.place, lines: [], hopNos: [], networks: [], ips: [] };
       places.push(p);
       members.set(p.id, []);
     }
@@ -183,6 +199,8 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
     p.hopNos = hopNos;
     p.lines = group.flatMap((s) => s.lines);
     group.forEach((s) => s.networks.forEach((n) => addNetwork(p.networks, n)));
+    // The far end's own address leads on its marker, ahead of transit hops placed in the same city.
+    [...group.filter((s) => s.kind === "destination"), ...group.filter((s) => s.kind !== "destination")].forEach((s) => s.ips.forEach((ip) => addNetwork(p.ips, ip)));
     p.reached = dst?.reached;
     p.accuracyKm = group.map((s) => s.accuracyKm).find((a) => a !== null && a !== undefined) ?? null;
     p.kind = dst ? "destination" : src.length ? "source" : "hop";

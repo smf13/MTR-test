@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import type { MapFocus, MapPlace } from "./PathMapCard";
+import { ipText, type MapFocus, type MapPlace } from "./PathMapCard";
 
 /** Leaflet lives in its own chunk: this file is only loaded once a target page has a map to draw. */
 
@@ -83,7 +83,8 @@ export default function PathMap({ places, paths, dark, focus, onSelect, height =
       // when several hops share one place (which is why two dashed lines can meet at the target).
       const icon = L.divIcon({
         className: `path-map-marker path-map-marker-${place.kind}`,
-        html: `<span style="background:${color}" title="${escapeHtml(place.title)}">${escapeHtml(place.label)}</span>`,
+        // The address goes on a second line: the only one at this place, or the first and how many more ("+2").
+        html: `<span style="background:${color}" title="${escapeHtml([place.title, ...place.ips].join("\n"))}">${escapeHtml(place.label)}${place.ips.length ? `<small class="path-map-marker-ip">${escapeHtml(ipText(place.ips))}</small>` : ""}</span>`,
         iconSize: [0, 0],
         iconAnchor: [0, 0],
       });

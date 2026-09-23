@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { api, type GeoIpStatus, type GeoPoint, type PathGeo, type Settings as SettingsT } from "../src/api";
-import { PathMapCard, buildStops, hopRanges } from "../src/components/PathMapCard";
+import { PathMapCard, buildStops, hopRanges, ipText } from "../src/components/PathMapCard";
 import { Settings } from "../src/pages/Settings";
 import { GeoLookup } from "../src/pages/GeoLookup";
 import type { MapFocus, MapPlace } from "../src/components/PathMapCard";
@@ -56,6 +56,12 @@ describe("path map", () => {
     expect(places.map((p) => [p.kind, p.label])).toEqual([["source", "Monitor"], ["hop", "3–4, 7"], ["destination", "Target · 6"]]);
     expect(places[2].title).toBe("Target · www.example · also hop 6");
     expect(places[1].lines).toHaveLength(3);
+    // Every marker carries its addresses: the monitor's, each hop's, and on the target marker the target's first.
+    expect(places.map((p) => p.ips)).toEqual([["198.51.100.7"], ["203.0.113.1", "203.0.113.2", "203.0.113.21"], ["192.0.2.1", "203.0.113.20"]]);
+    expect(places.map((p) => ipText(p.ips))).toEqual(["198.51.100.7", "203.0.113.1 +2", "192.0.2.1 +1"]);
+    expect(ipText([])).toBe("");
+    // A source whose "address" is a name (simulation mode says "simulator") gets no address line.
+    expect(buildStops({ ...geo, sources: [{ ...geo.sources[0], ip: "simulator" }] }).places[0].ips).toEqual([]);
     expect(route.map((r) => `${r.place} ${r.what}`)).toEqual(["Berlin, Germany monitor", "Frankfurt, Hesse, Germany hops 3–4", "London, United Kingdom hop 6", "Frankfurt, Hesse, Germany hop 7", "London, United Kingdom hop 8, target"]);
     // Steps point at the marker they sit on, and carry only their own hops' detail lines.
     expect(route.map((r) => r.placeId)).toEqual(["place-0", "place-1", "place-2", "place-1", "place-2"]);

@@ -44,7 +44,7 @@ export function GeoLookup() {
     if (!result?.geo) return null;
     const label = result.kind === "address" || result.kind === "host" ? result.ip ?? result.query : "Monitor";
     const net = networkText(result.asn, result.as_name);
-    return { id: "lookup", kind: result.kind === "address" || result.kind === "host" ? "destination" : "source", lat: result.geo.lat, lon: result.geo.lon, label, title: label, place: placeOf(result.geo), lines: [], hopNos: [], reached: true, accuracyKm: result.geo.accuracy_km, networks: net ? [net] : [] };
+    return { id: "lookup", kind: result.kind === "address" || result.kind === "host" ? "destination" : "source", lat: result.geo.lat, lon: result.geo.lon, label, title: label, place: placeOf(result.geo), lines: [], hopNos: [], reached: true, accuracyKm: result.geo.accuracy_km, networks: net ? [net] : [], ips: label !== result.ip && result.ip ? [result.ip] : [] };
   }, [result]);
 
   return (
