@@ -99,7 +99,11 @@ async def test_secrets_are_masked_without_the_token(protected_client: AsyncClien
     from helpers import TEST_ADMIN_DSN, TEST_DB_NAME
 
     assert status["database"].startswith("postgresql://") and status["database"].endswith("/" + TEST_DB_NAME)
-    assert not urlsplit(TEST_ADMIN_DSN).password or urlsplit(TEST_ADMIN_DSN).password not in status["database"]
+    # The URL carries no password part at all. A substring check misfired when the password equals the user
+    # name (CI's postgres:postgres), because the user name is rightly still shown.
+    shown = urlsplit(status["database"])
+    assert shown.password is None and ":" not in (shown.netloc.rpartition("@")[0])
+    assert shown.username == urlsplit(TEST_ADMIN_DSN).username
     assert status["db_size_bytes"] > 0
 
 
