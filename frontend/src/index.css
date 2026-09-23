@@ -220,6 +220,8 @@ body {
 .route-step { display: inline-flex; max-width: 100%; align-items: baseline; gap: 4px; border-radius: 6px; border: 1px solid transparent; padding: 2px 6px; background: var(--surface-2); color: var(--text); transition: background-color 0.12s, border-color 0.12s; }
 .route-step:hover { border-color: var(--border-strong); }
 .route-step[data-active="true"] { background: var(--accent-soft); border-color: var(--accent); }
+/* On a phone the parts of a step wrap as whole pieces (place, hops, address, networks) instead of mid-item. */
+.route-step { flex-wrap: wrap; row-gap: 0; }
 .route-step .route-step-network { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .route-step .route-step-caret { align-self: center; transition: transform 0.12s; }
 .route-step[data-active="true"] .route-step-caret { transform: rotate(180deg); }

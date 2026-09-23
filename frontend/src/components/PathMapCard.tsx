@@ -61,6 +61,8 @@ export interface RouteStep {
   kind: "source" | "hop" | "destination";
   /** The marker this step sits on, so selecting the step can focus the map and vice versa. */
   placeId: string;
+  /** Addresses of this step's stops in hop order, without repeats; the button prints `ipText(ips)`. */
+  ips: string[];
   /** Detail lines shown when the step is expanded (same content as the marker popup, for these stops only). */
   lines: string[];
   /** Networks crossed in this step, in hop order, without repeats; printed on the step itself. */
@@ -221,24 +223,26 @@ export function buildStops(geo: PathGeo): { stops: MapStop[]; paths: [number, nu
 
   // The textual route: consecutive stops in one place become one step ("Frankfurt · hops 3–5").
   const remote = geo.sources.some((s) => s.kind === "probe");
-  const steps: { stop: MapStop; hopNos: number[]; lines: string[]; networks: string[] }[] = [];
+  const steps: { stop: MapStop; hopNos: number[]; lines: string[]; networks: string[]; ips: string[] }[] = [];
   for (const stop of stops) {
     const prev = steps[steps.length - 1];
     if (prev && prev.stop.kind === "hop" && stop.kind === "hop" && (near(prev.stop, stop) || (stop.place && prev.stop.place === stop.place))) {
       prev.hopNos.push(...stop.hopNos);
       prev.lines.push(...stop.lines);
       stop.networks.forEach((n) => addNetwork(prev.networks, n));
+      stop.ips.forEach((ip) => addNetwork(prev.ips, ip));
       continue;
     }
-    steps.push({ stop, hopNos: [...stop.hopNos], lines: [...stop.lines], networks: [...stop.networks] });
+    steps.push({ stop, hopNos: [...stop.hopNos], lines: [...stop.lines], networks: [...stop.networks], ips: [...stop.ips] });
   }
-  const route: RouteStep[] = steps.map(({ stop, hopNos, lines, networks }) => ({
+  const route: RouteStep[] = steps.map(({ stop, hopNos, lines, networks, ips }) => ({
     place: stop.place || "unknown place",
     kind: stop.kind,
     what: stop.kind === "source" ? (remote ? "probe" : "monitor") : stop.kind === "destination" ? (hopNos.length ? `hop ${hopNos[0]}, ${destWord.toLowerCase()}` : destWord.toLowerCase()) : hopsWord(hopNos),
     placeId: places.find((p) => near(p, stop))?.id ?? "",
     lines,
     networks,
+    ips,
   }));
   // The networks the path crosses, start to end, each once at its first appearance.
   const networks: string[] = [];
@@ -359,7 +363,8 @@ export function PathMapCard({ geo, pathProbe }: { geo: PathGeo | null; pathProbe
                   onKeyDown={(e) => onStepKey(e, i)}
                 >
                   <span className="font-medium">{step.place}</span>
-                  <span className="text-faint">{step.what}</span>
+                  <span className="whitespace-nowrap text-faint">{step.what}</span>
+                  {step.ips.length > 0 && <span className="route-step-ip whitespace-nowrap font-mono text-muted" title={step.ips.join(", ")}>{ipText(step.ips)}</span>}
                   {step.networks.length > 0 && <span className="route-step-network text-faint" title={step.networks.join(", ")}>{step.networks.join(" · ")}</span>}
                   <ChevronDown size={11} className="route-step-caret text-faint" />
                 </button>

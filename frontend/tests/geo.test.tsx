@@ -60,6 +60,8 @@ describe("path map", () => {
     expect(places.map((p) => p.ips)).toEqual([["198.51.100.7"], ["203.0.113.1", "203.0.113.2", "203.0.113.21"], ["192.0.2.1", "203.0.113.20"]]);
     expect(places.map((p) => ipText(p.ips))).toEqual(["198.51.100.7", "203.0.113.1 +2", "192.0.2.1 +1"]);
     expect(ipText([])).toBe("");
+    // The route steps print the same addresses: one per step here, the first and a count where hops share a step.
+    expect(route.map((r) => ipText(r.ips))).toEqual(["198.51.100.7", "203.0.113.1 +1", "203.0.113.20", "203.0.113.21", "192.0.2.1"]);
     // A source whose "address" is a name (simulation mode says "simulator") gets no address line.
     expect(buildStops({ ...geo, sources: [{ ...geo.sources[0], ip: "simulator" }] }).places[0].ips).toEqual([]);
     expect(route.map((r) => `${r.place} ${r.what}`)).toEqual(["Berlin, Germany monitor", "Frankfurt, Hesse, Germany hops 3–4", "London, United Kingdom hop 6", "Frankfurt, Hesse, Germany hop 7", "London, United Kingdom hop 8, target"]);
@@ -142,8 +144,10 @@ describe("path map", () => {
     // The map chunk is lazy-loaded, so it appears after the suspense fallback.
     expect((await screen.findByTestId("path-map")).textContent).toBe("source[Monitor]hop[3–4, 7]destination[Target · 6]");
     const route = screen.getByRole("list", { name: "Route by place" });
-    // Every step prints the networks it crosses after the hop numbers.
-    expect(within(route).getAllByRole("button").map((b) => b.textContent)).toEqual(["Berlin, GermanymonitorAS64499 Home ISP AG", "Frankfurt, Hesse, Germanyhops 3–4AS64500 Example Transit GmbH", "London, United Kingdomhop 6AS64501 Example Hosting Ltd", "Frankfurt, Hesse, Germanyhop 7AS64500", "London, United Kingdomhop 8, targetAS64501 Example Hosting Ltd"]);
+    // Every step prints its addresses and then the networks it crosses after the hop numbers.
+    expect(within(route).getAllByRole("button").map((b) => b.textContent)).toEqual(["Berlin, Germanymonitor198.51.100.7AS64499 Home ISP AG", "Frankfurt, Hesse, Germanyhops 3–4203.0.113.1 +1AS64500 Example Transit GmbH", "London, United Kingdomhop 6203.0.113.20AS64501 Example Hosting Ltd", "Frankfurt, Hesse, Germanyhop 7203.0.113.21AS64500", "London, United Kingdomhop 8, target192.0.2.1AS64501 Example Hosting Ltd"]);
+    // A step holding several addresses lists them all on hover.
+    expect(within(route).getAllByRole("button")[1].querySelector(".route-step-ip")?.getAttribute("title")).toBe("203.0.113.1, 203.0.113.2");
     // The path's networks are listed once each, start to end, under the route.
     expect(screen.getByTestId("path-networks").textContent).toBe("Networks:AS64499 Home ISP AGAS64500 Example Transit GmbHAS64501 Example Hosting LtdAS64500");
     const notes = screen.getByText("Not on the map:").parentElement!;
@@ -162,7 +166,7 @@ describe("path map", () => {
     await screen.findByTestId("path-map");
     // The mtr-reported numbers still show on the steps; the summary line says why there are no names.
     const route = screen.getByRole("list", { name: "Route by place" });
-    expect(within(route).getAllByRole("button")[1].textContent).toBe("Frankfurt, Hesse, Germanyhops 3–4AS64500");
+    expect(within(route).getAllByRole("button")[1].textContent).toBe("Frankfurt, Hesse, Germanyhops 3–4203.0.113.1 +1AS64500");
     const line = screen.getByTestId("path-networks");
     expect(line.textContent).toBe("Networks:AS64500AS64501· names appear once the GeoLite2 ASN database is downloaded; it is fetched with the City database (Download now under Settings).");
     expect(within(line).getByRole("link", { name: "Download now" }).getAttribute("href")).toBe("/settings");
