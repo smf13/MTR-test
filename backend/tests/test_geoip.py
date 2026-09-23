@@ -111,6 +111,7 @@ async def test_probe_targets_get_a_destination_marker(client: AsyncClient) -> No
         "http": {"name": "Geo HTTP", "host": "https://status.example.test/health", "type": "http", "interval_sec": 60},
         "dns-resolver": {"name": "Geo DNS @", "host": "example.test", "type": "dns", "interval_sec": 60, "options": {"resolver": "9.9.9.9"}},
         "dns-answer": {"name": "Geo DNS", "host": "example.test", "type": "dns", "interval_sec": 60},
+        "dns-doh": {"name": "Geo DoH", "host": "example.test", "type": "dns", "interval_sec": 60, "options": {"transport": "doh", "resolver": "https://9.9.9.9/dns-query"}},
         "gp-ping": {"name": "Geo GP", "host": "example.test", "type": "globalping", "interval_sec": 60, "options": {"measurement": "ping", "location": "DE"}},
     }
     ids = {k: (await client.post("/api/targets", json=spec)).json()["id"] for k, spec in specs.items()}
@@ -124,6 +125,8 @@ async def test_probe_targets_get_a_destination_marker(client: AsyncClient) -> No
     # The URL's host is resolved (a stable made-up address in simulation) and reported without the scheme or path.
     assert geo["http"]["destination"]["host"] == "status.example.test" and geo["http"]["destination"]["ip"].startswith("198.51.100.") and geo["http"]["destination"]["role"] == "target"
     assert geo["dns-resolver"]["destination"] == {**geo["dns-resolver"]["destination"], "ip": "9.9.9.9", "host": "9.9.9.9", "role": "resolver"}
+    # A DNS over HTTPS resolver given as a URL is placed by its host, not by the URL text.
+    assert geo["dns-doh"]["destination"] == {**geo["dns-doh"]["destination"], "ip": "9.9.9.9", "host": "9.9.9.9", "role": "resolver"}
     assert geo["dns-answer"]["destination"]["role"] == "answer" and geo["dns-answer"]["destination"]["ip"] == "192.0.2.10"
     assert geo["gp-ping"]["sources"][0]["kind"] == "probe" and geo["gp-ping"]["sources"][0]["geo"]["lat"] and geo["gp-ping"]["destination"]["ip"] == "192.0.2.10"
     # A Globalping probe reports its own network; it is shown as the probe's ASN and name.

@@ -124,7 +124,7 @@ async def test_run_dns_random_prefix_measures_uncached_lookups(live: None, monke
             self.nameservers: list[str] = []
             self.lifetime = self.timeout = 0.0
 
-        async def resolve(self, name: str, rtype: str) -> None:
+        async def resolve(self, name: str, rtype: str, tcp: bool = False) -> None:
             queried.append(name)
             raise dns.resolver.NXDOMAIN()
 
@@ -142,6 +142,140 @@ async def test_run_dns_random_prefix_measures_uncached_lookups(live: None, monke
     assert strict.ok and not strict.reached  # an expected answer still has to be present
     plain = await run_dns(target, {})
     assert plain.ok and not plain.reached and "NXDOMAIN" in (plain.error or "") and queried[-1] == "example.test"
+
+
+def _dns_reply(wire: bytes, rcode: int = 0) -> bytes:
+    import dns.message
+    import dns.rrset
+
+    query = dns.message.from_wire(wire)
+    reply = dns.message.make_response(query)
+    reply.set_rcode(rcode)
+    if rcode == 0:
+        reply.answer.append(dns.rrset.from_text(query.question[0].name, 60, "IN", "A", "192.0.2.53"))
+    return reply.to_wire()
+
+
+class _DnsUdp(asyncio.DatagramProtocol):
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr: tuple) -> None:
+        self.transport.sendto(_dns_reply(data), addr)  # type: ignore[attr-defined]
+
+
+async def _dns_stream(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    # RFC 1035 4.2.2 (and RFC 7858 for TLS): every message is preceded by its two-byte length.
+    size = int.from_bytes(await reader.readexactly(2), "big")
+    reply = _dns_reply(await reader.readexactly(size))
+    writer.write(len(reply).to_bytes(2, "big") + reply)
+    await writer.drain()
+    writer.close()
+
+
+async def test_run_dns_over_udp_tcp_and_tls(live: None, tmp_path) -> None:
+    import shutil
+    import ssl
+    import subprocess
+
+    loop = asyncio.get_running_loop()
+    udp, _ = await loop.create_datagram_endpoint(_DnsUdp, local_addr=("127.0.0.1", 0))
+    udp_port = udp.get_extra_info("sockname")[1]
+    tcp_server = await asyncio.start_server(_dns_stream, "127.0.0.1", 0)
+    tcp_port = tcp_server.sockets[0].getsockname()[1]
+    target = {"host": "example.test", "type": "dns"}
+    try:
+        o = await run_dns(target, {"transport": "udp", "resolver": "127.0.0.1", "resolver_port": udp_port})
+        assert o.reached and o.details["answers"] == ["192.0.2.53"] and o.details["transport"] == "udp" and o.details["port"] == udp_port
+        assert o.details["nameserver"] == "127.0.0.1" and o.command == f"dns A example.test @127.0.0.1 -p {udp_port}"
+
+        o = await run_dns(target, {"transport": "tcp", "resolver": "127.0.0.1", "resolver_port": tcp_port})
+        assert o.reached and o.details["answers"] == ["192.0.2.53"] and o.details["transport"] == "tcp" and o.command.endswith("+tcp")
+
+        # Nothing listens for UDP on the TCP server's port pair: a UDP query there times out instead of silently using TCP.
+        o = await run_dns(target, {"transport": "udp", "resolver": "127.0.0.1", "resolver_port": tcp_port, "timeout_sec": 0.5})
+        assert o.ok and not o.reached and o.loss_pct == 100.0
+
+        if shutil.which("openssl") is None:
+            pytest.skip("openssl is needed to make a certificate for the DNS over TLS server")
+        cert, key = tmp_path / "cert.pem", tmp_path / "key.pem"
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-days", "1",
+             "-subj", "/CN=dot.test", "-addext", "subjectAltName=IP:127.0.0.1"],
+            check=True, capture_output=True,
+        )
+        ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        ctx.load_cert_chain(cert, key)
+        tls_server = await asyncio.start_server(_dns_stream, "127.0.0.1", 0, ssl=ctx)
+        tls_port = tls_server.sockets[0].getsockname()[1]
+        try:
+            # A self-signed certificate fails verification, which is exactly what the check is there to catch...
+            o = await run_dns(target, {"transport": "dot", "resolver": "127.0.0.1", "resolver_port": tls_port, "timeout_sec": 2})
+            assert o.ok and not o.reached and o.error
+            # ...and passes with verification switched off.
+            o = await run_dns(target, {"transport": "dot", "resolver": "127.0.0.1", "resolver_port": tls_port, "verify_tls": False})
+            assert o.reached and o.details["answers"] == ["192.0.2.53"] and o.details["transport"] == "dot" and o.command.endswith("+tls")
+        finally:
+            tls_server.close()
+    finally:
+        udp.close()
+        tcp_server.close()
+
+
+async def test_run_dns_over_https_and_error_codes(live: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    import dns.asyncquery
+    import dns.message
+
+    calls: list[dict] = []
+    rcode = {"value": 0}
+
+    async def fake_https(q: dns.message.Message, where: str, **kw) -> dns.message.Message:
+        calls.append({"url": where, **kw})
+        return dns.message.from_wire(_dns_reply(q.to_wire(), rcode["value"]))
+
+    async def fake_resolve(host: str, ip_version: str = "auto") -> str:
+        return {"doh.test": "192.0.2.80"}[host]
+
+    monkeypatch.setattr(dns.asyncquery, "https", fake_https)
+    monkeypatch.setattr(probes, "resolve_host", fake_resolve)
+    target = {"host": "example.test", "type": "dns"}
+
+    o = await run_dns(target, {"transport": "doh", "resolver": "doh.test"})
+    assert o.reached and o.details["answers"] == ["192.0.2.53"] and o.details["resolver"] == "https://doh.test/dns-query"
+    assert calls[-1]["url"] == "https://doh.test/dns-query" and calls[-1]["bootstrap_address"] == "192.0.2.80" and calls[-1]["verify"] is True
+    assert o.details["nameserver"] == "192.0.2.80" and o.details["port"] == 443 and o.command.endswith("+https")
+
+    o = await run_dns(target, {"transport": "doh", "resolver": "https://doh.test:8443/q", "verify_tls": False})
+    assert o.reached and calls[-1]["url"] == "https://doh.test:8443/q" and calls[-1]["verify"] is False and o.details["port"] == 8443
+
+    rcode["value"] = 3  # NXDOMAIN
+    o = await run_dns(target, {"transport": "doh", "resolver": "doh.test"})
+    assert o.ok and not o.reached and o.details["rcode"] == "NXDOMAIN"
+    o = await run_dns(target, {"transport": "doh", "resolver": "doh.test", "random_prefix": True})
+    assert o.reached and o.details["rcode"] == "NXDOMAIN"
+
+    rcode["value"] = 2  # SERVFAIL
+    o = await run_dns(target, {"transport": "doh", "resolver": "doh.test"})
+    assert o.ok and not o.reached and o.details["rcode"] == "SERVFAIL" and "SERVFAIL" in (o.error or "")
+
+
+def test_dns_options_validation() -> None:
+    from app.models import validate_options
+
+    assert validate_options("dns", {})["transport"] == "udp"
+    assert validate_options("dns", {"transport": "doh", "resolver": " https://dns.example/dns-query "})["resolver"] == "https://dns.example/dns-query"
+    for bad in (
+        {"transport": "dot"},  # the system resolver has no TLS endpoint
+        {"transport": "doh"},
+        {"transport": "tcp", "resolver": "https://dns.example/dns-query"},
+        {"transport": "doh", "resolver": "http://dns.example/dns-query"},
+        {"transport": "doh", "resolver": "https://dns.example:99999/dns-query"},
+        {"transport": "doh", "resolver": "https:///dns-query"},
+        {"resolver_port": 5353},
+        {"transport": "smtp", "resolver": "192.0.2.1"},
+    ):
+        with pytest.raises(ValueError):
+            validate_options("dns", bad)
 
 
 async def test_run_tcp_local(live: None) -> None:

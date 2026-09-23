@@ -4,4 +4,6 @@ asyncpg>=0.30,<1
 pydantic>=2.7,<3
 httpx>=0.27,<1
 dnspython>=2.6,<3
+# dnspython's DNS over HTTPS needs h2 (HTTP/2) next to httpx
+h2>=4.2,<5
 maxminddb>=2.6,<4

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
@@ -12,6 +13,8 @@ IpVersion = Literal["auto", "4", "6"]
 ProbeType = Literal["mtr", "ping", "http", "tcp", "dns", "globalping"]
 HttpMethod = Literal["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 DnsRecordType = Literal["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV"]
+DnsTransport = Literal["udp", "tcp", "dot", "doh"]
+GlobalpingDnsTransport = Literal["udp", "tcp"]
 GlobalpingMeasurement = Literal["ping", "traceroute", "mtr", "dns", "http"]
 GlobalpingHttpMethod = Literal["GET", "HEAD", "OPTIONS"]
 GlobalpingHttpProtocol = Literal["HTTPS", "HTTP", "HTTP2"]
@@ -57,7 +60,20 @@ class TcpOptions(BaseModel):
 
 class DnsOptions(BaseModel):
     record_type: DnsRecordType = "A"
-    resolver: str = Field(default="", max_length=253, description="IP or hostname of the server to query; empty = system resolver")
+    transport: DnsTransport = Field(
+        default="udp",
+        description="udp or tcp (port 53), dot = DNS over TLS (port 853), doh = DNS over HTTPS (RFC 8484, POST); dot and doh need a resolver",
+    )
+    resolver: str = Field(
+        default="",
+        max_length=500,
+        description="IP or hostname of the server to query; empty = system resolver (udp/tcp only). For doh also a URL such as "
+        "https://dns.google/dns-query; a bare host gets the /dns-query path",
+    )
+    resolver_port: int | None = Field(
+        default=None, ge=1, le=65535, description="udp/tcp/dot: port of the resolver when it is not the standard one (53, or 853 for dot); doh takes it from the URL"
+    )
+    verify_tls: bool = Field(default=True, description="dot/doh: verify the resolver's certificate against its host name (or IP)")
     expected: str = Field(default="", max_length=500, description="substring that must appear in one of the answers")
     timeout_sec: float = Field(default=5.0, ge=0.5, le=60)
     random_prefix: bool = Field(
@@ -65,6 +81,31 @@ class DnsOptions(BaseModel):
         description="query a random label under the name on every run so no cache can answer; the resolver has to ask the "
         "authoritative servers, and NXDOMAIN then counts as a successful lookup (the timing is what matters)",
     )
+
+    @field_validator("resolver")
+    @classmethod
+    def _resolver(cls, v: str) -> str:
+        return v.strip()
+
+    @model_validator(mode="after")
+    def _transport_needs_resolver(self) -> DnsOptions:
+        if self.transport in ("dot", "doh") and not self.resolver:
+            raise ValueError(f"DNS over {'TLS' if self.transport == 'dot' else 'HTTPS'} needs a resolver (the system resolver speaks plain DNS)")
+        if self.resolver_port and not self.resolver:
+            raise ValueError("a resolver port needs a resolver")
+        if "://" in self.resolver:
+            if self.transport != "doh":
+                raise ValueError("a URL as resolver is only valid for DNS over HTTPS; give a host name or IP")
+            if not self.resolver.lower().startswith("https://"):
+                raise ValueError("a DNS over HTTPS resolver URL must start with https://")
+            try:
+                parts = urlsplit(self.resolver)
+                parts.port  # noqa: B018 - raises for a port outside 0-65535
+            except ValueError as exc:
+                raise ValueError(f"invalid DNS over HTTPS URL: {exc}") from exc
+            if not parts.hostname:
+                raise ValueError("a DNS over HTTPS resolver URL needs a host")
+        return self
 
 
 class GlobalpingOptions(BaseModel):
@@ -79,6 +120,7 @@ class GlobalpingOptions(BaseModel):
     # dns
     record_type: DnsRecordType = "A"
     resolver: str = Field(default="", max_length=253, description="dns: resolver the probe should query (IP or host name); empty = the probe's own")
+    dns_transport: GlobalpingDnsTransport = Field(default="udp", description="dns: udp or tcp to port 53 (Globalping offers no DoT/DoH)")
     expected: str = Field(default="", max_length=500, description="dns: substring that must appear in one of the answers")
     # http
     path: str = Field(default="/", max_length=2048, description="http: request path (and query) on the target host")

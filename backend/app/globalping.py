@@ -111,6 +111,7 @@ def build_request(t: dict[str, Any], opts: dict[str, Any]) -> dict[str, Any]:
         resolver = str(opts.get("resolver") or "").strip()
         if resolver:
             options["resolver"] = resolver
+        options["protocol"] = str(opts.get("dns_transport") or "udp").upper()
     elif measurement == "http":
         options["request"] = {"path": path, "method": str(opts.get("http_method") or "GET").upper()}
         options["protocol"] = str(opts.get("http_protocol") or "HTTPS").upper()
@@ -133,7 +134,7 @@ def describe(body: dict[str, Any], location: str) -> str:
     if kind == "traceroute":
         return f"globalping traceroute {body['target']} from {location} ({o.get('protocol', 'ICMP')})"
     if kind == "dns":
-        return f"globalping dns {o.get('query', {}).get('type', 'A')} {body['target']} from {location}" + (f" @{o['resolver']}" if o.get("resolver") else "") + f" ({probes})"
+        return f"globalping dns {o.get('query', {}).get('type', 'A')} {body['target']} from {location}" + (f" @{o['resolver']}" if o.get("resolver") else "") + (" +tcp" if o.get("protocol") == "TCP" else "") + f" ({probes})"
     req = o.get("request") or {}
     port = f":{o['port']}" if o.get("port") else ""
     return f"globalping http {req.get('method', 'GET')} {str(o.get('protocol', 'HTTPS')).lower()}://{body['target']}{port}{req.get('path', '/')} from {location} ({probes})"
@@ -496,7 +497,7 @@ async def run_globalping(t: dict[str, Any], opts: dict[str, Any], settings: dict
         return _ping_outcome(started, finished, details["probes"], details, command)
     if measurement == "dns":
         probes = parse_dns_probes(data, str(opts.get("expected") or "").strip())
-        details.update({"probes": probes, "record_type": body["measurementOptions"]["query"]["type"], "resolver": body["measurementOptions"].get("resolver") or "probe default"})
+        details.update({"probes": probes, "record_type": body["measurementOptions"]["query"]["type"], "resolver": body["measurementOptions"].get("resolver") or "probe default", "transport": str(body["measurementOptions"].get("protocol") or "UDP").lower()})
         first = next((p for p in probes if p["passed"]), probes[0] if probes else None)
         details["answers"] = [str(a["value"]) for a in first["answers"] if a.get("value") is not None] if first else []
         details["rcode"] = first["rcode"] if first else None
@@ -601,7 +602,7 @@ def _simulate_summary(started: float, measurement: str, body: dict[str, Any], op
             reason = None if not expected or expected.lower() in value.lower() else f"expected '{expected}' not in answers"
             probes.append({**_probe_fields(probe), "status": "finished", "rcode": "NOERROR", "resolver": body["measurementOptions"].get("resolver") or "private", "total_ms": round(max(1.0, rng.gauss(22, 6)), 1),
                            "answers": answers, "passed": reason is None, "reason": reason})
-        details.update({"probes": probes, "record_type": rtype, "resolver": body["measurementOptions"].get("resolver") or "probe default", "answers": [a["value"] for a in probes[0]["answers"]], "rcode": "NOERROR"})
+        details.update({"probes": probes, "record_type": rtype, "resolver": body["measurementOptions"].get("resolver") or "probe default", "transport": str(body["measurementOptions"].get("protocol") or "UDP").lower(), "answers": [a["value"] for a in probes[0]["answers"]], "rcode": "NOERROR"})
         return _check_outcome(started, time.time() + 0.01, probes, details, f"[simulated] {command}")
     o = body["measurementOptions"]
     expected_status = str(opts.get("expected_status") or "200-299")

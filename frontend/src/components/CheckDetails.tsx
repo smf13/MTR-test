@@ -1,5 +1,5 @@
 import { CheckCircle2, XCircle, ShieldAlert, ShieldCheck, ExternalLink } from "lucide-react";
-import type { GlobalpingDnsProbe, GlobalpingHttpProbe, GlobalpingProbe, Run, ProbeType, TlsInfo } from "../api";
+import { DNS_STANDARD_PORT, DNS_TRANSPORT_LABEL, type DnsTransport, type GlobalpingDnsProbe, type GlobalpingHttpProbe, type GlobalpingProbe, type Run, type ProbeType, type TlsInfo } from "../api";
 import { fmtDateTime, fmtNum, lossColor } from "../utils";
 
 /** Human-friendly rendering of a non-MTR run's `details` (ping samples, HTTP status, TLS, DNS answers, remote probes…). */
@@ -51,7 +51,8 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
           <>
             <Row k="Record" v={String(d.record_type ?? "A")} mono />
             {d.random_prefix === true && <Row k="Queried name" v={<>{String(d.queried_name ?? "–")} <span className="font-sans text-faint">(random label, uncached)</span></>} mono wide />}
-            <Row k="Resolver" v={String(d.nameserver ?? d.resolver ?? "system")} mono />
+            <Row k="Resolver" v={<>{String(d.resolver ?? "system")}{d.nameserver && d.nameserver !== d.resolver ? <span className="font-sans text-faint"> · {String(d.nameserver)}</span> : null}</>} mono wide />
+            <Row k="Transport" v={<>{DNS_TRANSPORT_LABEL[(d.transport as DnsTransport) ?? "udp"] ?? String(d.transport)}{typeof d.port === "number" && d.port !== DNS_STANDARD_PORT[(d.transport as DnsTransport) ?? "udp"] ? ` · port ${d.port}` : ""}{d.tcp_fallback === true ? <span className="text-faint"> · answer truncated over UDP, retried over TCP</span> : null}</>} />
             <Row k="Lookup time" v={run.avg_ms !== null ? `${fmtNum(run.avg_ms)} ms` : "–"} />
             {d.rcode !== undefined && <Row k="Result" v={<>{String(d.rcode)}{d.rcode === "NXDOMAIN" && d.random_prefix === true ? <span className="text-faint"> · expected for a random label; the timing is the measurement</span> : null}</>} />}
             <Row k="TTL" v={d.ttl !== undefined && d.ttl !== null ? `${d.ttl}s` : "–"} />
@@ -82,6 +83,7 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
               <>
                 <Row k="Record" v={String(d.record_type ?? "A")} mono />
                 <Row k="Resolver" v={String(d.resolver ?? "probe default")} mono />
+                <Row k="Transport" v={DNS_TRANSPORT_LABEL[(d.transport as DnsTransport) ?? "udp"] ?? String(d.transport)} />
                 <Row k="Lookup time" v={run.avg_ms !== null ? `${fmtNum(run.avg_ms)} ms${probes.length > 1 ? " (average of the probes that passed)" : ""}` : "–"} />
                 {d.rcode !== undefined && d.rcode !== null && <Row k="Result" v={String(d.rcode)} mono />}
                 {Array.isArray(d.answers) && <Row k="Answers" v={<span className="whitespace-pre-wrap break-all">{(d.answers as string[]).join("\n") || "(none)"}</span>} mono wide />}

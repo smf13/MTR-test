@@ -8,14 +8,20 @@ export interface PollState<T> {
   lastUpdated: number | null;
 }
 
-/** Poll an async fetcher on an interval; pauses while the tab is hidden. */
-export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, deps: unknown[] = []): PollState<T> {
+/**
+ * Poll an async fetcher on an interval; pauses while the tab is hidden. With `enabled` false nothing is fetched
+ * (not even by `refresh()`) and the last data stays; switching it on fetches at once. Pages use it for panels
+ * that are not on screen, so their requests do not queue in front of a save.
+ */
+export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, deps: unknown[] = [], enabled = true): PollState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   // Bumped whenever the deps change or the hook unmounts. A response from an older generation is
   // discarded, and a request still in flight for the old parameters is never reused for the new ones
   // (which used to leave the previous target's or range's data on screen until the next tick).
@@ -23,6 +29,7 @@ export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, deps: 
   const inflight = useRef<{ generation: number; promise: Promise<void> } | null>(null);
 
   const refresh = useCallback(async () => {
+    if (!enabledRef.current) return;
     const gen = generation.current;
     if (inflight.current && inflight.current.generation === gen) return inflight.current.promise;
     const promise = (async () => {
@@ -47,6 +54,7 @@ export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, deps: 
   useEffect(() => {
     generation.current += 1;
     inflight.current = null;
+    if (!enabled) return;
     setLoading(true);
     void refresh();
     const timer = window.setInterval(() => {
@@ -62,7 +70,7 @@ export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, deps: 
       document.removeEventListener("visibilitychange", onVis);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, refresh, ...deps]);
+  }, [intervalMs, refresh, enabled, ...deps]);
 
   return { data, error, loading, refresh, lastUpdated };
 }

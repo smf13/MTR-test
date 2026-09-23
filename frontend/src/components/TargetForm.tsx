@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, DEFAULT_OPTIONS, LATENCY_ALERT_DEFAULT, PROBE_TYPE_LABEL, targetInput, type DnsRecordType, type GlobalpingHttpMethod, type GlobalpingHttpProtocol, type GlobalpingMeasurement, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
+import { api, DEFAULT_OPTIONS, DNS_TRANSPORT_LABEL, LATENCY_ALERT_DEFAULT, PROBE_TYPE_LABEL, targetInput, type DnsRecordType, type DnsTransport, type GlobalpingHttpMethod, type GlobalpingHttpProtocol, type GlobalpingMeasurement, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
 import { Modal } from "./Modal";
 import { NumberInput } from "./NumberInput";
 import { Segmented } from "./RangePicker";
@@ -134,6 +134,8 @@ export function TargetForm({
   const isHttp = form.type === "http";
   const isTcp = form.type === "tcp";
   const isDns = form.type === "dns";
+  const dnsTransport: DnsTransport = form.options.transport ?? "udp";
+  const dnsEncrypted = dnsTransport === "dot" || dnsTransport === "doh";
   const isGlobalping = form.type === "globalping";
   const gpMeasurement = (form.options.measurement ?? "ping") as GlobalpingMeasurement;
   const gpPath = isGlobalping && (gpMeasurement === "mtr" || gpMeasurement === "traceroute"); // stored as hops
@@ -177,6 +179,7 @@ export function TargetForm({
     if (durationWarn) return setError(`A run takes about ${runDuration}s (probes × probe interval, plus mtr's final wait), which does not fit the ${form.interval_sec}s schedule. Increase the interval or lower the probe count.`);
     const tags = parsedTags;
     if (isTcp && !form.port) return setError("TCP probes need a port.");
+    if (isDns && dnsEncrypted && !(form.options.resolver ?? "").trim()) return setError(`${DNS_TRANSPORT_LABEL[dnsTransport]} needs a resolver: the system resolver speaks plain DNS only.`);
     const options: ProbeOptions = { ...form.options };
     if (isHttp) {
       const headers: Record<string, string> = {};
@@ -286,6 +289,14 @@ export function TargetForm({
                   <label className="label">Resolver (optional)</label>
                   <input className="input font-mono" value={form.options.resolver ?? ""} onChange={(e) => setOpt("resolver", e.target.value)} placeholder="the probe's own, or e.g. 1.1.1.1" spellCheck={false} />
                 </div>
+                <div>
+                  <label className="label">Transport</label>
+                  <select className="input" aria-label="DNS transport" value={form.options.dns_transport ?? "udp"} onChange={(e) => setOpt("dns_transport", e.target.value as "udp" | "tcp")}>
+                    <option value="udp">{DNS_TRANSPORT_LABEL.udp}</option>
+                    <option value="tcp">{DNS_TRANSPORT_LABEL.tcp}</option>
+                  </select>
+                  <div className="help">Globalping probes speak plain DNS only; use a local DNS check for DoT or DoH.</div>
+                </div>
                 <div className="sm:col-span-2">
                   <label className="label">Expected answer (optional)</label>
                   <input className="input font-mono" value={form.options.expected ?? ""} onChange={(e) => setOpt("expected", e.target.value)} placeholder="substring of an expected answer" spellCheck={false} />
@@ -394,9 +405,31 @@ export function TargetForm({
               </select>
             </div>
             <div>
-              <label className="label">Resolver (optional)</label>
-              <input className="input font-mono" value={form.options.resolver ?? ""} onChange={(e) => setOpt("resolver", e.target.value)} placeholder="system resolver, or e.g. 1.1.1.1" spellCheck={false} />
+              <label className="label">Transport</label>
+              <select className="input" aria-label="DNS transport" value={dnsTransport} onChange={(e) => setOpt("transport", e.target.value as DnsTransport)}>
+                {(Object.keys(DNS_TRANSPORT_LABEL) as DnsTransport[]).map((k) => <option key={k} value={k}>{DNS_TRANSPORT_LABEL[k]}</option>)}
+              </select>
             </div>
+            <div>
+              <label className="label">{dnsEncrypted ? "Resolver" : "Resolver (optional)"}</label>
+              <input className="input font-mono" aria-label="Resolver" value={form.options.resolver ?? ""} onChange={(e) => setOpt("resolver", e.target.value)} placeholder={dnsTransport === "doh" ? "https://dns.google/dns-query or dns.google" : dnsTransport === "dot" ? "dns.google or 1.1.1.1" : "system resolver, or e.g. 1.1.1.1"} spellCheck={false} />
+              {dnsTransport === "doh" && <div className="help">A host name or IP gets the standard /dns-query path; paste a full URL for any other path or port.</div>}
+            </div>
+            {dnsTransport !== "doh" && (
+              <div>
+                <label className="label">Resolver port (optional)</label>
+                <NumberInput className="input num" aria-label="Resolver port" min={1} max={65535} nullable value={form.options.resolver_port ?? null} onChange={(v) => setOpt("resolver_port", v)} placeholder={dnsTransport === "dot" ? "853" : "53"} />
+              </div>
+            )}
+            {dnsEncrypted && (
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" className="mt-0.5" checked={form.options.verify_tls ?? true} onChange={(e) => setOpt("verify_tls", e.target.checked)} />
+                <span>
+                  Verify the resolver's certificate
+                  <div className="help">Checked against the resolver's host name, or its IP when you give an address. Turn off only for internal resolvers with private certificates.</div>
+                </span>
+              </label>
+            )}
             <div>
               <label className="label">Expected answer (optional)</label>
               <input className="input font-mono" value={form.options.expected ?? ""} onChange={(e) => setOpt("expected", e.target.value)} placeholder="substring of an expected answer" spellCheck={false} />

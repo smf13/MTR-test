@@ -797,8 +797,11 @@ async def _destination(target: dict[str, Any], run: dict[str, Any]) -> tuple[str
     if measurement == "dns":
         resolver = str(options.get("resolver") or "").strip()
         if resolver:
-            ip = resolver if _looks_like_ip(resolver) else await _resolve_cached(resolver, "auto")
-            return ip, "resolver", resolver, None if ip else "resolver could not be resolved"
+            # A DNS over HTTPS resolver may be a URL; the run records the address it actually queried.
+            name = (urlsplit(resolver).hostname or resolver) if "://" in resolver else resolver
+            known = details.get("nameserver") if kind == "dns" else None
+            ip = str(known) if known and _looks_like_ip(str(known)) else name if _looks_like_ip(name) else await _resolve_cached(name, "auto")
+            return ip, "resolver", name, None if ip else "resolver could not be resolved"
         answers = details.get("answers") or []
         ip = next((str(a) for a in answers if isinstance(a, str) and _looks_like_ip(a)), None)
         return ip, "answer", host, None if ip else "no address in the answer"

@@ -27,6 +27,23 @@ The same controls appear on dashboard cards, table rows and target pages:
 
 Cloning copies configuration, not monitoring history. **Add target** starts a new target from the default settings.
 
+### DNS check settings
+
+A **DNS** target asks one resolver for one record per run. **Transport** picks how it is asked:
+
+| Transport | Resolver | Port |
+| --- | --- | --- |
+| **UDP (port 53)** | Optional; empty uses the monitoring server's own resolver. A truncated answer is retried over TCP, and the run details say so. | 53, or **Resolver port** |
+| **TCP (port 53)** | Optional, as for UDP. | 53, or **Resolver port** |
+| **DNS over TLS (DoT, port 853)** | Required: a host name or IP. | 853, or **Resolver port** |
+| **DNS over HTTPS (DoH)** | Required: a host name or IP (the standard `/dns-query` path is added) or a full `https://` URL for any other path or port. | From the URL, 443 by default |
+
+For DoT and DoH, **Verify the resolver's certificate** (on by default) checks the certificate against the resolver's host name, or its IP when an address is given. Turn it off only for internal resolvers with private certificates. The form refuses DoT or DoH without a resolver. A run's details list the **Resolver**, the address that answered and the **Transport**, with the port when it is not the standard one.
+
+A **Globalping** DNS measurement offers **Transport** too, limited to **UDP (port 53)** and **TCP (port 53)**: the remote probes speak plain DNS only.
+
+Saving a target closes the form as soon as the change is stored; the dashboard list refreshes in the background.
+
 ## Target pages
 
 The time-range selector offers **1h**, **6h**, **24h**, **7d** and **30d**. It controls historical statistics, charts, runs and events. The latest measurement/current path always comes from the newest run, and the status strip always covers the last 24 hours.
@@ -43,7 +60,7 @@ The data tabs sit below the charts. Switching between them keeps the charts visi
 | **Runs** | Paginated run history with **All**, **Reached** or **Passed**, **Failed**, and **Route changes** where applicable. Select a run to inspect it. | Every target |
 | **Events** | This target's events in the selected range. The tab displays a count when events are present. | Every target |
 
-**Current path** is the initial data tab for path probes; other probes open **Runs**. The browser remembers the selected tab. When a remembered path tab does not apply to the next target, the page shows **Runs** instead.
+**Current path** is the initial data tab for path probes; other probes open **Runs**. The browser remembers the selected tab. When a remembered path tab does not apply to the next target, the page shows **Runs** instead. Only the tab on screen is refreshed: **Path history**, **Path summary** and **Runs** load when opened, so a busy page does not slow down **Save**, **Run now** and the other buttons. **Path summary** also refreshes while the **Path profile** shows **Avg · [range]**.
 
 **Path profile**, above the data tabs, compares per-hop latency and loss. Switch between **Latest run** and **Avg · [range]**. Intermediate-hop loss alone does not establish loss at the destination.
 

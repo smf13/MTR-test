@@ -12,6 +12,7 @@ from httpx import AsyncClient
 from app import globalping
 from app.globalping import (
     build_request,
+    describe,
     hop_from_result,
     hop_from_traceroute,
     parse_dns_probes,
@@ -121,7 +122,10 @@ def test_build_request_per_measurement() -> None:
     assert body["limit"] == 1 and body["measurementOptions"] == {"protocol": "UDP", "port": 33434}
 
     body = build_request({"host": "cdn.jsdelivr.net"}, {"measurement": "dns", "record_type": "AAAA", "resolver": "1.1.1.1", "probes": 3})
-    assert body["limit"] == 3 and body["measurementOptions"] == {"query": {"type": "AAAA"}, "resolver": "1.1.1.1"}
+    assert body["limit"] == 3 and body["measurementOptions"] == {"query": {"type": "AAAA"}, "resolver": "1.1.1.1", "protocol": "UDP"}
+    body = build_request({"host": "cdn.jsdelivr.net"}, {"measurement": "dns", "dns_transport": "tcp"})
+    assert body["measurementOptions"] == {"query": {"type": "A"}, "protocol": "TCP"}
+    assert describe(body, "EU").endswith("+tcp (1 probe)")
 
     body = build_request({"host": "cdn.jsdelivr.net", "port": 8443}, {"measurement": "http", "path": "/health", "http_method": "HEAD", "http_protocol": "HTTP2"})
     assert body["target"] == "cdn.jsdelivr.net" and body["measurementOptions"] == {"request": {"path": "/health", "method": "HEAD"}, "protocol": "HTTP2", "port": 8443}

@@ -319,9 +319,12 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list
     placeholders = ",".join("?" for _ in ids)
     since = time.time() - 86400
 
+    # Latest run and sparkline as a LATERAL top-N per target: each walks idx_runs_target_started from the newest
+    # run and stops after N rows. A GROUP BY MAX() join or a ROW_NUMBER() window over the target's runs reads its
+    # whole history instead (seconds with a month of one-minute runs), and every write waits for this list.
     latest_rows = await db.fetchall(
-        f"SELECT r.* FROM runs r JOIN (SELECT target_id, MAX(started_at) AS m FROM runs WHERE target_id IN ({placeholders}) "
-        f"GROUP BY target_id) x ON x.target_id = r.target_id AND x.m = r.started_at",
+        f"SELECT r.* FROM targets t CROSS JOIN LATERAL (SELECT * FROM runs WHERE target_id = t.id "
+        f"ORDER BY started_at DESC, id DESC LIMIT 1) r WHERE t.id IN ({placeholders})",
         ids,
     )
     latest = {int(r["target_id"]): _run_out(dict(r)) for r in latest_rows}
@@ -348,13 +351,10 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list
         if 0 <= b < TIMELINE_BUCKETS:
             timelines[int(r["target_id"])][b] = {"s": worst_label[int(r["worst"])], "n": int(r["n"]), "avg": round(r["avg_ms"], 1) if r["avg_ms"] is not None else None}
 
-    # Last SPARKLINE_POINTS runs per target in one pass. A correlated `id IN (... LIMIT n)` subquery is
-    # re-evaluated for every run row and took seconds on large histories.
     spark_rows = await db.fetchall(
-        f"SELECT target_id, started_at, avg_ms, loss_pct, reached FROM ("
-        f"SELECT id, target_id, started_at, avg_ms, loss_pct, reached, "
-        f"ROW_NUMBER() OVER (PARTITION BY target_id ORDER BY started_at DESC, id DESC) AS rn "
-        f"FROM runs WHERE target_id IN ({placeholders})) AS ranked WHERE rn <= {SPARKLINE_POINTS} ORDER BY started_at ASC, id ASC",
+        f"SELECT r.target_id, r.started_at, r.avg_ms, r.loss_pct, r.reached FROM targets t CROSS JOIN LATERAL ("
+        f"SELECT id, target_id, started_at, avg_ms, loss_pct, reached FROM runs WHERE target_id = t.id "
+        f"ORDER BY started_at DESC, id DESC LIMIT {SPARKLINE_POINTS}) r WHERE t.id IN ({placeholders}) ORDER BY r.started_at ASC, r.id ASC",
         ids,
     )
     sparks: dict[int, list[dict[str, Any]]] = {}

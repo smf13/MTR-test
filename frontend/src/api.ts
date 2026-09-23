@@ -28,9 +28,24 @@ export interface HttpOptions {
 }
 export interface PingOptions { timeout_sec: number }
 export interface TcpOptions { timeout_sec: number }
+/** How a DNS check reaches its resolver: plain DNS over UDP or TCP (port 53), DNS over TLS (853) or DNS over HTTPS. */
+export type DnsTransport = "udp" | "tcp" | "dot" | "doh";
+export const DNS_TRANSPORT_LABEL: Record<DnsTransport, string> = {
+  udp: "UDP (port 53)",
+  tcp: "TCP (port 53)",
+  dot: "DNS over TLS (DoT, port 853)",
+  doh: "DNS over HTTPS (DoH)",
+};
+export const DNS_STANDARD_PORT: Record<DnsTransport, number> = { udp: 53, tcp: 53, dot: 853, doh: 443 };
 export interface DnsOptions {
   record_type: DnsRecordType;
+  /** udp and tcp may use the system resolver; dot and doh need a resolver (for doh a host or an https:// URL). */
+  transport: DnsTransport;
   resolver: string;
+  /** Resolver port when it is not the transport's standard one (udp/tcp/dot; doh takes it from the URL). */
+  resolver_port: number | null;
+  /** dot/doh: verify the resolver's certificate. */
+  verify_tls: boolean;
   expected: string;
   timeout_sec: number;
   /** Query a random label under the name each run, so no cache can answer (measures the uncached lookup). */
@@ -46,6 +61,8 @@ export interface GlobalpingOptions {
   record_type: DnsRecordType;
   resolver: string;
   expected: string;
+  /** dns: UDP or TCP to port 53 (Globalping offers no DoT/DoH). */
+  dns_transport: "udp" | "tcp";
   /** http: request path, method, protocol, acceptable status codes and a body keyword. */
   path: string;
   http_method: GlobalpingHttpMethod;
@@ -62,8 +79,8 @@ export const DEFAULT_OPTIONS: Record<ProbeType, ProbeOptions> = {
   ping: { timeout_sec: 2 },
   http: { method: "GET", expected_status: "200-299", keyword: "", keyword_absent: false, json_path: "", json_expected: "", headers: {}, body: "", timeout_sec: 10, verify_tls: true, follow_redirects: true, tls_warn_days: 14, tls_info: true },
   tcp: { timeout_sec: 5 },
-  dns: { record_type: "A", resolver: "", expected: "", timeout_sec: 5, random_prefix: false },
-  globalping: { measurement: "ping", location: "world", probes: 1, record_type: "A", resolver: "", expected: "", path: "/", http_method: "GET", http_protocol: "HTTPS", expected_status: "200-299", keyword: "" },
+  dns: { record_type: "A", transport: "udp", resolver: "", resolver_port: null, verify_tls: true, expected: "", timeout_sec: 5, random_prefix: false },
+  globalping: { measurement: "ping", location: "world", probes: 1, record_type: "A", resolver: "", expected: "", dns_transport: "udp", path: "/", http_method: "GET", http_protocol: "HTTPS", expected_status: "200-299", keyword: "" },
 };
 
 /** Per-type default latency alert threshold (ms); mirrors LATENCY_ALERT_DEFAULT in backend/app/models.py. */

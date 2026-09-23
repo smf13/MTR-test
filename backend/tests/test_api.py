@@ -55,6 +55,13 @@ async def test_validation_and_settings(client: AsyncClient) -> None:
     assert r.status_code == 422
     r = await client.post("/api/targets", json={"name": "bad", "host": "has space.example"})
     assert r.status_code == 422
+    # DNS over TLS/HTTPS cannot use the system resolver, on create and on update alike.
+    r = await client.post("/api/targets", json={"name": "dot", "host": "example.com", "type": "dns", "options": {"transport": "dot"}})
+    assert r.status_code == 422
+    r = await client.post("/api/targets", json={"name": "dot", "host": "example.com", "type": "dns", "options": {"transport": "dot", "resolver": "192.0.2.53"}})
+    assert r.status_code == 201 and r.json()["options"]["transport"] == "dot" and r.json()["options"]["verify_tls"] is True
+    r = await client.put(f"/api/targets/{r.json()['id']}", json={"options": {"transport": "doh"}})
+    assert r.status_code == 422
 
     s = (await client.put("/api/settings", json={"retention_days": 7, "webhook_url": "https://example.com/hook"})).json()
     assert s["retention_days"] == 7 and s["webhook_url"] == "https://example.com/hook"

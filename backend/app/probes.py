@@ -521,24 +521,49 @@ def random_dns_label() -> str:
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=12))
 
 
+DNS_TRANSPORT_PORT = {"udp": 53, "tcp": 53, "dot": 853, "doh": 443}
+DNS_TRANSPORT_FLAG = {"udp": "", "tcp": " +tcp", "dot": " +tls", "doh": " +https"}
+# Typical extra cost of a fresh connection per transport, for the simulator only (TCP handshake, TLS on top).
+_SIM_DNS_EXTRA_MS = {"udp": 0.0, "tcp": 12.0, "dot": 30.0, "doh": 35.0}
+
+
+def doh_url(resolver: str) -> str:
+    """A DoH resolver as a URL: a pasted URL stays as is, a bare host (or IP) gets https:// and the RFC 8484 /dns-query path."""
+    if "://" in resolver:
+        return resolver
+    host = f"[{resolver}]" if ":" in resolver and is_ip(resolver) else resolver
+    return f"https://{host}/dns-query"
+
+
 async def run_dns(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
+    import dns.asyncquery
     import dns.asyncresolver
     import dns.exception
+    import dns.message
+    import dns.rcode
     import dns.rdatatype
     import dns.resolver
 
     started = time.time()
     name = t["host"].strip().rstrip(".")
     rtype = str(opts.get("record_type") or "A").upper()
+    transport = str(opts.get("transport") or "udp")
     server = (opts.get("resolver") or "").strip()
     expected = (opts.get("expected") or "").strip()
     timeout = float(opts.get("timeout_sec") or 5.0)
     random_prefix = bool(opts.get("random_prefix", False))
+    verify = bool(opts.get("verify_tls", True))
     # With the random prefix the answer is normally NXDOMAIN (unless the zone has a wildcard); the point is the
     # time the resolver needs to go and ask, not the answer itself.
     qname = f"{random_dns_label()}.{name}" if random_prefix else name
-    command = f"dns {rtype} {qname}" + (f" @{server}" if server else "")
-    details: dict[str, Any] = {"record_type": rtype, "resolver": server or "system", "queried_name": qname, "random_prefix": random_prefix}
+    url = doh_url(server) if transport == "doh" and server else None
+    port = int(opts.get("resolver_port") or 0) or DNS_TRANSPORT_PORT.get(transport, 53)
+    at = url or (server if port == DNS_TRANSPORT_PORT.get(transport, 53) else f"{server} -p {port}")
+    command = f"dns {rtype} {qname}" + (f" @{at}" if server else "") + DNS_TRANSPORT_FLAG.get(transport, "")
+    details: dict[str, Any] = {
+        "record_type": rtype, "resolver": url or server or "system", "queried_name": qname, "random_prefix": random_prefix,
+        "transport": transport, "port": (urlsplit(url).port or 443) if url else port,
+    }
 
     if _sim():
         rng = random.Random()
@@ -549,38 +574,106 @@ async def run_dns(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
             answers = ["192.0.2.10"] if rtype == "A" else [f"{name}."]
             details.update({"answers": answers, "ttl": 300, "rcode": "NOERROR"})
         o = ProbeOutcome(True, True, started, time.time() + 0.01, sent=1, details=details, command=f"[simulated] {command}")
-        _apply_stats(o, [max(1.0, rng.gauss(45 if random_prefix else 18, 8))])
+        _apply_stats(o, [max(1.0, rng.gauss((45 if random_prefix else 18) + _SIM_DNS_EXTRA_MS.get(transport, 0.0), 8))])
         if expected and not any(expected.lower() in a.lower() for a in answers):
             o.reached, o.loss_pct, o.error = False, 100.0, f"expected '{expected}' not in answers"
         return o
 
-    resolver = dns.asyncresolver.Resolver(configure=not server)
-    if server:
-        try:
-            resolver.nameservers = [await resolve_host(server, "auto")] if not is_ip(server) else [server]
-        except ValueError as exc:
-            return ProbeOutcome(False, False, started, time.time(), error=f"resolver: {exc}", loss_pct=100.0)
-    resolver.lifetime = timeout
-    resolver.timeout = timeout
-    t0 = time.perf_counter()
-    try:
-        answer = await resolver.resolve(qname, rtype)
-    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as exc:
-        elapsed = (time.perf_counter() - t0) * 1000.0
-        details.update({"answers": [], "rcode": "NXDOMAIN" if isinstance(exc, dns.resolver.NXDOMAIN) else "NOANSWER"})
-        if random_prefix and not expected:
+    def failed(error: str, *, executed: bool = True) -> ProbeOutcome:
+        return ProbeOutcome(executed, False, started, time.time(), error=error, sent=1, loss_pct=100.0, details=details, command=command)
+
+    def no_answer(rcode: str, error: str, elapsed: float) -> ProbeOutcome:
+        details.update({"answers": [], "rcode": rcode})
+        if random_prefix and not expected and rcode in ("NXDOMAIN", "NOANSWER"):
             # An authoritative "no such name" is exactly what an uncached query for a random label yields: the lookup worked.
             o = ProbeOutcome(True, True, started, time.time(), sent=1, details=details, command=command)
-            _apply_stats(o, [elapsed])
-            return o
-        o = ProbeOutcome(True, False, started, time.time(), error=f"{exc.__class__.__name__}: {exc}", sent=1, loss_pct=100.0, details=details, command=command)
+        else:
+            o = failed(error)
         _apply_stats(o, [elapsed])
         return o
-    except dns.exception.DNSException as exc:
-        return ProbeOutcome(True, False, started, time.time(), error=f"{exc.__class__.__name__}: {exc}", sent=1, loss_pct=100.0, details=details, command=command)
-    elapsed = (time.perf_counter() - t0) * 1000.0
-    answers = sorted(r.to_text() for r in answer)
-    details.update({"answers": answers, "ttl": answer.rrset.ttl if answer.rrset is not None else None, "nameserver": getattr(answer, "nameserver", None), "rcode": "NOERROR"})
+
+    if not server:
+        # The system resolver (resolv.conf) over plain DNS; tcp=True makes it ask over TCP instead of UDP.
+        resolver = dns.asyncresolver.Resolver(configure=True)
+        resolver.lifetime = timeout
+        resolver.timeout = timeout
+        t0 = time.perf_counter()
+        try:
+            answer = await resolver.resolve(qname, rtype, tcp=transport == "tcp")
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer) as exc:
+            nx = isinstance(exc, dns.resolver.NXDOMAIN)
+            return no_answer("NXDOMAIN" if nx else "NOANSWER", f"{exc.__class__.__name__}: {exc}", (time.perf_counter() - t0) * 1000.0)
+        except dns.exception.DNSException as exc:
+            return failed(f"{exc.__class__.__name__}: {exc}")
+        elapsed = (time.perf_counter() - t0) * 1000.0
+        rrset = answer.rrset
+        details["nameserver"] = getattr(answer, "nameserver", None)
+    else:
+        # A named server is queried directly, one query over the chosen transport, so the timing is that transport's.
+        # The address is resolved here (and recorded) so the map and the details show which server answered.
+        tls_name: str | None = None
+        if transport == "doh":
+            host = urlsplit(url).hostname or ""
+        else:
+            host = server
+        try:
+            address = host if is_ip(host) else await resolve_host(host, "auto")
+        except ValueError as exc:
+            return failed(f"resolver: {exc}", executed=False)
+        if not is_ip(host):
+            tls_name = host
+        details["nameserver"] = address
+        query = dns.message.make_query(qname, rtype)
+        t0 = time.perf_counter()
+        try:
+            if transport == "udp":
+                response, used_tcp = await dns.asyncquery.udp_with_fallback(query, address, timeout=timeout, port=port)
+                if used_tcp:
+                    # A truncated UDP answer is retried over TCP, as every resolver does; say so rather than hide it.
+                    details["tcp_fallback"] = True
+            elif transport == "tcp":
+                response = await dns.asyncquery.tcp(query, address, timeout=timeout, port=port)
+            elif transport == "dot":
+                context = None
+                if not verify:
+                    # dnspython refuses verify=False together with a server name; this context still sends the name (SNI).
+                    context = ssl.create_default_context()
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                    context.set_alpn_protocols(["dot"])
+                response = await dns.asyncquery.tls(
+                    query, address, timeout=timeout, port=port, ssl_context=context, server_hostname=tls_name or address, verify=verify
+                )
+            else:
+                response = await asyncio.wait_for(
+                    dns.asyncquery.https(query, url, timeout=timeout, verify=verify, bootstrap_address=None if is_ip(host) else address),
+                    timeout + 1.0,
+                )
+        except asyncio.TimeoutError:
+            return failed(f"Timeout: no answer from {url or address} within {timeout:g} s")
+        except dns.exception.DNSException as exc:
+            return failed(f"{exc.__class__.__name__}: {exc}")
+        except ssl.SSLError as exc:
+            return failed(f"TLS error from {address}: {exc.reason or exc}")
+        except (OSError, httpx.HTTPError, ValueError) as exc:
+            return failed(f"{exc.__class__.__name__}: {exc}")
+        elapsed = (time.perf_counter() - t0) * 1000.0
+        rcode = dns.rcode.to_text(response.rcode())
+        if rcode == "NXDOMAIN":
+            return no_answer(rcode, f"NXDOMAIN: {qname} does not exist", elapsed)
+        if rcode != "NOERROR":
+            details.update({"answers": [], "rcode": rcode})
+            o = failed(f"{rcode} from {url or address}")
+            _apply_stats(o, [elapsed])
+            return o
+        try:
+            rrset = response.resolve_chaining().answer
+        except dns.exception.DNSException:
+            rrset = None
+        if rrset is None:
+            return no_answer("NOANSWER", f"NoAnswer: no {rtype} record for {qname}", elapsed)
+    answers = sorted(r.to_text() for r in rrset)
+    details.update({"answers": answers, "ttl": rrset.ttl if rrset is not None else None, "rcode": "NOERROR"})
     o = ProbeOutcome(True, True, started, time.time(), sent=1, details=details, command=command)
     _apply_stats(o, [elapsed])
     if expected and not any(expected.lower() in a.lower() for a in answers):

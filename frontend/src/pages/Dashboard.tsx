@@ -103,10 +103,11 @@ export function Dashboard() {
         toast(`Added ${values.name}. First run starts now.`, "success");
       }
       closeForm();
-      await targets.refresh();
     } finally {
       setSaving(false);
     }
+    // The list reloads in the background: the dialog closes as soon as the write is done.
+    void targets.refresh();
   };
 
   /** Open the add form with every setting of `t` and a "(copy)" name; saving creates a new target. */
@@ -121,7 +122,7 @@ export function Dashboard() {
     try {
       await api.updateTarget(t.id, { enabled: !t.enabled });
       toast(t.enabled ? `Paused ${t.name}` : `Resumed ${t.name}`, "info");
-      await targets.refresh();
+      void targets.refresh();
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
     }
@@ -131,7 +132,7 @@ export function Dashboard() {
     try {
       await api.updateTarget(t.id, { notify: !t.notify });
       toast(t.notify ? `Notifications muted for ${t.name}` : `Notifications unmuted for ${t.name}`, "info");
-      await targets.refresh();
+      void targets.refresh();
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
     }
@@ -153,7 +154,7 @@ export function Dashboard() {
       await api.deleteTarget(deleting.id);
       toast(`Deleted ${deleting.name}`, "info");
       setDeleting(null);
-      await targets.refresh();
+      void targets.refresh();
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
     }

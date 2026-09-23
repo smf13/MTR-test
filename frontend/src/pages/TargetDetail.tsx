@@ -61,9 +61,15 @@ export function TargetDetail() {
     const r = await api.runs(targetId, { limit: 1 });
     return r.items[0] ? api.run(r.items[0].id) : null;
   }, pollMs, [targetId]);
-  const history = usePoll(() => api.hopHistory(targetId, range), pollMs, [targetId, range]);
-  const summary = usePoll(() => api.hopSummary(targetId, range), pollMs, [targetId, range]);
-  const runs = usePoll(() => api.runs(targetId, { limit: RUN_PAGE, offset: runPage * RUN_PAGE, range, status: runFilter || undefined }), pollMs, [targetId, range, runFilter, runPage]);
+  // Tab panels that are not on screen are not polled: hop history and the hop summary aggregate every hop row
+  // in the range, and those requests used to hold database connections that a save or "Run now" then waited for.
+  const pathTarget = target.data ? isPathProbe(target.data.type, target.data.options) : false;
+  // Null until the target has loaded: its type decides which tabs exist, so nothing tab-specific is fetched before.
+  const shownTab = !target.data ? null : !pathTarget && tab !== "runs" && tab !== "events" ? "runs" : tab;
+  const history = usePoll(() => api.hopHistory(targetId, range), pollMs, [targetId, range], pathTarget && shownTab === "history");
+  // The summary also feeds the path profile's "Avg" view above the tabs.
+  const summary = usePoll(() => api.hopSummary(targetId, range), pollMs, [targetId, range], pathTarget && (shownTab === "summary" || profileSource === "range"));
+  const runs = usePoll(() => api.runs(targetId, { limit: RUN_PAGE, offset: runPage * RUN_PAGE, range, status: runFilter || undefined }), pollMs, [targetId, range, runFilter, runPage], shownTab === "runs");
   const events = usePoll(() => api.targetEvents(targetId, range), pollMs, [targetId, range]);
   const routes = usePoll(() => api.routes(targetId, range), pollMs, [targetId, range]);
   const hourly = usePoll(() => api.hourly(targetId, range), Math.max(pollMs, 60000), [targetId, range]);
@@ -175,8 +181,8 @@ export function TargetDetail() {
 
   const run = t.latest_run;
   const latestRun = latest.data;
-  const pathProbe = isPathProbe(t.type, t.options);
-  const activeTab = !pathProbe && tab !== "runs" && tab !== "events" ? "runs" : tab;
+  const pathProbe = pathTarget;
+  const activeTab = shownTab ?? "runs";
   const latencyWord = latencyLabel(t.type, t.options);
   const singleSample = !isPacketProbe(t.type, t.options);
   const latestDetails = (run?.details || {}) as Record<string, unknown>;
