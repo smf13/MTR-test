@@ -42,6 +42,17 @@ For DoT and DoH, **Verify the resolver's certificate** (on by default) checks th
 
 A **Globalping** DNS measurement offers **Transport** too, limited to **UDP (port 53)** and **TCP (port 53)**: the remote probes speak plain DNS only.
 
+### HTTP JSON query
+
+An **HTTP(S)** target can check one value inside a JSON response, the way Uptime Kuma's JSON query does. **JSON query (optional)** takes a [JSONata](https://docs.jsonata.org/simple) expression evaluated against the response body: `status.indicator`, `items[0].state`, `components[id = "yyzkbfz2thpt"].status` (a filter picks the list entry by one of its fields), `$count(errors)`. Once the field holds an expression, two more controls appear under it:
+
+| Control | Meaning |
+| --- | --- |
+| **JSON condition** | `== equals`, `!= not equal`, `< less than`, `<= at most`, `> greater than`, `>= at least` or `contains`. |
+| **Expected value** | What the result is compared with. With `==` it may stay empty: the check then passes whenever the result exists and is not `false`, so an expression such as `status = "ok"` needs nothing else. |
+
+`==` and `!=` compare the result's text (`true`, `false` and `null` as JSON writes them, numbers as numbers); the order conditions need a number on both sides; `contains` looks for the expected text anywhere in the result, ignoring case, and searches a list as its JSON text. A query that finds nothing counts as `null`, so it passes only `!=` (or `== null`). The help line under the controls repeats the rule for the chosen condition. The form refuses a condition other than `==` without an expected value and an order condition with a non-number; the server also refuses an expression JSONata cannot parse. A run's details show **JSON query** and **JSON result**: what the expression returned (or `nothing`, or the evaluation error), coloured by the outcome, with the condition in brackets. Targets saved with the former dotted **JSON check** path open with that path as the query and its comparison as the condition.
+
 Saving a target closes the form as soon as the change is stored; the dashboard list refreshes in the background.
 
 ## Target pages

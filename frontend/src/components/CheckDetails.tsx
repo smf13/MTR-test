@@ -34,6 +34,7 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
             <Row k="Protocol" v={String(d.http_version ?? "–")} />
             {d.redirects !== undefined && Number(d.redirects) > 0 && <Row k="Redirects" v={`${d.redirects} → ${d.final_url}`} mono />}
             {d.keyword !== undefined && <Row k="Keyword" v={<span style={{ color: d.keyword_found ? "var(--up)" : "var(--down)" }}>"{String(d.keyword)}" {d.keyword_found ? "found" : "not found"}</span>} />}
+            {d.json_query !== undefined && <JsonQueryRows d={d} />}
             {d.json_path !== undefined && <Row k={`JSON ${String(d.json_path)}`} v={<span style={{ color: d.json_ok === false ? "var(--down)" : d.json_ok ? "var(--up)" : undefined }}>{JSON.stringify(d.json_value)}</span>} mono />}
             {d.tls_expires_in_days !== undefined && <TlsExpiryRow days={d.tls_expires_in_days} error={d.tls_error} soon={tlsSoon} />}
             {tls && <TlsRows tls={tls} soon={tlsSoon} />}
@@ -297,5 +298,19 @@ function HttpProbeTable({ probes }: { probes: GlobalpingHttpProbe[] }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** The JSON query of an HTTP check: the expression, the condition it was judged by and what it returned. */
+function JsonQueryRows({ d }: { d: Record<string, unknown> }) {
+  const color = d.json_ok === false ? "var(--down)" : d.json_ok ? "var(--up)" : undefined;
+  const expected = String(d.json_expected ?? "");
+  const condition = expected ? `${String(d.json_operator ?? "==")} ${expected}` : "exists and is not false";
+  const result = d.json_error !== undefined ? `error: ${String(d.json_error)}` : d.json_value === undefined ? "–" : d.json_value === null ? "nothing" : JSON.stringify(d.json_value);
+  return (
+    <>
+      <Row k="JSON query" v={<>{String(d.json_query)}</>} mono wide />
+      <Row k="JSON result" v={<span data-testid="json-result" style={{ color }}>{result} <span className="text-muted">({condition})</span></span>} mono wide />
+    </>
   );
 }

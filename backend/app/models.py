@@ -6,6 +6,7 @@ import re
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+import jsonata
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 Protocol = Literal["icmp", "udp", "tcp"]
@@ -18,6 +19,47 @@ GlobalpingDnsTransport = Literal["udp", "tcp"]
 GlobalpingMeasurement = Literal["ping", "traceroute", "mtr", "dns", "http"]
 GlobalpingHttpMethod = Literal["GET", "HEAD", "OPTIONS"]
 GlobalpingHttpProtocol = Literal["HTTPS", "HTTP", "HTTP2"]
+
+
+JsonOperator = Literal["==", "!=", "<", "<=", ">", ">=", "contains"]
+NUMERIC_JSON_OPERATORS = ("<", "<=", ">", ">=")
+_LEGACY_JSON_CMP_RE = re.compile(r"^(==|!=|>=|<=|>|<)\s*(-?\d+(?:\.\d+)?)$")
+_JSONATA_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _legacy_path_to_jsonata(path: str) -> str:
+    """data.items[0].status style paths are JSONata already; names JSONata would read as operators get backticks."""
+    out: list[str] = []
+    for part in re.findall(r"[^.\[\]]+|\[\d+\]", path.strip()):
+        if part.startswith("["):
+            out.append(part)
+        else:
+            name = part if _JSONATA_NAME_RE.match(part) else "`" + part.replace("`", "") + "`"
+            out.append(("." if out else "") + name)
+    return "".join(out)
+
+
+def upgrade_http_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Turn the former JSON check (json_path, with the comparison inside json_expected) into json_query/json_operator.
+
+    Applied when options are validated, read back through the API and run, so targets saved before the
+    JSONata query keep working unchanged."""
+    if "json_path" not in options:
+        return options
+    out = dict(options)
+    path = str(out.pop("json_path") or "").strip()
+    if (out.get("json_query") or "").strip() or "json_operator" in out:
+        return out
+    expected = str(out.get("json_expected") or "").strip()
+    out["json_query"] = _legacy_path_to_jsonata(path) if path else ""
+    m = _LEGACY_JSON_CMP_RE.match(expected)
+    if m:
+        out["json_operator"], out["json_expected"] = m.group(1), m.group(2)
+    elif expected.startswith("~"):
+        out["json_operator"], out["json_expected"] = "contains", expected[1:].strip()
+    else:
+        out["json_operator"] = "=="
+    return out
 
 
 def clean_status_spec(v: str) -> str:
@@ -34,8 +76,11 @@ class HttpOptions(BaseModel):
     expected_status: str = Field(default="200-299", max_length=100, description="e.g. 200, 200-299, 200,301")
     keyword: str = Field(default="", max_length=500)
     keyword_absent: bool = False
-    json_path: str = Field(default="", max_length=300, description="dotted path, e.g. data.items[0].status")
-    json_expected: str = Field(default="", max_length=500, description="value, or ==/!=/>/</>=/<= number, or ~substring")
+    json_query: str = Field(
+        default="", max_length=1000, description='JSONata expression evaluated against the response body, e.g. components[id = "abc"].status'
+    )
+    json_operator: JsonOperator = Field(default="==", description="how the query result is compared with json_expected")
+    json_expected: str = Field(default="", max_length=500, description="value the result is compared with; empty = the result must exist and not be false")
     headers: dict[str, str] = Field(default_factory=dict)
     body: str = Field(default="", max_length=20000)
     timeout_sec: float = Field(default=10.0, ge=1, le=120)
@@ -44,10 +89,38 @@ class HttpOptions(BaseModel):
     tls_warn_days: int = Field(default=14, ge=0, le=365, description="warn (degraded) when the certificate expires within N days; 0 disables")
     tls_info: bool = Field(default=True, description="record the certificate (subject, issuer, validity, names, protocol) with every run")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_json(cls, data: Any) -> Any:
+        return upgrade_http_options(data) if isinstance(data, dict) else data
+
     @field_validator("expected_status")
     @classmethod
     def _status(cls, v: str) -> str:
         return clean_status_spec(v)
+
+    @field_validator("json_query")
+    @classmethod
+    def _json_query(cls, v: str) -> str:
+        v = v.strip()
+        if v:
+            try:
+                jsonata.Jsonata(v)
+            except Exception as exc:  # JException, or anything else the parser trips over
+                raise ValueError(f"invalid JSON query: {exc}") from None
+        return v
+
+    @model_validator(mode="after")
+    def _json_condition(self) -> "HttpOptions":
+        expected = self.json_expected.strip()
+        if self.json_operator != "==" and not expected:
+            raise ValueError(f"the JSON condition '{self.json_operator}' needs an expected value")
+        if self.json_operator in NUMERIC_JSON_OPERATORS:
+            try:
+                float(expected)
+            except ValueError:
+                raise ValueError(f"the JSON condition '{self.json_operator}' needs a number as the expected value") from None
+        return self
 
 
 class PingOptions(BaseModel):

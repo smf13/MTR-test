@@ -147,10 +147,30 @@ async def test_visual_endpoints(client: AsyncClient) -> None:
     assert routes["routes"][0]["share_pct"] > 0 and routes["segments"][0]["index"] == routes["routes"][0]["index"]
 
 
+async def test_http_json_query_options(client: AsyncClient) -> None:
+    spec = {"name": "Status page", "host": "https://status.example.test/api/v2/summary.json", "type": "http", "interval_sec": 60,
+            "options": {"json_query": 'components[id = "yyzkbfz2thpt"].status', "json_operator": "==", "json_expected": "operational"}}
+    r = await client.post("/api/targets", json=spec)
+    assert r.status_code == 201, r.text
+    tid = r.json()["id"]
+    assert r.json()["options"]["json_query"] == 'components[id = "yyzkbfz2thpt"].status'
+
+    bad = await client.put(f"/api/targets/{tid}", json={"options": {**spec["options"], "json_query": "components[id ="}})
+    assert bad.status_code == 422 and "invalid JSON query" in bad.text
+    bad = await client.put(f"/api/targets/{tid}", json={"options": {**spec["options"], "json_operator": ">"}})
+    assert bad.status_code == 422 and "needs a number" in bad.text
+
+    # A target saved with the former dotted path reads back as the JSON query that replaced it.
+    db = client._transport.app.state.db  # type: ignore[attr-defined]
+    await db.execute("UPDATE targets SET options = ? WHERE id = ?", ('{"json_path": "data.queue", "json_expected": ">= 5"}', tid))
+    opts = (await client.get(f"/api/targets/{tid}")).json()["options"]
+    assert opts["json_query"] == "data.queue" and opts["json_operator"] == ">=" and opts["json_expected"] == "5" and "json_path" not in opts
+
+
 async def test_probe_types_end_to_end(client: AsyncClient) -> None:
     specs = [
         {"name": "Ping demo", "host": "192.0.2.40", "type": "ping", "interval_sec": 60, "count": 4},
-        {"name": "HTTP demo", "host": "https://status.example.test/health", "type": "http", "interval_sec": 60, "options": {"keyword": "ok", "json_path": "status", "json_expected": "ok"}},
+        {"name": "HTTP demo", "host": "https://status.example.test/health", "type": "http", "interval_sec": 60, "options": {"keyword": "ok", "json_query": "status", "json_operator": "==", "json_expected": "ok"}},
         {"name": "TCP demo", "host": "192.0.2.41", "type": "tcp", "port": 443, "interval_sec": 60},
         {"name": "DNS demo", "host": "example.test", "type": "dns", "interval_sec": 60, "options": {"record_type": "A", "expected": "192.0.2"}},
         {"name": "DNS uncached", "host": "example.test", "type": "dns", "interval_sec": 60, "options": {"record_type": "A", "random_prefix": True}},
@@ -170,6 +190,7 @@ async def test_probe_types_end_to_end(client: AsyncClient) -> None:
             assert "samples_ms" in run["details"]
         if spec["type"] == "http":
             assert run["details"]["status"] in (200, 503) and run["details"]["keyword"] == "ok"
+            assert run["details"]["json_query"] == "status" and run["details"]["json_operator"] == "=="
             assert run["details"]["tls"]["issuer"] == "Simulated CA" and run["details"]["tls"]["subject"] == "status.example.test" and run["details"]["tls"]["days_left"] == 61
         if spec["type"] == "tcp":
             assert run["details"]["port"] == 443

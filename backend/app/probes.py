@@ -22,10 +22,16 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+import jsonata
 
 from .config import config
+from .models import upgrade_http_options
 from .resolver import is_ip, resolve_host
 
+# Bounds for one evaluation of a JSON query (JSONata): milliseconds and nesting depth.
+JSON_QUERY_TIMEOUT_MS = 1000
+JSON_QUERY_MAX_DEPTH = 200
+_NOT_JSON = object()
 # Bytes of an HTTP response body kept in memory for the keyword/JSON checks; the rest is discarded.
 MAX_HTTP_BODY = 5_000_000
 
@@ -176,7 +182,6 @@ def _simulate_ping(started: float, dst_ip: str, count: int) -> ProbeOutcome:
 # ---------------------------------------------------------------------------
 
 _STATUS_TOKEN_RE = re.compile(r"^\s*(\d{3})(?:\s*-\s*(\d{3}))?\s*$")
-_NUM_CMP_RE = re.compile(r"^(==|!=|>=|<=|>|<)\s*(-?\d+(?:\.\d+)?)$")
 
 
 def status_allowed(code: int, spec: str | None) -> bool:
@@ -192,39 +197,75 @@ def status_allowed(code: int, spec: str | None) -> bool:
     return False
 
 
-def json_path(data: Any, path: str) -> tuple[bool, Any]:
-    """Resolve a dotted path with [index] segments, e.g. data.items[0].status. Returns (found, value)."""
-    cur = data
-    for part in re.findall(r"[^.\[\]]+|\[\d+\]", path.strip()):
-        if part.startswith("["):
-            idx = int(part[1:-1])
-            if not isinstance(cur, list) or idx >= len(cur):
-                return False, None
-            cur = cur[idx]
-        else:
-            if not isinstance(cur, dict) or part not in cur:
-                return False, None
-            cur = cur[part]
-    return True, cur
+class JsonQueryError(Exception):
+    """The JSONata expression failed to evaluate (bad function call, runaway expression, ...)."""
 
 
-def json_matches(value: Any, expected: str) -> bool:
-    expected = expected.strip()
-    m = _NUM_CMP_RE.match(expected)
-    if m:
-        try:
-            num = float(value)
-        except (TypeError, ValueError):
-            return False
-        want = float(m.group(2))
-        return {"==": num == want, "!=": num != want, ">=": num >= want, "<=": num <= want, ">": num > want, "<": num < want}[m.group(1)]
-    if expected.startswith("~"):
-        return expected[1:].strip().lower() in str(value).lower()
+def evaluate_json_query(data: Any, expression: str) -> Any:
+    """Evaluate a JSONata expression (the language Uptime Kuma's JSON query uses) against parsed JSON.
+
+    Returns None when nothing matched. Bounded in time and depth so a runaway expression cannot stall a worker thread."""
+    try:
+        return jsonata.Jsonata(expression, timeout=JSON_QUERY_TIMEOUT_MS, stack=JSON_QUERY_MAX_DEPTH).evaluate(data)
+    except RecursionError:
+        raise JsonQueryError("expression nests too deeply") from None
+    except Exception as exc:  # jsonata raises JException (a RuntimeError) and occasionally plain Python errors
+        raise JsonQueryError(str(exc) or exc.__class__.__name__) from None
+
+
+def json_text(value: Any) -> str:
+    """A query result as text, written the way JSON writes it (true, null, 3 rather than 3.0)."""
+    if isinstance(value, str):
+        return value
     if isinstance(value, bool):
-        return expected.lower() == str(value).lower()
+        return "true" if value else "false"
     if value is None:
-        return expected.lower() in {"null", "none"}
-    return str(value) == expected
+        return "null"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+
+def _json_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def json_condition(value: Any, operator: str, expected: str) -> bool:
+    """Compare a query result with the expected value.
+
+    An empty expected value with == passes when the result exists and is not false, so a boolean expression
+    such as `status = "ok"` needs no expected value. == and != compare the text (numbers numerically; true,
+    false and null ignore case), the order operators compare numbers, contains is a case-insensitive substring."""
+    expected = expected.strip()
+    if operator == "==" and not expected:
+        return value is not None and value is not False
+    if operator in ("<", "<=", ">", ">="):
+        num, want = _json_number(value), _json_number(expected)
+        if num is None or want is None:
+            return False
+        return {"<": num < want, "<=": num <= want, ">": num > want, ">=": num >= want}[operator]
+    if operator == "contains":
+        return expected.lower() in json_text(value).lower()
+    text = json_text(value)
+    num, want = _json_number(value), _json_number(expected)
+    if num is not None and want is not None:
+        equal = num == want
+    elif isinstance(value, bool) or value is None:
+        equal = text == expected.lower()
+    else:
+        equal = text == expected
+    return equal if operator == "==" else not equal
+
+
+def _json_shown(value: Any) -> Any:
+    return value if isinstance(value, (str, int, float, bool)) or value is None else json_text(value)[:200]
 
 
 _CERT_DATE = "%b %d %H:%M:%S %Y %Z"
@@ -338,13 +379,15 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     body = opts.get("body") or None
     keyword = (opts.get("keyword") or "").strip()
     keyword_absent = bool(opts.get("keyword_absent", False))
-    jpath = (opts.get("json_path") or "").strip()
-    jexpected = opts.get("json_expected")
+    opts = upgrade_http_options(opts)
+    jquery = str(opts.get("json_query") or "").strip()
+    joperator = str(opts.get("json_operator") or "==")
+    jexpected = str(opts.get("json_expected") or "").strip()
     tls_warn_days = int(opts.get("tls_warn_days") or 0)
     tls_info = bool(opts.get("tls_info", True))
 
     if _sim():
-        return _simulate_http(started, url, keyword, jpath, tls_warn_days, tls_info)
+        return _simulate_http(started, url, keyword, (jquery, joperator, jexpected), tls_warn_days, tls_info)
 
     parts = urlsplit(url)
     want_tls = parts.scheme == "https" and verify and (tls_warn_days > 0 or tls_info)
@@ -407,21 +450,30 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
             failures.append(f"keyword '{keyword}' present but must be absent")
         if not keyword_absent and not found:
             failures.append(f"keyword '{keyword}' not found")
-    if jpath:
+    if jquery:
+        details.update({"json_query": jquery, "json_operator": joperator, "json_expected": jexpected})
         try:
             data = json.loads(text)
-            found, value = json_path(data, jpath)
-            details["json_path"] = jpath
-            details["json_value"] = value if isinstance(value, (str, int, float, bool)) or value is None else json.dumps(value)[:200]
-            if not found:
-                failures.append(f"JSON path '{jpath}' not found")
-            elif jexpected not in (None, ""):
-                matched = json_matches(value, str(jexpected))
+        except ValueError:
+            data = _NOT_JSON
+        if data is _NOT_JSON:
+            details["json_ok"] = False
+            failures.append("response is not valid JSON")
+        else:
+            try:
+                value = await asyncio.to_thread(evaluate_json_query, data, jquery)
+            except JsonQueryError as exc:
+                details["json_ok"] = False
+                details["json_error"] = str(exc)
+                failures.append(f"JSON query failed: {exc}")
+            else:
+                matched = json_condition(value, joperator, jexpected)
+                details["json_value"] = _json_shown(value)
                 details["json_ok"] = matched
                 if not matched:
-                    failures.append(f"JSON '{jpath}' = {details['json_value']!r}, expected {jexpected}")
-        except ValueError:
-            failures.append("response is not valid JSON")
+                    want = f"{joperator} {jexpected}" if jexpected else "a value"
+                    got = "nothing" if value is None else repr(details["json_value"])
+                    failures.append(f"JSON query returned {got}, expected {want}")
 
     warnings: list[str] = []
     if want_tls:
@@ -445,7 +497,7 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     return o
 
 
-def _simulate_http(started: float, url: str, keyword: str, jpath: str, tls_warn_days: int = 14, tls_info: bool = True) -> ProbeOutcome:
+def _simulate_http(started: float, url: str, keyword: str, jcheck: tuple[str, str, str], tls_warn_days: int = 14, tls_info: bool = True) -> ProbeOutcome:
     rng = random.Random()
     elapsed = max(20.0, rng.gauss(180, 40))
     fail = rng.random() < 0.03
@@ -461,8 +513,9 @@ def _simulate_http(started: float, url: str, keyword: str, jpath: str, tls_warn_
         }
     if keyword:
         details.update({"keyword": keyword, "keyword_found": not fail})
-    if jpath:
-        details.update({"json_path": jpath, "json_value": "ok", "json_ok": not fail})
+    jquery, joperator, jexpected = jcheck
+    if jquery:
+        details.update({"json_query": jquery, "json_operator": joperator, "json_expected": jexpected, "json_value": jexpected or True, "json_ok": not fail})
     o = ProbeOutcome(True, not fail, started, time.time() + 0.01, sent=1, details=details, command=f"[simulated] GET {url}")
     o.loss_pct = 100.0 if fail else 0.0
     _apply_stats(o, [elapsed])

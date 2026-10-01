@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, DEFAULT_OPTIONS, DNS_TRANSPORT_LABEL, LATENCY_ALERT_DEFAULT, PROBE_TYPE_LABEL, targetInput, type DnsRecordType, type DnsTransport, type GlobalpingHttpMethod, type GlobalpingHttpProtocol, type GlobalpingMeasurement, type HttpMethod, type IpVersion, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
+import { api, DEFAULT_OPTIONS, DNS_TRANSPORT_LABEL, JSON_OPERATOR_LABEL, LATENCY_ALERT_DEFAULT, NUMERIC_JSON_OPERATORS, PROBE_TYPE_LABEL, targetInput, type DnsRecordType, type DnsTransport, type GlobalpingHttpMethod, type GlobalpingHttpProtocol, type GlobalpingMeasurement, type HttpMethod, type IpVersion, type JsonOperator, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
 import { Modal } from "./Modal";
 import { NumberInput } from "./NumberInput";
 import { Segmented } from "./RangePicker";
@@ -63,6 +63,16 @@ const INTERVAL_PRESETS: { label: string; value: number }[] = [
   { label: "30 min", value: 1800 },
   { label: "1 h", value: 3600 },
 ];
+
+const JSON_CONDITION_HELP: Record<JsonOperator, string> = {
+  "==": "Passes when the result equals the expected value (numbers compare as numbers). Leave it empty to pass whenever the result exists and is not false, handy for an expression such as status = \"ok\".",
+  "!=": "Passes when the result differs from the expected value, including when the query finds nothing.",
+  "<": "Passes when the result is a number below the expected one.",
+  "<=": "Passes when the result is a number no higher than the expected one.",
+  ">": "Passes when the result is a number above the expected one.",
+  ">=": "Passes when the result is a number no lower than the expected one.",
+  contains: "Passes when the result's text contains the expected value, ignoring case (a list is searched as its JSON text).",
+};
 
 export function TargetForm({
   open,
@@ -134,6 +144,7 @@ export function TargetForm({
   const isHttp = form.type === "http";
   const isTcp = form.type === "tcp";
   const isDns = form.type === "dns";
+  const jsonOperator: JsonOperator = form.options.json_operator ?? "==";
   const dnsTransport: DnsTransport = form.options.transport ?? "udp";
   const dnsEncrypted = dnsTransport === "dot" || dnsTransport === "doh";
   const isGlobalping = form.type === "globalping";
@@ -179,6 +190,11 @@ export function TargetForm({
     if (durationWarn) return setError(`A run takes about ${runDuration}s (probes × probe interval, plus mtr's final wait), which does not fit the ${form.interval_sec}s schedule. Increase the interval or lower the probe count.`);
     const tags = parsedTags;
     if (isTcp && !form.port) return setError("TCP probes need a port.");
+    if (isHttp && (form.options.json_query ?? "").trim()) {
+      const expected = (form.options.json_expected ?? "").trim();
+      if (jsonOperator !== "==" && !expected) return setError(`The JSON condition "${jsonOperator}" needs an expected value.`);
+      if (NUMERIC_JSON_OPERATORS.includes(jsonOperator) && !Number.isFinite(Number(expected))) return setError(`The JSON condition "${jsonOperator}" compares numbers: enter a number as the expected value.`);
+    }
     if (isDns && dnsEncrypted && !(form.options.resolver ?? "").trim()) return setError(`${DNS_TRANSPORT_LABEL[dnsTransport]} needs a resolver: the system resolver speaks plain DNS only.`);
     const options: ProbeOptions = { ...form.options };
     if (isHttp) {
@@ -358,13 +374,53 @@ export function TargetForm({
                 <input type="checkbox" checked={!!form.options.keyword_absent} onChange={(e) => setOpt("keyword_absent", e.target.checked)} /> Fail if the keyword is present instead
               </label>
             </div>
-            <div>
-              <label className="label">JSON check (optional)</label>
-              <div className="flex gap-2">
-                <input className="input font-mono" value={form.options.json_path ?? ""} onChange={(e) => setOpt("json_path", e.target.value)} placeholder="data.status" spellCheck={false} />
-                <input className="input font-mono w-40" value={form.options.json_expected ?? ""} onChange={(e) => setOpt("json_expected", e.target.value)} placeholder="ok" spellCheck={false} />
+            <div className="sm:col-span-2">
+              <label className="label" htmlFor="json-query">JSON query (optional)</label>
+              <input
+                id="json-query"
+                className="input font-mono"
+                value={form.options.json_query ?? ""}
+                onChange={(e) => setOpt("json_query", e.target.value)}
+                placeholder='components[id = "abc123"].status'
+                spellCheck={false}
+              />
+              <div className="help">
+                A{" "}
+                <a className="underline" href="https://docs.jsonata.org/simple" target="_blank" rel="noreferrer">
+                  JSONata
+                </a>{" "}
+                expression on the response body, as in Uptime Kuma: <code>status.indicator</code>, <code>items[0].state</code>,{" "}
+                <code>components[id = "abc123"].status</code>, <code>$count(errors)</code>.
               </div>
-              <div className="help">Path like items[0].state; expected value, or a comparison such as {">= 5"}, or ~substring.</div>
+              {(form.options.json_query ?? "").trim() !== "" && (
+                <div className="mt-2 grid grid-cols-[auto_1fr] gap-2">
+                  <select
+                    className="input"
+                    aria-label="JSON condition"
+                    value={jsonOperator}
+                    onChange={(e) => setOpt("json_operator", e.target.value as JsonOperator)}
+                  >
+                    {(Object.keys(JSON_OPERATOR_LABEL) as JsonOperator[]).map((op) => (
+                      <option key={op} value={op}>
+                        {JSON_OPERATOR_LABEL[op]}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="input font-mono"
+                    aria-label="Expected value"
+                    value={form.options.json_expected ?? ""}
+                    onChange={(e) => setOpt("json_expected", e.target.value)}
+                    placeholder={NUMERIC_JSON_OPERATORS.includes(jsonOperator) ? "a number" : jsonOperator === "==" ? "expected value, e.g. operational" : "expected value"}
+                    spellCheck={false}
+                  />
+                </div>
+              )}
+              {(form.options.json_query ?? "").trim() !== "" && (
+                <div className="help">
+                  {JSON_CONDITION_HELP[jsonOperator]}
+                </div>
+              )}
             </div>
             <div>
               <label className="label">Timeout (s)</label>

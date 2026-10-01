@@ -102,3 +102,43 @@ describe("DNS transport", () => {
     expect(screen.getByText(/192\.0\.2\.53/)).toBeTruthy();
   });
 });
+
+describe("HTTP JSON query", () => {
+  async function openHttpForm(onSubmit: (v: TargetInput) => Promise<void>) {
+    const user = userEvent.setup();
+    render(<MemoryRouter><TargetForm open prefill={{ name: "Claude status", host: "https://status.claude.com/api/v2/summary.json" }} onClose={() => undefined} onSubmit={onSubmit} submitting={false} /></MemoryRouter>);
+    await user.click(screen.getByRole("radio", { name: "HTTP(S)" }));
+    return user;
+  }
+
+  it("takes a JSONata expression, a condition and the expected value", async () => {
+    const onSubmit = vi.fn(async (_values: TargetInput) => undefined);
+    const user = await openHttpForm(onSubmit);
+    expect(screen.queryByRole("combobox", { name: "JSON condition" })).toBeNull();  // shown once there is a query
+
+    await user.click(screen.getByRole("textbox", { name: "JSON query (optional)" }));
+    await user.paste('components[id = "yyzkbfz2thpt"].status');
+    const condition = screen.getByRole("combobox", { name: "JSON condition" });
+    expect((condition as HTMLSelectElement).value).toBe("==");
+
+    await user.selectOptions(condition, ">=");
+    await user.click(screen.getByRole("button", { name: "Add target" }));
+    expect(await screen.findByText(/needs an expected value/)).toBeTruthy();
+    await user.type(screen.getByRole("textbox", { name: "Expected value" }), "operational");
+    await user.click(screen.getByRole("button", { name: "Add target" }));
+    expect(await screen.findByText(/compares numbers/)).toBeTruthy();
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    await user.selectOptions(condition, "==");
+    await user.click(screen.getByRole("button", { name: "Add target" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].options).toMatchObject({ json_query: 'components[id = "yyzkbfz2thpt"].status', json_operator: "==", json_expected: "operational" });
+  });
+
+  it("shows the query, what it returned and the condition in the run details", () => {
+    const httpRun = { ...run, target_type: "http", details: { status: 200, status_ok: true, json_query: 'components[id = "x"].status', json_operator: "==", json_expected: "operational", json_value: "major_outage", json_ok: false } } as RunDetail;
+    render(<CheckDetails run={httpRun} type="http" />);
+    expect(screen.getByText('components[id = "x"].status')).toBeTruthy();
+    expect(screen.getByTestId("json-result").textContent).toBe('"major_outage" (== operational)');
+  });
+});

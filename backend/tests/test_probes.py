@@ -6,9 +6,10 @@ import asyncio
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from app import probes
-from app.probes import certificate_details, json_matches, json_path, ping_payload_bytes, run_dns, run_http, run_tcp, status_allowed
+from app.probes import certificate_details, evaluate_json_query, json_condition, ping_payload_bytes, run_dns, run_http, run_tcp, status_allowed
 
 
 def test_certificate_details_from_peer_cert() -> None:
@@ -56,14 +57,63 @@ def test_status_allowed() -> None:
     assert status_allowed(301, "200,301,302") and status_allowed(404, "404")
 
 
-def test_json_path_and_match() -> None:
-    data = {"data": {"items": [{"status": "ok", "count": 5, "flag": True, "nothing": None}]}}
-    assert json_path(data, "data.items[0].status") == (True, "ok")
-    assert json_path(data, "data.items[1].status") == (False, None)
-    assert json_path(data, "data.missing") == (False, None)
-    assert json_matches("ok", "ok") and not json_matches("ok", "OK")
-    assert json_matches(5, ">= 5") and json_matches(5, "!= 6") and not json_matches(5, "> 5")
-    assert json_matches("healthy-node", "~HEALTHY") and json_matches(True, "true") and json_matches(None, "null")
+STATUS_PAGE = {
+    "status": {"indicator": "none"},
+    "components": [
+        {"id": "rwppv331jlwc", "name": "claude.ai", "status": "operational"},
+        {"id": "yyzkbfz2thpt", "name": "Claude Code", "status": "major_outage"},
+    ],
+    "queue": 12,
+}
+
+
+def test_json_query_evaluates_jsonata() -> None:
+    assert evaluate_json_query(STATUS_PAGE, 'components[id = "yyzkbfz2thpt"].status') == "major_outage"
+    assert evaluate_json_query(STATUS_PAGE, 'components[id = "missing"].status') is None
+    assert evaluate_json_query(STATUS_PAGE, "components[0].name") == "claude.ai"
+    assert evaluate_json_query(STATUS_PAGE, "$count(components)") == 2
+    assert evaluate_json_query(STATUS_PAGE, 'status.indicator = "none"') is True
+    assert evaluate_json_query(STATUS_PAGE, "components.status") == ["operational", "major_outage"]
+    with pytest.raises(probes.JsonQueryError):
+        evaluate_json_query(STATUS_PAGE, "$nosuchfunction(queue)")
+    with pytest.raises(probes.JsonQueryError, match="timeout|deep|Stack|stack"):
+        evaluate_json_query({}, "($f := function($n){ $f($n + 1) }; $f(0))")
+
+
+def test_json_condition() -> None:
+    assert json_condition("operational", "==", "operational") and not json_condition("operational", "==", "Operational")
+    assert json_condition("degraded", "!=", "operational") and not json_condition("ok", "!=", "ok")
+    assert json_condition(5, "==", "5.0") and json_condition(5.0, "==", "5") and json_condition(True, "==", "TRUE") and json_condition(None, "==", "null")
+    assert json_condition(12, "<", "20") and json_condition(20, "<=", "20") and not json_condition(12, ">", "20") and json_condition("21", ">=", "20")
+    assert not json_condition("abc", "<", "20") and not json_condition(True, ">", "0")
+    assert json_condition("healthy-node", "contains", "HEALTHY") and json_condition(["a", "operational"], "contains", "operational")
+    # Without an expected value the result only has to exist and not be false.
+    assert json_condition("x", "==", "") and json_condition(0, "==", "") and not json_condition(None, "==", "") and not json_condition(False, "==", "")
+
+
+def test_http_json_options_validation_and_legacy_upgrade() -> None:
+    from app.models import upgrade_http_options, validate_options
+
+    opts = validate_options("http", {"json_query": ' components[id = "x"].status ', "json_operator": "==", "json_expected": "operational"})
+    assert opts["json_query"] == 'components[id = "x"].status' and opts["json_operator"] == "==" and "json_path" not in opts
+    assert validate_options("http", {})["json_operator"] == "=="
+    for bad in (
+        {"json_query": "components["},
+        {"json_query": "queue", "json_operator": ">", "json_expected": "many"},
+        {"json_query": "queue", "json_operator": "!=", "json_expected": ""},
+        {"json_query": "queue", "json_operator": "~"},
+    ):
+        with pytest.raises(ValidationError):
+            validate_options("http", bad)
+    # The former dotted path, with its comparison inside the expected value, becomes the JSONata query and a condition.
+    assert upgrade_http_options({"json_path": "data.items[0].status", "json_expected": "ok"}) == {
+        "json_query": "data.items[0].status", "json_operator": "==", "json_expected": "ok"}
+    assert upgrade_http_options({"json_path": "queue", "json_expected": "< 20"})["json_operator"] == "<"
+    assert upgrade_http_options({"json_path": "queue", "json_expected": "< 20"})["json_expected"] == "20"
+    assert upgrade_http_options({"json_path": "name", "json_expected": "~Node"}) == {"json_query": "name", "json_operator": "contains", "json_expected": "Node"}
+    assert upgrade_http_options({"json_path": "my-service.up"})["json_query"] == "`my-service`.up"
+    assert validate_options("http", {"json_path": "status", "json_expected": "ok"})["json_query"] == "status"
+    assert upgrade_http_options({"keyword": "x"}) == {"keyword": "x"}
 
 
 @pytest.fixture
@@ -76,6 +126,8 @@ async def test_run_http_checks(live: None, monkeypatch: pytest.MonkeyPatch) -> N
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/health":
             return httpx.Response(200, json={"status": "degraded", "queue": 12}, headers={"server": "unit"})
+        if request.url.path == "/status":
+            return httpx.Response(200, json=STATUS_PAGE)
         if request.url.path == "/page":
             return httpx.Response(200, text="<html>Welcome to MTR Tracker</html>")
         return httpx.Response(503, text="nope")
@@ -92,11 +144,34 @@ async def test_run_http_checks(live: None, monkeypatch: pytest.MonkeyPatch) -> N
     absent = await run_http(base, {"keyword": "Welcome", "keyword_absent": True})
     assert not absent.reached and "must be absent" in (absent.error or "")
 
+    # Options saved before the JSONata query still run.
     js = await run_http({"host": "http://svc.test/health", "type": "http"}, {"json_path": "status", "json_expected": "ok"})
-    assert not js.reached and "expected ok" in (js.error or "") and js.details["json_value"] == "degraded"
+    assert not js.reached and "expected == ok" in (js.error or "") and js.details["json_value"] == "degraded"
 
     js2 = await run_http({"host": "http://svc.test/health", "type": "http"}, {"json_path": "queue", "json_expected": "< 20"})
-    assert js2.reached and js2.details["json_ok"] is True and js2.details["server"] == "unit"
+    assert js2.reached and js2.details["json_ok"] is True and js2.details["server"] == "unit" and js2.details["json_query"] == "queue"
+
+    status = {"host": "http://svc.test/status", "type": "http"}
+    up = await run_http(status, {"json_query": 'components[id = "rwppv331jlwc"].status', "json_operator": "==", "json_expected": "operational"})
+    assert up.reached and up.details["json_value"] == "operational" and up.details["json_ok"] is True
+
+    down = await run_http(status, {"json_query": 'components[id = "yyzkbfz2thpt"].status', "json_operator": "==", "json_expected": "operational"})
+    assert not down.reached and down.error == "JSON query returned 'major_outage', expected == operational"
+
+    gone = await run_http(status, {"json_query": 'components[id = "nope"].status', "json_expected": "operational"})
+    assert not gone.reached and "returned nothing" in (gone.error or "") and gone.details["json_value"] is None
+
+    boolean = await run_http(status, {"json_query": '$count(components[status != "operational"]) = 0'})
+    assert not boolean.reached and boolean.details["json_value"] is False
+
+    listed = await run_http(status, {"json_query": "components.status", "json_operator": "contains", "json_expected": "outage"})
+    assert listed.reached and listed.details["json_value"] == '["operational","major_outage"]'
+
+    broken = await run_http(status, {"json_query": "$nosuchfunction(queue)"})
+    assert not broken.reached and (broken.error or "").startswith("JSON query failed") and broken.details["json_error"]
+
+    html = await run_http(base, {"json_query": "status"})
+    assert not html.reached and "not valid JSON" in (html.error or "") and html.details["json_ok"] is False
 
     bad = await run_http({"host": "http://svc.test/down", "type": "http"}, {})
     assert not bad.reached and bad.loss_pct == 100.0 and "503" in (bad.error or "")

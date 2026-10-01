@@ -19,7 +19,7 @@ from fastapi.responses import PlainTextResponse
 from . import __version__, geoip, ipapi
 from .config import config
 from .db import Database, rows_to_dicts
-from .models import BulkAction, NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, validate_options
+from .models import BulkAction, NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, upgrade_http_options, validate_options
 from .mtr import min_probe_interval, mtr_version, routes_equivalent, run_mtr
 from .notify import NotifyError, format_pushover_text, send_pushover, send_webhook, target_url
 from .resolver import resolve_host, reverse_lookup_many
@@ -134,6 +134,9 @@ def _target_out(row: dict[str, Any]) -> dict[str, Any]:
         out["options"] = json.loads(out.get("options") or "{}")
     except json.JSONDecodeError:
         out["options"] = {}
+    if out["type"] == "http" and isinstance(out["options"], dict):
+        # Targets saved with the former json_path check read back as the JSON query that replaced it.
+        out["options"] = upgrade_http_options(out["options"])
     for k in ("created_at", "updated_at", "next_run_at"):
         out[k] = _iso(out.get(k))
     return out
