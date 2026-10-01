@@ -206,7 +206,7 @@ describe("detail navigation", () => {
     await user.keyboard("{ArrowRight}");
     expect(within(navigation).getByRole("tab", { name: "Path summary · 24h" }).getAttribute("aria-selected")).toBe("true");
     await user.click(within(navigation).getByRole("tab", { name: "Runs" }));
-    expect(screen.getAllByRole("columnheader").map((h) => h.textContent?.trim())).toEqual(["Started", "Result", "Hops", "Loss", "Avg", "Best", "Wrst", "StDev", "Jitter", "Duration", ""]);
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent?.trim())).toEqual(["", "Started", "Result", "Hops", "Loss", "Avg", "Best", "Wrst", "StDev", "Jitter", "Duration", ""]);
     expect(screen.getByRole("button", { name: "Route changes" })).toBeTruthy();
     await user.keyboard("{ArrowRight}");
     expect(within(navigation).getByRole("tab", { name: "Events" }).getAttribute("aria-selected")).toBe("true");

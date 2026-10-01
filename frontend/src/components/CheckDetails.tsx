@@ -33,7 +33,7 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
             <Row k="Server" v={String(d.server ?? "–")} />
             <Row k="Protocol" v={String(d.http_version ?? "–")} />
             {d.redirects !== undefined && Number(d.redirects) > 0 && <Row k="Redirects" v={`${d.redirects} → ${d.final_url}`} mono />}
-            {d.keyword !== undefined && <Row k="Keyword" v={<span style={{ color: d.keyword_found ? "var(--up)" : "var(--down)" }}>"{String(d.keyword)}" {d.keyword_found ? "found" : "not found"}</span>} />}
+            {d.keyword !== undefined && <KeywordRow d={d} />}
             {d.json_query !== undefined && <JsonQueryRows d={d} />}
             {d.json_path !== undefined && <Row k={`JSON ${String(d.json_path)}`} v={<span style={{ color: d.json_ok === false ? "var(--down)" : d.json_ok ? "var(--up)" : undefined }}>{JSON.stringify(d.json_value)}</span>} mono />}
             {d.tls_expires_in_days !== undefined && <TlsExpiryRow days={d.tls_expires_in_days} error={d.tls_error} soon={tlsSoon} />}
@@ -312,5 +312,18 @@ function JsonQueryRows({ d }: { d: Record<string, unknown> }) {
       <Row k="JSON query" v={<>{String(d.json_query)}</>} mono wide />
       <Row k="JSON result" v={<span data-testid="json-result" style={{ color }}>{result} <span className="text-muted">({condition})</span></span>} mono wide />
     </>
+  );
+}
+
+/** The keyword (or regular expression) check of an HTTP run and its outcome. */
+function KeywordRow({ d }: { d: Record<string, unknown> }) {
+  const isRegex = d.keyword_regex === true;
+  const outcome = d.keyword_error !== undefined ? `failed: ${String(d.keyword_error)}` : d.keyword_found ? (isRegex && d.keyword_match !== undefined ? `matched "${String(d.keyword_match)}"` : "found") : "not found";
+  return (
+    <Row
+      k={isRegex ? "Keyword regex" : "Keyword"}
+      v={<span data-testid="keyword-result" style={{ color: d.keyword_found ? "var(--up)" : "var(--down)" }}><span className={isRegex ? "font-mono text-xs" : undefined}>{isRegex ? `/${String(d.keyword)}/i` : `"${String(d.keyword)}"`}</span> {outcome}</span>}
+      wide={isRegex}
+    />
   );
 }

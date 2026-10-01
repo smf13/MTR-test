@@ -369,10 +369,21 @@ export function TargetForm({
             </div>
             <div>
               <label className="label">Keyword (optional)</label>
-              <input className="input" value={form.options.keyword ?? ""} onChange={(e) => setOpt("keyword", e.target.value)} placeholder="text that must appear in the body" />
+              <input
+                className={classNames("input", form.options.keyword_regex && "font-mono")}
+                aria-label="Keyword"
+                value={form.options.keyword ?? ""}
+                onChange={(e) => setOpt("keyword", e.target.value)}
+                placeholder={form.options.keyword_regex ? "e.g. (healthy|ok)\\b" : "text that must appear in the body"}
+                spellCheck={!form.options.keyword_regex}
+              />
               <label className="mt-1.5 flex items-center gap-2 text-xs text-muted">
+                <input type="checkbox" checked={!!form.options.keyword_regex} onChange={(e) => setOpt("keyword_regex", e.target.checked)} /> Regular expression
+              </label>
+              <label className="mt-1 flex items-center gap-2 text-xs text-muted">
                 <input type="checkbox" checked={!!form.options.keyword_absent} onChange={(e) => setOpt("keyword_absent", e.target.checked)} /> Fail if the keyword is present instead
               </label>
+              {form.options.keyword_regex && <div className="help">Python syntax, case-insensitive, searched anywhere in the body: <code>version [0-9]+</code>, <code>"status":\s*"ok"</code>.</div>}
             </div>
             <div className="sm:col-span-2">
               <label className="label" htmlFor="json-query">JSON query (optional)</label>

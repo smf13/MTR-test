@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Play, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays } from "lucide-react";
-import { api, cloneInput, type Target, type TargetInput, type Run } from "../api";
+import { ArrowLeft, Play, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays, Trash2 } from "lucide-react";
+import { api, cloneInput, type Target, type TargetInput, type Run, type HistoryDeleted } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { MutedBadge, TargetActions } from "../components/TargetActions";
 import { Tabs } from "../components/Tabs";
@@ -21,6 +21,7 @@ import { Pager } from "../components/Pager";
 import { TypeBadge } from "../components/TypeBadge";
 import { TargetForm } from "../components/TargetForm";
 import { ConfirmDialog } from "../components/Modal";
+import { ClearHistoryDialog } from "../components/ClearHistory";
 import { ErrorBanner } from "../components/EmptyState";
 import { TagList, useTagColors } from "../components/Tags";
 import { useToast } from "../components/Toast";
@@ -49,6 +50,10 @@ export function TargetDetail() {
   const [editing, setEditing] = useState(false);
   const [cloning, setCloning] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  // Runs ticked in the Runs tab; a new page, filter or range starts a fresh selection.
+  const [selectedRuns, setSelectedRuns] = useState<ReadonlySet<number>>(new Set());
+  const [deletingRuns, setDeletingRuns] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const target = usePoll(() => api.target(targetId, range), 10000, [targetId, range]);
@@ -76,6 +81,7 @@ export function TargetDetail() {
   const geo = usePoll(() => api.geo(targetId), pollMs, [targetId]);
 
   useEffect(() => setRunPage(0), [range, runFilter]);
+  useEffect(() => setSelectedRuns(new Set()), [targetId, range, runFilter, runPage]);
 
   const refreshAll = useCallback(() => {
     void target.refresh();
@@ -156,6 +162,33 @@ export function TargetDetail() {
     }
   };
 
+  const selectRuns = (ids: number[], on: boolean) =>
+    setSelectedRuns((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+
+  const historyDeleted = (r: HistoryDeleted) => {
+    toast(`Deleted ${r.runs} run${r.runs === 1 ? "" : "s"} and ${r.events} event${r.events === 1 ? "" : "s"}`, "info");
+    setClearing(false);
+    setDeletingRuns(false);
+    setSelectedRuns(new Set());
+    refreshAll();
+  };
+
+  const removeSelectedRuns = async () => {
+    try {
+      historyDeleted(await api.deleteRuns(targetId, [...selectedRuns]));
+    } catch (e) {
+      setDeletingRuns(false);
+      report(e);
+    }
+  };
+
   const remove = async () => {
     try {
       await api.deleteTarget(targetId);
@@ -217,7 +250,7 @@ export function TargetDetail() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button className="btn" onClick={runNow} disabled={t.running}><Play size={15} /> Run now</button>
-          <TargetActions name={t.name} enabled={t.enabled} notify={t.notify} onToggle={toggle} onToggleNotify={toggleNotify} onEdit={() => setEditing(true)} onClone={() => setCloning(true)} onDelete={() => setDeleting(true)} />
+          <TargetActions name={t.name} enabled={t.enabled} notify={t.notify} onToggle={toggle} onToggleNotify={toggleNotify} onClearHistory={() => setClearing(true)} onEdit={() => setEditing(true)} onClone={() => setCloning(true)} onDelete={() => setDeleting(true)} />
         </div>
       </div>
 
@@ -401,9 +434,16 @@ export function TargetDetail() {
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
               <Segmented value={runFilter} onChange={setRunFilter} options={[{ value: "", label: "All" }, { value: "ok", label: isPacketProbe(t.type, t.options) ? "Reached" : "Passed" }, { value: "failed", label: "Failed" }, ...(pathProbe ? [{ value: "route_change" as const, label: "Route changes" }] : [])]} />
-              <Pager page={runPage} pageSize={RUN_PAGE} total={runs.data?.total ?? 0} onChange={setRunPage} />
+              <div className="flex flex-wrap items-center gap-2">
+                {selectedRuns.size > 0 && (
+                  <button className="btn btn-danger btn-sm" onClick={() => setDeletingRuns(true)}>
+                    <Trash2 size={14} /> Delete {selectedRuns.size} selected
+                  </button>
+                )}
+                <Pager page={runPage} pageSize={RUN_PAGE} total={runs.data?.total ?? 0} onChange={setRunPage} />
+              </div>
             </div>
-            <RunsTable runs={(runs.data?.items ?? []) as Run[]} now={now} onOpen={(rid) => navigate(`/runs/${rid}`)} />
+            <RunsTable runs={(runs.data?.items ?? []) as Run[]} now={now} onOpen={(rid) => navigate(`/runs/${rid}`)} selected={selectedRuns} onSelect={selectRuns} />
           </div>
         )}
 
@@ -419,6 +459,16 @@ export function TargetDetail() {
         onClose={() => { setEditing(false); setCloning(false); }}
         onSubmit={cloning ? createClone : save}
         submitting={saving}
+      />
+      <ClearHistoryDialog open={clearing} targetId={t.id} name={t.name} onClose={() => setClearing(false)} onDone={historyDeleted} />
+      <ConfirmDialog
+        open={deletingRuns}
+        title={`Delete ${selectedRuns.size} run${selectedRuns.size === 1 ? "" : "s"}?`}
+        message="The selected runs, their hops and the events they raised are removed for good. If the latest run is among them, the status shows pending until the next run."
+        confirmLabel={`Delete ${selectedRuns.size} run${selectedRuns.size === 1 ? "" : "s"}`}
+        danger
+        onConfirm={removeSelectedRuns}
+        onCancel={() => setDeletingRuns(false)}
       />
       <ConfirmDialog open={deleting} title={`Delete ${t.name}?`} message="This permanently removes the target and all of its recorded runs, hops and events." confirmLabel="Delete target" danger onConfirm={remove} onCancel={() => setDeleting(false)} />
     </div>

@@ -7,6 +7,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import jsonata
+import regex
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 Protocol = Literal["icmp", "udp", "tcp"]
@@ -76,6 +77,7 @@ class HttpOptions(BaseModel):
     expected_status: str = Field(default="200-299", max_length=100, description="e.g. 200, 200-299, 200,301")
     keyword: str = Field(default="", max_length=500)
     keyword_absent: bool = False
+    keyword_regex: bool = Field(default=False, description="treat keyword as a regular expression (case-insensitive)")
     json_query: str = Field(
         default="", max_length=1000, description='JSONata expression evaluated against the response body, e.g. components[id = "abc"].status'
     )
@@ -98,6 +100,15 @@ class HttpOptions(BaseModel):
     @classmethod
     def _status(cls, v: str) -> str:
         return clean_status_spec(v)
+
+    @model_validator(mode="after")
+    def _keyword_pattern(self) -> "HttpOptions":
+        if self.keyword_regex and self.keyword.strip():
+            try:
+                regex.compile(self.keyword.strip(), regex.IGNORECASE)
+            except regex.error as exc:
+                raise ValueError(f"invalid keyword regular expression: {exc}") from None
+        return self
 
     @field_validator("json_query")
     @classmethod
@@ -432,6 +443,10 @@ class ProbeRequest(BaseModel):
     port: int | None = Field(default=None, ge=1, le=65535)
     ip_version: IpVersion = "auto"
     max_hops: int = Field(default=30, ge=1, le=64)
+
+
+class RunDelete(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=1000)
 
 
 class BulkAction(BaseModel):

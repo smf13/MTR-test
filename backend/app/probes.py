@@ -23,11 +23,14 @@ from urllib.parse import urlsplit
 
 import httpx
 import jsonata
+import regex
 
 from .config import config
 from .models import upgrade_http_options
 from .resolver import is_ip, resolve_host
 
+# Bound for one keyword regular expression search over the body.
+KEYWORD_REGEX_TIMEOUT_SEC = 1.0
 # Bounds for one evaluation of a JSON query (JSONata): milliseconds and nesting depth.
 JSON_QUERY_TIMEOUT_MS = 1000
 JSON_QUERY_MAX_DEPTH = 200
@@ -195,6 +198,30 @@ def status_allowed(code: int, spec: str | None) -> bool:
         if lo <= code <= hi:
             return True
     return False
+
+
+class KeywordError(Exception):
+    """The keyword regular expression could not be evaluated (invalid, or it ran out of time)."""
+
+
+async def keyword_search(text: str, keyword: str, use_regex: bool) -> str | None:
+    """The matched text when the keyword occurs in the body (case-insensitive), else None.
+
+    A regular expression runs in a worker thread through the `regex` package, whose timeout stops catastrophic
+    backtracking on a large body instead of pinning a thread for good."""
+    if not use_regex:
+        return keyword if keyword.lower() in text.lower() else None
+
+    def search() -> str | None:
+        try:
+            m = regex.search(keyword, text, flags=regex.IGNORECASE, timeout=KEYWORD_REGEX_TIMEOUT_SEC)
+        except TimeoutError:
+            raise KeywordError(f"no answer within {KEYWORD_REGEX_TIMEOUT_SEC:g} s") from None
+        except regex.error as exc:
+            raise KeywordError(f"invalid regular expression: {exc}") from None
+        return None if m is None else m.group(0)
+
+    return await asyncio.to_thread(search)
 
 
 class JsonQueryError(Exception):
@@ -379,6 +406,7 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     body = opts.get("body") or None
     keyword = (opts.get("keyword") or "").strip()
     keyword_absent = bool(opts.get("keyword_absent", False))
+    keyword_regex = bool(opts.get("keyword_regex", False))
     opts = upgrade_http_options(opts)
     jquery = str(opts.get("json_query") or "").strip()
     joperator = str(opts.get("json_operator") or "==")
@@ -387,7 +415,7 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     tls_info = bool(opts.get("tls_info", True))
 
     if _sim():
-        return _simulate_http(started, url, keyword, (jquery, joperator, jexpected), tls_warn_days, tls_info)
+        return _simulate_http(started, url, keyword, keyword_regex, (jquery, joperator, jexpected), tls_warn_days, tls_info)
 
     parts = urlsplit(url)
     want_tls = parts.scheme == "https" and verify and (tls_warn_days > 0 or tls_info)
@@ -443,13 +471,25 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     except LookupError:
         text = content.decode("utf-8", "replace")
     if keyword:
-        found = keyword.lower() in text.lower()
         details["keyword"] = keyword
-        details["keyword_found"] = found
-        if keyword_absent and found:
-            failures.append(f"keyword '{keyword}' present but must be absent")
-        if not keyword_absent and not found:
-            failures.append(f"keyword '{keyword}' not found")
+        if keyword_regex:
+            details["keyword_regex"] = True
+        try:
+            match = await keyword_search(text, keyword, keyword_regex)
+        except KeywordError as exc:
+            details["keyword_found"] = False
+            details["keyword_error"] = str(exc)
+            failures.append(f"keyword regex {keyword!r} failed: {exc}")
+        else:
+            found = match is not None
+            details["keyword_found"] = found
+            if found and keyword_regex:
+                details["keyword_match"] = match[:200]
+            what = "regex" if keyword_regex else "keyword"
+            if keyword_absent and found:
+                failures.append(f"{what} '{keyword}' present but must be absent")
+            if not keyword_absent and not found:
+                failures.append(f"{what} '{keyword}' not found")
     if jquery:
         details.update({"json_query": jquery, "json_operator": joperator, "json_expected": jexpected})
         try:
@@ -497,7 +537,7 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     return o
 
 
-def _simulate_http(started: float, url: str, keyword: str, jcheck: tuple[str, str, str], tls_warn_days: int = 14, tls_info: bool = True) -> ProbeOutcome:
+def _simulate_http(started: float, url: str, keyword: str, keyword_regex: bool, jcheck: tuple[str, str, str], tls_warn_days: int = 14, tls_info: bool = True) -> ProbeOutcome:
     rng = random.Random()
     elapsed = max(20.0, rng.gauss(180, 40))
     fail = rng.random() < 0.03
@@ -513,6 +553,8 @@ def _simulate_http(started: float, url: str, keyword: str, jcheck: tuple[str, st
         }
     if keyword:
         details.update({"keyword": keyword, "keyword_found": not fail})
+        if keyword_regex:
+            details["keyword_regex"] = True
     jquery, joperator, jexpected = jcheck
     if jquery:
         details.update({"json_query": jquery, "json_operator": joperator, "json_expected": jexpected, "json_value": jexpected or True, "json_ok": not fail})

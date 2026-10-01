@@ -23,6 +23,7 @@ The same controls appear on dashboard cards, table rows and target pages:
 | Three-dot menu → **Edit** | Change the target's settings. |
 | Three-dot menu → **Clone** | Open a new-target form with the source settings and a “(copy)” name. Adjust the values and select **Create clone** to save it. |
 | Three-dot menu → **Mute notifications** / **Unmute notifications** | Stop or resume delivering this target's events to Pushover and the webhook. Events are still recorded; a muted target shows a **Muted** marker next to its status. The same switch is **Send notifications** in the target form. |
+| Three-dot menu → **Clear history…** (target page only) | Open a dialog that deletes **Failed runs only** (runs with an error or a failed check, and the events they raised; the default, for clearing out runs from a target's set-up) or the **Entire history** (every run and event; the configuration stays). Each choice shows how many runs it removes, and the button names the count (**Delete 3 runs**); it is disabled when there is nothing to delete. When the latest run is among the deleted, the status shows pending until the next run. |
 | Three-dot menu → **Delete** | Open a confirmation dialog. Confirming removes the target and its runs, hops and events. |
 
 Cloning copies configuration, not monitoring history. **Add target** starts a new target from the default settings.
@@ -41,6 +42,10 @@ A **DNS** target asks one resolver for one record per run. **Transport** picks h
 For DoT and DoH, **Verify the resolver's certificate** (on by default) checks the certificate against the resolver's host name, or its IP when an address is given. Turn it off only for internal resolvers with private certificates. The form refuses DoT or DoH without a resolver. A run's details list the **Resolver**, the address that answered and the **Transport**, with the port when it is not the standard one.
 
 A **Globalping** DNS measurement offers **Transport** too, limited to **UDP (port 53)** and **TCP (port 53)**: the remote probes speak plain DNS only.
+
+### HTTP keyword
+
+**Keyword (optional)** must appear in the response body, ignoring case; **Fail if the keyword is present instead** turns it around. With **Regular expression** ticked the keyword is a pattern in Python syntax (still case-insensitive, searched anywhere in the body), for example `(healthy|ok)\b` or `"status":\s*"ok"`. The server refuses a pattern that does not compile, and a search that takes longer than a second fails the run instead of blocking the monitor. A run's details show **Keyword regex** with the pattern and the text it matched.
 
 ### HTTP JSON query
 
@@ -68,7 +73,7 @@ The data tabs sit below the charts. Switching between them keeps the charts visi
 | **Current path** | The latest run's complete hop table and a **Text report** download. The destination row is highlighted and carries a **dst** marker. | Local MTR and Globalping MTR/traceroute |
 | **Path history** | One row per hop and one column per run. Choose **Loss**, **Latency** or **Jitter**; select a column to open that run. | Local MTR and Globalping MTR/traceroute |
 | **Path summary · [range]** | Aggregated per-hop statistics, including ASN (with the organisation's name when a GeoIP provider knows it), address frequency, average/maximum loss, latency, standard deviation and jitter. Expand a hop to inspect alternate addresses seen at that position. Runs in which the hop answered no probe appear as **n silent** under **Seen** and count as loss on the usual address; they are not alternates. | Local MTR and Globalping MTR/traceroute |
-| **Runs** | Paginated run history with **All**, **Reached** or **Passed**, **Failed**, and **Route changes** where applicable. Select a run to inspect it. | Every target |
+| **Runs** | Paginated run history with **All**, **Reached** or **Passed**, **Failed**, and **Route changes** where applicable. Select a run to inspect it. Each row has a checkbox (the header one selects the page); with runs ticked, **Delete N selected** asks for confirmation and removes them with their events. Changing the page, filter or range clears the selection. | Every target |
 | **Events** | This target's events in the selected range. The tab displays a count when events are present. | Every target |
 
 **Current path** is the initial data tab for path probes; other probes open **Runs**. The browser remembers the selected tab. When a remembered path tab does not apply to the next target, the page shows **Runs** instead. Only the tab on screen is refreshed: **Path history**, **Path summary** and **Runs** load when opened, so a busy page does not slow down **Save**, **Run now** and the other buttons. **Path summary** also refreshes while the **Path profile** shows **Avg · [range]**.

@@ -19,7 +19,7 @@ from fastapi.responses import PlainTextResponse
 from . import __version__, geoip, ipapi
 from .config import config
 from .db import Database, rows_to_dicts
-from .models import BulkAction, NotificationTest, ProbeRequest, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, upgrade_http_options, validate_options
+from .models import BulkAction, NotificationTest, ProbeRequest, RunDelete, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, upgrade_http_options, validate_options
 from .mtr import min_probe_interval, mtr_version, routes_equivalent, run_mtr
 from .notify import NotifyError, format_pushover_text, send_pushover, send_webhook, target_url
 from .resolver import resolve_host, reverse_lookup_many
@@ -616,6 +616,33 @@ async def run_target_now(request: Request, target_id: int) -> dict[str, Any]:
         raise HTTPException(404, "target not found")
     started = await _sched(request).run_now(target_id)
     return {"queued": started, "already_running": not started}
+
+
+async def _delete_history(request: Request, target_id: int, *, run_ids: list[int] | None = None, failed_only: bool = False) -> dict[str, Any]:
+    db = _db(request)
+    if await db.fetchone("SELECT id FROM targets WHERE id = ?", (target_id,)) is None:
+        raise HTTPException(404, "target not found")
+    latest_sql = "SELECT id FROM runs WHERE target_id = ? ORDER BY started_at DESC, id DESC LIMIT 1"
+    latest_before = await db.fetchval(latest_sql, (target_id,))
+    removed = await db.delete_runs(target_id, run_ids=run_ids, failed_only=failed_only)
+    latest_after = await db.fetchval(latest_sql, (target_id,))
+    # The status was judged by the latest run; once that run is gone the next run judges it afresh.
+    reset = latest_before is not None and latest_after != latest_before
+    if reset:
+        await db.execute("UPDATE targets SET last_status = 'pending' WHERE id = ?", (target_id,))
+    return {**removed, "status_reset": reset}
+
+
+@router.delete("/targets/{target_id}/runs")
+async def clear_runs(request: Request, target_id: int, status: str | None = Query(default=None, pattern="^(all|failed)$")) -> dict[str, Any]:
+    """Clear a target's history: every run and event, or with status=failed only the failed runs and their events."""
+    return await _delete_history(request, target_id, failed_only=status == "failed")
+
+
+@router.post("/targets/{target_id}/runs/delete")
+async def delete_runs(request: Request, target_id: int, body: RunDelete) -> dict[str, Any]:
+    """Delete chosen runs of a target (ids of other targets are ignored) and the events that point at them."""
+    return await _delete_history(request, target_id, run_ids=sorted(set(body.ids)))
 
 
 @router.get("/targets/{target_id}/runs")

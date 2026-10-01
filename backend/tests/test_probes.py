@@ -116,6 +116,15 @@ def test_http_json_options_validation_and_legacy_upgrade() -> None:
     assert upgrade_http_options({"keyword": "x"}) == {"keyword": "x"}
 
 
+def test_keyword_regex_validation() -> None:
+    from app.models import validate_options
+
+    assert validate_options("http", {"keyword": r"ok|healthy", "keyword_regex": True})["keyword_regex"] is True
+    assert validate_options("http", {"keyword": "([unbalanced"})["keyword_regex"] is False  # plain text: anything goes
+    with pytest.raises(ValidationError, match="invalid keyword regular expression"):
+        validate_options("http", {"keyword": "([unbalanced", "keyword_regex": True})
+
+
 @pytest.fixture
 def live(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(probes, "_FORCE_LIVE", True)
@@ -143,6 +152,24 @@ async def test_run_http_checks(live: None, monkeypatch: pytest.MonkeyPatch) -> N
 
     absent = await run_http(base, {"keyword": "Welcome", "keyword_absent": True})
     assert not absent.reached and "must be absent" in (absent.error or "")
+
+    rx = await run_http(base, {"keyword": r"welcome\s+to\s+(mtr|ping)", "keyword_regex": True})
+    assert rx.reached and rx.details["keyword_regex"] is True and rx.details["keyword_match"] == "Welcome to MTR"
+
+    rx_missing = await run_http(base, {"keyword": r"version \d+", "keyword_regex": True})
+    assert not rx_missing.reached and rx_missing.error == "regex 'version \\d+' not found"
+
+    rx_absent = await run_http(base, {"keyword": r"tracker</html>$", "keyword_regex": True, "keyword_absent": True})
+    assert not rx_absent.reached and "present but must be absent" in (rx_absent.error or "")
+
+    literal = await run_http(base, {"keyword": "mtr (tracker)"})  # without the switch, regex characters are plain text
+    assert not literal.reached and "keyword 'mtr (tracker)' not found" in (literal.error or "")
+
+    monkeypatch.setattr(probes, "KEYWORD_REGEX_TIMEOUT_SEC", 0.2)
+    monkeypatch.setattr(probes, "_HTTP_TRANSPORT", httpx.MockTransport(lambda r: httpx.Response(200, text="a" * 5000 + "!")))
+    slow = await run_http(base, {"keyword": "(a|aa)+$", "keyword_regex": True})
+    assert not slow.reached and "no answer within 0.2 s" in (slow.error or "") and slow.details["keyword_error"]
+    monkeypatch.setattr(probes, "_HTTP_TRANSPORT", httpx.MockTransport(handler))
 
     # Options saved before the JSONata query still run.
     js = await run_http({"host": "http://svc.test/health", "type": "http"}, {"json_path": "status", "json_expected": "ok"})

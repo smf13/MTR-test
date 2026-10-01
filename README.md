@@ -45,7 +45,7 @@ All captures show the current interface running in simulation mode with a week o
 - **Six probe types**, each on its own schedule (10 seconds to 24 hours):
   - **MTR**: full path trace with configurable probe count, probe interval, packet size, max hops, IPv4/IPv6, ICMP / UDP / TCP with a port.
   - **Ping**: ICMP echo to the destination only; loss, avg/best/worst, jitter and per-ping samples.
-  - **HTTP(S)**: any method, expected status codes, keyword present or absent, a JSON query in [JSONata](https://docs.jsonata.org/simple) as in Uptime Kuma (`components[id = "abc123"].status` `==` `operational`, also `!=`, `<`, `<=`, `>`, `>=`, `contains`), custom headers and body, redirects, TLS verification, a warning before the certificate expires, and the certificate itself (issuer, subject, validity, alternative names, negotiated protocol) recorded with every run.
+  - **HTTP(S)**: any method, expected status codes, keyword present or absent (plain text or a regular expression), a JSON query in [JSONata](https://docs.jsonata.org/simple) as in Uptime Kuma (`components[id = "abc123"].status` `==` `operational`, also `!=`, `<`, `<=`, `>`, `>=`, `contains`), custom headers and body, redirects, TLS verification, a warning before the certificate expires, and the certificate itself (issuer, subject, validity, alternative names, negotiated protocol) recorded with every run.
   - **TCP port**: connect time to host:port.
   - **DNS**: record type, optional resolver, expected answer, lookup time. **Transport** chooses plain DNS over **UDP** or **TCP** (port 53), **DNS over TLS** (DoT, port 853) or **DNS over HTTPS** (DoH, RFC 8484; a host name or an `https://` URL), with an optional resolver port and certificate verification for DoT/DoH. A **random subdomain** option queries a fresh label under the name on every run. With this option enabled and no expected answer set, NXDOMAIN or an empty answer counts as a successful lookup.
   - **Globalping**: any of the five [globalping.io](https://globalping.io) measurements, ping, traceroute, MTR, DNS or HTTP, run from a remote probe. Pick a country, city, continent, ASN, network or cloud region. A remote MTR or traceroute uses one probe and is stored like a local path run, so every path visual works for that vantage point. Ping, DNS and HTTP can use up to ten probes at once, with aggregated results and each probe listed; partial DNS/HTTP failures make the target degraded. HTTP measurements include timing and certificate details returned by the remote probe. Configure an optional API token under **Settings** for authenticated Globalping requests; service rate limits apply.
@@ -225,7 +225,7 @@ curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json'
 # HTTP target with keyword + JSON + TLS expiry warning
 curl -s -X POST $BASE/api/targets -H "$AUTH" -H 'content-type: application/json' -d '{
   "name": "Portal health", "host": "https://portal.example.com/health", "type": "http", "interval_sec": 60,
-  "options": { "expected_status": "200", "keyword": "ok",
+  "options": { "expected_status": "200", "keyword": "\"status\":\\s*\"ok\"", "keyword_regex": true,
                "json_query": "components[id = \"api\"].status", "json_operator": "==", "json_expected": "operational",
                "headers": { "Authorization": "Bearer abc" }, "tls_warn_days": 21 }
 }'
@@ -312,6 +312,8 @@ Interactive API documentation is available at `/api/docs`, with the OpenAPI sche
 | `GET` / `PUT` / `DELETE` | `/api/targets/{id}` | Detail with range stats (`?range=24h`) / update / delete |
 | `POST` | `/api/targets/{id}/run` | Run now |
 | `GET` | `/api/targets/{id}/runs` | Paginated runs (`limit`, `offset`, `range`, `status=ok|failed|route_change`) |
+| `DELETE` | `/api/targets/{id}/runs` | Clear the target's history: every run and event, or with `status=failed` only failed runs and their events; returns `runs`, `events`, `status_reset` |
+| `POST` | `/api/targets/{id}/runs/delete` | Delete chosen runs (`{"ids": [...]}`, up to 1000, other targets' ids ignored) and the events they raised |
 | `GET` | `/api/targets/{id}/series` | Destination latency / loss / jitter time series, auto-bucketed, with the count of route changes the chart memory hid |
 | `GET` | `/api/targets/{id}/hops/history` | Hop-by-run matrix for the heatmap |
 | `GET` | `/api/targets/{id}/hops/summary` | Per-hop aggregates with alternate addresses (each with `asn` and `as_name`); runs where the hop was silent are folded into the primary as loss (`silent_runs`) |

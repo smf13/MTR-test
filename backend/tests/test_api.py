@@ -317,3 +317,48 @@ async def test_overview_series_survives_a_huge_range(client: AsyncClient) -> Non
     r = await client.get("/api/overview/series?range=99999999w&max_points=24")
     assert r.status_code == 200, r.text
     assert r.json()["bucket_sec"] > 10 and r.json()["targets"] == []
+
+
+async def test_clear_history_and_delete_runs(client: AsyncClient) -> None:
+    import time
+
+    db = client._transport.app.state.db  # type: ignore[attr-defined]
+    made = (await client.post("/api/targets", json={"name": "Setup", "host": "https://svc.example.test/health", "type": "http", "interval_sec": 60, "enabled": False})).json()
+    other = (await client.post("/api/targets", json={"name": "Other", "host": "192.0.2.90", "interval_sec": 60, "enabled": False})).json()
+    tid, now = made["id"], time.time()
+
+    async def add_run(target_id: int, age: float, status: str, reached: int) -> int:
+        rid = await db.fetchval("INSERT INTO runs(target_id, started_at, status, reached) VALUES (?, ?, ?, ?) RETURNING id", (target_id, now - age, status, reached))
+        await db.execute("INSERT INTO events(target_id, run_id, kind, severity, message, details, created_at) VALUES (?, ?, 'down', 'critical', 'x', '{}', ?)", (target_id, rid, now - age))
+        return rid
+
+    # Two failed setup runs (a check that missed, an error), then good runs; the latest is good.
+    bad_check, bad_error = await add_run(tid, 300, "ok", 0), await add_run(tid, 240, "error", 0)
+    good_old, good_new = await add_run(tid, 180, "ok", 1), await add_run(tid, 60, "ok", 1)
+    foreign = await add_run(other["id"], 30, "ok", 0)
+    await db.execute("UPDATE targets SET last_status = 'up' WHERE id = ?", (tid,))
+
+    r = await client.delete(f"/api/targets/{tid}/runs?status=failed")
+    assert r.status_code == 200 and r.json() == {"runs": 2, "events": 2, "status_reset": False}
+    left = (await client.get(f"/api/targets/{tid}/runs")).json()
+    assert [run["id"] for run in left["items"]] == [good_new, good_old]
+    assert (await client.get(f"/api/targets/{tid}")).json()["last_status"] == "up"
+    assert await db.fetchval("SELECT COUNT(*) FROM runs WHERE id = ANY(?::bigint[])", ([bad_check, bad_error],)) == 0
+
+    # Chosen runs only, and never another target's: deleting the latest run hands the status back to the next run.
+    r = await client.post(f"/api/targets/{tid}/runs/delete", json={"ids": [good_new, foreign, good_new]})
+    assert r.json() == {"runs": 1, "events": 1, "status_reset": True}
+    assert (await client.get(f"/api/targets/{tid}")).json()["last_status"] == "pending"
+    assert await db.fetchval("SELECT COUNT(*) FROM runs WHERE id = ?", (foreign,)) == 1
+    assert (await client.post(f"/api/targets/{tid}/runs/delete", json={"ids": []})).status_code == 422
+
+    # Clearing everything also removes events that never had a run.
+    await db.execute("INSERT INTO events(target_id, kind, severity, message, details, created_at) VALUES (?, 'route_change', 'info', 'y', '{}', ?)", (tid, now))
+    r = await client.delete(f"/api/targets/{tid}/runs")
+    assert r.json() == {"runs": 1, "events": 2, "status_reset": True}
+    assert (await client.get(f"/api/targets/{tid}/runs")).json()["total"] == 0
+    assert (await client.get(f"/api/targets/{tid}/events")).json() == []
+    assert len((await client.get(f"/api/targets/{other['id']}/events")).json()) == 1
+
+    assert (await client.delete(f"/api/targets/{tid}/runs?status=bogus")).status_code == 422
+    assert (await client.delete("/api/targets/999999/runs")).status_code == 404

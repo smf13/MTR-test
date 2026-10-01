@@ -28,6 +28,8 @@ export interface HttpOptions {
   expected_status: string;
   keyword: string;
   keyword_absent: boolean;
+  /** Treat the keyword as a regular expression (case-insensitive, Python syntax). */
+  keyword_regex: boolean;
   /** JSONata expression evaluated against the response body, e.g. components[id = "abc"].status. */
   json_query: string;
   json_operator: JsonOperator;
@@ -93,7 +95,7 @@ export const PROBE_TYPE_LABEL: Record<ProbeType, string> = { mtr: "MTR", ping: "
 export const DEFAULT_OPTIONS: Record<ProbeType, ProbeOptions> = {
   mtr: {},
   ping: { timeout_sec: 2 },
-  http: { method: "GET", expected_status: "200-299", keyword: "", keyword_absent: false, json_query: "", json_operator: "==", json_expected: "", headers: {}, body: "", timeout_sec: 10, verify_tls: true, follow_redirects: true, tls_warn_days: 14, tls_info: true },
+  http: { method: "GET", expected_status: "200-299", keyword: "", keyword_absent: false, keyword_regex: false, json_query: "", json_operator: "==", json_expected: "", headers: {}, body: "", timeout_sec: 10, verify_tls: true, follow_redirects: true, tls_warn_days: 14, tls_info: true },
   tcp: { timeout_sec: 5 },
   dns: { record_type: "A", transport: "udp", resolver: "", resolver_port: null, verify_tls: true, expected: "", timeout_sec: 5, random_prefix: false },
   globalping: { measurement: "ping", location: "world", probes: 1, record_type: "A", resolver: "", expected: "", dns_transport: "udp", path: "/", http_method: "GET", http_protocol: "HTTPS", expected_status: "200-299", keyword: "" },
@@ -740,6 +742,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.text()) as unknown as T;
 }
 
+/** What a history delete removed; status_reset says the target waits for its next run to be judged again. */
+export interface HistoryDeleted {
+  runs: number;
+  events: number;
+  status_reset: boolean;
+}
+
 export const api = {
   status: () => request<SystemStatus>("/api/status"),
   settings: () => request<Settings>("/api/settings"),
@@ -762,6 +771,10 @@ export const api = {
     request<{ created: number; updated: number; total: number }>("/api/targets/import", { method: "POST", body: JSON.stringify({ targets, mode }) }),
   bulk: (action: "pause" | "resume" | "mute" | "unmute" | "run" | "delete", ids: number[]) =>
     request<{ action: string; affected: number[] }>("/api/targets/bulk", { method: "POST", body: JSON.stringify({ action, ids }) }),
+  /** Delete a target's whole history (runs and events), or only its failed runs and their events. */
+  clearRuns: (id: number, scope: "all" | "failed") => request<HistoryDeleted>(`/api/targets/${id}/runs?status=${scope}`, { method: "DELETE" }),
+  /** Delete chosen runs of a target and the events that point at them. */
+  deleteRuns: (id: number, ids: number[]) => request<HistoryDeleted>(`/api/targets/${id}/runs/delete`, { method: "POST", body: JSON.stringify({ ids }) }),
   runNow: (id: number) => request<{ queued: boolean; already_running: boolean }>(`/api/targets/${id}/run`, { method: "POST" }),
 
   runs: (id: number, params: { limit?: number; offset?: number; range?: string; status?: string }) => {

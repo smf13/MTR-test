@@ -2,13 +2,32 @@ import { GitBranch, ExternalLink } from "lucide-react";
 import type { Run } from "../api";
 import { fmtDateTime, fmtNum, lossColor, relTime } from "../utils";
 
-export function RunsTable({ runs, onOpen, now }: { runs: Run[]; onOpen: (id: number) => void; now: number }) {
+/**
+ * The runs list. With `selected` and `onSelect` each row gets a checkbox (clicking it never opens the run) and the
+ * header one selects or clears every run on the page.
+ */
+export function RunsTable({ runs, onOpen, now, selected, onSelect }: { runs: Run[]; onOpen: (id: number) => void; now: number; selected?: ReadonlySet<number>; onSelect?: (ids: number[], on: boolean) => void }) {
   if (!runs.length) return <div className="px-3 py-8 text-center text-sm text-faint">No runs match.</div>;
+  const selectable = !!(selected && onSelect);
+  const chosen = selectable ? runs.filter((r) => selected!.has(r.id)).length : 0;
   return (
     <div className="overflow-x-auto">
       <table className="table num">
         <thead>
           <tr>
+            {selectable && (
+              <th className="w-8">
+                <input
+                  type="checkbox"
+                  aria-label="Select all runs on this page"
+                  checked={chosen === runs.length}
+                  ref={(el) => {
+                    if (el) el.indeterminate = chosen > 0 && chosen < runs.length;
+                  }}
+                  onChange={(e) => onSelect!(runs.map((r) => r.id), e.target.checked)}
+                />
+              </th>
+            )}
             <th>Started</th>
             <th>Result</th>
             <th className="text-right">Hops</th>
@@ -27,6 +46,16 @@ export function RunsTable({ runs, onOpen, now }: { runs: Run[]; onOpen: (id: num
             const ok = r.status === "ok" && r.reached;
             return (
               <tr key={r.id} className="cursor-pointer" onClick={() => onOpen(r.id)}>
+                {selectable && (
+                  <td className="w-8" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select run of ${fmtDateTime(r.started_at)}`}
+                      checked={selected!.has(r.id)}
+                      onChange={(e) => onSelect!([r.id], e.target.checked)}
+                    />
+                  </td>
+                )}
                 <td>
                   <div className="leading-tight">
                     <div>{fmtDateTime(r.started_at)}</div>

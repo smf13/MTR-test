@@ -471,6 +471,36 @@ class Database(_Executor):
         await self.execute("DELETE FROM events WHERE created_at < ?", (cutoff,))
         return removed
 
+    async def delete_runs(self, target_id: int, *, run_ids: list[int] | None = None, failed_only: bool = False, batch: int = 5000) -> dict[str, int]:
+        """Delete a target's runs (hops follow by cascade) together with the events that point at them.
+
+        `run_ids` limits it to those runs, `failed_only` to runs that failed (an error, or the destination or check not
+        reached: the runs list's "failed" filter); with neither, the whole history goes, events without a run included.
+        Batched like `purge_older_than`, each batch one transaction, so a month of one-minute runs does not hold locks
+        for the whole delete.
+        """
+        clauses = ["target_id = ?"]
+        params: list[Any] = [target_id]
+        if failed_only:
+            clauses.append("(status != 'ok' OR reached = 0)")
+        if run_ids is not None:
+            clauses.append("id = ANY(?::bigint[])")
+            params.append(run_ids)
+        where = " AND ".join(clauses)
+        runs = events = 0
+        while True:
+            async with self.transaction() as tx:
+                ids = [r["id"] for r in await tx.fetchall(f"SELECT id FROM runs WHERE {where} ORDER BY id LIMIT ?", [*params, batch])]
+                if ids:
+                    events += await tx.execute("DELETE FROM events WHERE run_id = ANY(?::bigint[])", (ids,))
+                    runs += await tx.execute("DELETE FROM runs WHERE id = ANY(?::bigint[])", (ids,))
+            if len(ids) < batch:
+                break
+            await asyncio.sleep(0.05)
+        if run_ids is None and not failed_only:
+            events += await self.execute("DELETE FROM events WHERE target_id = ?", (target_id,))
+        return {"runs": runs, "events": events}
+
 
 def rows_to_dicts(rows: Iterable[Row]) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]

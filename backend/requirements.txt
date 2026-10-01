@@ -8,4 +8,6 @@ dnspython>=2.6,<3
 h2>=4.2,<5
 # JSONata, the query language of the HTTP check's JSON query (as in Uptime Kuma)
 jsonata-python>=0.7,<0.8
+# Keyword regular expressions with a timeout (the standard re module has none)
+regex>=2024.4
 maxminddb>=2.6,<4
