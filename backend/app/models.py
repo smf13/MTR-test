@@ -371,6 +371,7 @@ class SettingsUpdate(BaseModel):
     pushover_sound: str | None = Field(default=None, max_length=32)
     pushover_priority: str | None = Field(default=None, max_length=8)
     pushover_events: list[str] | None = None
+    pushover_encryption_key: str | None = Field(default=None, max_length=200, description="end-to-end encryption key (64 hex characters, as in the Pushover app); empty = off")
     notify_cooldown_min: int | None = Field(default=None, ge=0, le=1440, description="at most one alert per target and kind within this many minutes; 0 = off")
     base_url: str | None = Field(default=None, max_length=2048)
     site_name: str | None = Field(default=None, max_length=60)
@@ -388,6 +389,16 @@ class SettingsUpdate(BaseModel):
         v = v.strip()
         if v and not v.isdigit():
             raise ValueError("maxmind_account_id must be the numeric account ID shown on maxmind.com")
+        return v
+
+    @field_validator("pushover_encryption_key")
+    @classmethod
+    def _check_encryption_key(cls, v: str | None) -> str | None:
+        if v is None or "*" in v:
+            return v  # None, or a masked value echoed back (strip_masked drops it)
+        v = "".join(v.split()).lower()
+        if v and not re.fullmatch(r"[0-9a-f]{64}", v):
+            raise ValueError("pushover_encryption_key must be 64 hexadecimal characters (a 256-bit key, as shown in the Pushover app)")
         return v
 
     @field_validator("tag_colors")

@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import gzip
+import hashlib
+import hmac
 import logging
+import os
 from typing import Any
 
 import httpx
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 log = logging.getLogger("mtr-tracker.notify")
 
@@ -19,6 +26,26 @@ _AUTO_PRIORITY = {"down": 1, "degraded": 0, "recovered": 0, "route_change": -1}
 
 class NotifyError(Exception):
     """Raised by the test endpoint so the UI can show why delivery failed."""
+
+
+# Pushover's end-to-end encryption (https://pushover.net/api#e2ee) covers exactly these fields.
+PUSHOVER_ENCRYPTED_FIELDS = ("title", "message", "url", "url_title")
+
+
+def pushover_encrypt(plaintext: str, key_hex: str) -> str:
+    """Encrypt one field the way the Pushover apps decrypt it: GZIP, AES-256-CBC with PKCS7 padding and a random
+    16-byte IV, HMAC-SHA256 over IV + ciphertext with the same key, then Base64 of IV + ciphertext + HMAC."""
+    key = bytes.fromhex(key_hex)
+    if len(key) != 32:
+        raise NotifyError("the Pushover encryption key must be 64 hexadecimal characters (256 bits)")
+    compressed = gzip.compress(plaintext.encode("utf-8"), compresslevel=9)
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(compressed) + padder.finalize()
+    iv = os.urandom(16)
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    ciphertext = encryptor.update(padded) + encryptor.finalize()
+    mac = hmac.new(key, iv + ciphertext, hashlib.sha256).digest()
+    return base64.b64encode(iv + ciphertext + mac).decode("ascii")
 
 
 # Tests inject an httpx.MockTransport here; production leaves it None.
@@ -74,9 +101,19 @@ async def send_pushover(settings: dict[str, Any], *, title: str, message: str, k
         data["retry"] = 60
         data["expire"] = 1800
     if url:
-        data["url"] = url
+        data["url"] = url[:512]
         if url_title:
-            data["url_title"] = url_title
+            data["url_title"] = url_title[:100]
+    key = (settings.get("pushover_encryption_key") or "").strip()
+    if key:
+        # The length limits above apply to the readable text; Pushover's servers only ever see the ciphertext.
+        try:
+            for field in PUSHOVER_ENCRYPTED_FIELDS:
+                if data.get(field):
+                    data[field] = pushover_encrypt(str(data[field]), key)
+        except ValueError as exc:  # bytes.fromhex on a key that is not hex
+            raise NotifyError("the Pushover encryption key must be 64 hexadecimal characters (256 bits)") from exc
+        data["encrypted"] = 1
     try:
         async with _client() as client:
             resp = await client.post(PUSHOVER_URL, data=data)

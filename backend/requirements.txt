@@ -10,4 +10,6 @@ h2>=4.2,<5
 jsonata-python>=0.7,<0.8
 # Keyword regular expressions with a timeout (the standard re module has none)
 regex>=2024.4
+# AES-256-CBC for Pushover's end-to-end encrypted notifications
+cryptography>=42
 maxminddb>=2.6,<4

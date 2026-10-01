@@ -208,3 +208,16 @@ export function tagChipStyle(hex: string): CSSProperties {
     color: `color-mix(in srgb, ${hex} 70%, var(--text))`,
   };
 }
+
+/** A new 256-bit Pushover end-to-end encryption key as 64 hex characters, from the browser's CSPRNG. */
+export function randomKeyHex(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** off (empty), on (a 64-hex key, or a stored key the server masked) or invalid. */
+export function pushoverKeyState(value: string): "off" | "on" | "invalid" {
+  const v = value.replace(/\s+/g, "");
+  if (!v) return "off";
+  if (v.includes("*") || /^[0-9a-fA-F]{64}$/.test(v)) return "on";
+  return "invalid";
+}

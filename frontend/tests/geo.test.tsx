@@ -275,7 +275,7 @@ describe("GeoIP lookup page", () => {
 
 const settings: SettingsT = {
   retention_days: 30, route_memory_runs: 20, asn_lookup: true, reverse_dns: true, webhook_url: "", webhook_events: [], pushover_enabled: false,
-  pushover_user_key: "", pushover_api_token: "", pushover_device: "", pushover_sound: "", pushover_priority: "auto", pushover_events: [], notify_cooldown_min: 0,
+  pushover_user_key: "", pushover_api_token: "", pushover_device: "", pushover_sound: "", pushover_priority: "auto", pushover_events: [], pushover_encryption_key: "", notify_cooldown_min: 0,
   base_url: "", site_name: "MTR Tracker", tag_colors: {}, globalping_token: "", maxmind_account_id: "", maxmind_license_key: "", ip_api_enabled: false,
 };
 const geoipStatus: GeoIpStatus = {
@@ -340,6 +340,47 @@ describe("settings · notification cooldown", () => {
     expect(within(section).getByText(/At most one alert per target and kind every 15 minutes/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ notify_cooldown_min: 15 })));
+  });
+});
+
+describe("settings · Pushover encryption", () => {
+  it("generates a 256-bit key, shows it on request, flags a malformed one and saves it", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "settings").mockResolvedValue(settings);
+    vi.spyOn(api, "status").mockRejectedValue(new Error("offline"));
+    vi.spyOn(api, "tags").mockResolvedValue([]);
+    vi.spyOn(api, "geoipStatus").mockResolvedValue(geoipStatus);
+    const update = vi.spyOn(api, "updateSettings").mockImplementation(async (patch) => ({ ...settings, ...patch } as SettingsT));
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+
+    const field = (await screen.findByLabelText("End-to-end encryption key (optional)")) as HTMLInputElement;
+    const status = screen.getByTestId("pushover-key-status");
+    expect(field.type).toBe("password");
+    expect(status.textContent).toMatch(/^Off:/);
+
+    await user.type(field, "abc123");
+    expect(status.textContent).toMatch(/must be exactly 64 hexadecimal characters/);
+
+    await user.click(screen.getByRole("button", { name: "Generate key" }));
+    expect(field.value).toMatch(/^[0-9a-f]{64}$/);
+    expect(field.type).toBe("text");  // shown so it can be copied into the Pushover app
+    expect(status.textContent).toMatch(/^On:/);
+    const first = field.value;
+    await user.click(screen.getByRole("button", { name: "Generate key" }));
+    expect(field.value).not.toBe(first);
+    await user.click(screen.getByRole("button", { name: "Hide" }));
+    expect(field.type).toBe("password");
+
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ pushover_encryption_key: field.value })));
+  });
+
+  it("treats a key the server masked as switched on", async () => {
+    const { pushoverKeyState } = await import("../src/utils");
+    expect(pushoverKeyState("********")).toBe("on");
+    expect(pushoverKeyState("")).toBe("off");
+    expect(pushoverKeyState(" " + "Ab".repeat(32) + " ")).toBe("on");
+    expect(pushoverKeyState("g".repeat(64))).toBe("invalid");
   });
 });
 

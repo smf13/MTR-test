@@ -84,6 +84,8 @@ def is_authenticated(request: Request) -> bool:
 
 SECRET_MASK = "********"
 _SECRET_KEYS = ("pushover_api_token", "pushover_user_key", "globalping_token", "maxmind_license_key")
+# Masked completely: even the last four characters of an encryption key would help an attacker.
+_HIDDEN_KEYS = ("pushover_encryption_key",)
 
 
 def _mask_token(value: str) -> str:
@@ -104,6 +106,9 @@ def redact_settings(settings: dict[str, Any]) -> dict[str, Any]:
     for key in _SECRET_KEYS:
         if out.get(key):
             out[key] = _mask_token(str(out[key]))
+    for key in _HIDDEN_KEYS:
+        if out.get(key):
+            out[key] = SECRET_MASK
     if out.get("webhook_url"):
         out["webhook_url"] = _mask_url(str(out["webhook_url"]))
     return out

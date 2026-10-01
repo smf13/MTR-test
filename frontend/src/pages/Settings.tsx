@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload, Tags as TagsIcon, Globe, MapPin, CloudDownload, Hourglass } from "lucide-react";
+import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload, Tags as TagsIcon, Globe, MapPin, CloudDownload, Hourglass, Eye, EyeOff, Copy } from "lucide-react";
 import { api, getApiToken, setApiToken, type Settings as SettingsT, type TargetInput } from "../api";
 import { useNow, usePoll } from "../hooks";
 import { useToast } from "../components/Toast";
 import { ErrorBanner } from "../components/EmptyState";
 import { NumberInput } from "../components/NumberInput";
 import { TagColorPicker, useTagColors } from "../components/Tags";
-import { fmtBytes, fmtDuration, relTime, sortTags } from "../utils";
+import { fmtBytes, fmtDuration, pushoverKeyState, randomKeyHex, relTime, sortTags } from "../utils";
 
 /** Copy of a tag colour map with one tag set (hex) or reset to automatic (null). */
 function withTagColor(map: Record<string, string>, tag: string, hex: string | null): Record<string, string> {
@@ -54,6 +54,7 @@ export function Settings() {
   }, [tags.data, form?.tag_colors]);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<"webhook" | "pushover" | null>(null);
+  const [showKey, setShowKey] = useState(false);
   const [token, setToken] = useState(getApiToken());
   const [importMode, setImportMode] = useState<"upsert" | "create" | "replace">("upsert");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -317,6 +318,57 @@ export function Settings() {
                       ))}
                     </div>
                     <div className="help">Route changes can be noisy on paths with load balancing; they are off by default.</div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="label" htmlFor="pushover-key">End-to-end encryption key (optional)</label>
+                    <div className="flex flex-wrap gap-2">
+                      <input
+                        id="pushover-key"
+                        className="input min-w-0 basis-full font-mono sm:basis-0 sm:flex-1"
+                        type={showKey ? "text" : "password"}
+                        value={form.pushover_encryption_key}
+                        onChange={(e) => setForm({ ...form, pushover_encryption_key: e.target.value })}
+                        spellCheck={false}
+                        autoComplete="off"
+                        placeholder="64 hexadecimal characters; empty = off"
+                      />
+                      <button type="button" className="btn btn-sm" onClick={() => setShowKey((v) => !v)} aria-pressed={showKey}>
+                        {showKey ? <EyeOff size={13} /> : <Eye size={13} />} {showKey ? "Hide" : "Show"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={pushoverKeyState(form.pushover_encryption_key) !== "on" || form.pushover_encryption_key.includes("*")}
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(form.pushover_encryption_key.replace(/\s+/g, "")).then(
+                            () => toast("Key copied", "info"),
+                            () => toast("Could not copy; select the key and copy it by hand", "error"),
+                          );
+                        }}
+                      >
+                        <Copy size={13} /> Copy
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => {
+                          setForm({ ...form, pushover_encryption_key: randomKeyHex() });
+                          setShowKey(true);
+                        }}
+                      >
+                        <KeyRound size={13} /> Generate key
+                      </button>
+                    </div>
+                    <div className="help" data-testid="pushover-key-status">
+                      {pushoverKeyState(form.pushover_encryption_key) === "invalid" ? (
+                        <span style={{ color: "var(--down)" }}>The key must be exactly 64 hexadecimal characters (0-9, a-f): a 256-bit key as shown in the Pushover app.</span>
+                      ) : pushoverKeyState(form.pushover_encryption_key) === "off" ? (
+                        "Off: pushes travel with Pushover's standard encryption, readable by Pushover's servers."
+                      ) : (
+                        "On: the title, message and link of every push are encrypted here and can only be read by devices holding this key."
+                      )}{" "}
+                      Enter the same key under end-to-end encryption in the Pushover app on each device (iOS and Android); a device without it cannot show the alerts. Generate creates one here with the browser's secure random generator: copy it into the app, then save. Use <b>Send test</b> to check the device decrypts it.
+                    </div>
                   </div>
                 </div>
               </section>

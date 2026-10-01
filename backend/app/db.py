@@ -170,6 +170,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pushover_sound": "",
     "pushover_priority": "auto",
     "pushover_events": ["down", "recovered", "degraded"],
+    # Pushover end-to-end encryption: the 256-bit key (64 hex characters) also entered in the Pushover app; empty = off.
+    "pushover_encryption_key": "",
     # At most one alert per target and kind (status / route change) within this many minutes; 0 sends every alert.
     "notify_cooldown_min": 0,
     "base_url": "",

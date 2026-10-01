@@ -67,7 +67,8 @@ async def test_non_ascii_bearer_token_is_rejected_not_crashed(protected_client: 
 async def test_secrets_are_masked_without_the_token(protected_client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     c = protected_client
     auth = {"Authorization": "Bearer s3cret"}
-    body = {"pushover_api_token": "abcdefghijkl", "pushover_user_key": "u123456789", "webhook_url": "https://hooks.example/abc?key=1", "site_name": "NOC", "globalping_token": "gp_secret_token_1234"}
+    body = {"pushover_api_token": "abcdefghijkl", "pushover_user_key": "u123456789", "webhook_url": "https://hooks.example/abc?key=1", "site_name": "NOC", "globalping_token": "gp_secret_token_1234",
+            "pushover_encryption_key": "AB" * 32}
     saved = (await c.put("/api/settings", json=body, headers=auth)).json()
     assert saved["pushover_api_token"] == "abcdefghijkl" and saved["webhook_url"] == body["webhook_url"] and saved["globalping_token"] == body["globalping_token"]
 
@@ -75,6 +76,7 @@ async def test_secrets_are_masked_without_the_token(protected_client: AsyncClien
     assert masked["pushover_api_token"] == "********ijkl"
     assert masked["pushover_user_key"] == "********6789"
     assert masked["globalping_token"] == "********1234"
+    assert masked["pushover_encryption_key"] == "********"  # no characters of an encryption key are shown
     assert masked["webhook_url"] == "https://hooks.example/********"
     assert masked["site_name"] == "NOC"
     assert (await c.get("/api/settings", headers=auth)).json()["pushover_api_token"] == "abcdefghijkl"
@@ -82,6 +84,7 @@ async def test_secrets_are_masked_without_the_token(protected_client: AsyncClien
     # Echoing masked values back (as a UI without the token would) changes nothing.
     r = (await c.put("/api/settings", json={**masked, "site_name": "NOC 2"}, headers=auth)).json()
     assert r["site_name"] == "NOC 2" and r["pushover_api_token"] == "abcdefghijkl" and r["webhook_url"] == body["webhook_url"]
+    assert r["pushover_encryption_key"] == "ab" * 32  # stored normalised to lower case, untouched by the echoed mask
 
     # The test endpoint merges unsaved form values; a masked webhook URL falls back to the stored one.
     from app import notify

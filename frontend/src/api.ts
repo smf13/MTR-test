@@ -490,6 +490,8 @@ export interface Settings {
   pushover_sound: string;
   pushover_priority: "auto" | "-2" | "-1" | "0" | "1" | "2";
   pushover_events: string[];
+  /** Pushover end-to-end encryption key (64 hex characters, as in the Pushover app); empty = off. Fully masked for readers without the API token. */
+  pushover_encryption_key: string;
   /** At most one alert per target and kind (status / route change) within this many minutes; 0 sends every alert. */
   notify_cooldown_min: number;
   base_url: string;

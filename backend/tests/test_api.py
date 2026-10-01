@@ -107,6 +107,11 @@ async def test_notification_test_endpoint(client: AsyncClient, monkeypatch: pyte
     saved = (await client.put("/api/settings", json={"pushover_enabled": True, "pushover_priority": "1", "pushover_events": ["down", "down"]})).json()
     assert saved["pushover_enabled"] is True and saved["pushover_priority"] == "1" and saved["pushover_events"] == ["down"]
     assert (await client.put("/api/settings", json={"pushover_priority": "5"})).status_code == 422
+    key = "0123456789abcdef" * 4
+    assert (await client.put("/api/settings", json={"pushover_encryption_key": f" {key.upper()} "})).json()["pushover_encryption_key"] == key
+    for bad in ("abc", "g" * 64, key + "00"):
+        assert (await client.put("/api/settings", json={"pushover_encryption_key": bad})).status_code == 422
+    assert (await client.put("/api/settings", json={"pushover_encryption_key": ""})).json()["pushover_encryption_key"] == ""
     assert (await client.put("/api/settings", json={"base_url": "http://mtr.local:8899/"})).json()["base_url"] == "http://mtr.local:8899"
 
 
