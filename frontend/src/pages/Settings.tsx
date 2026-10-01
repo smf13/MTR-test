@@ -484,10 +484,10 @@ export function Settings() {
             <p className="text-xs text-muted">Everything in this UI is available as a JSON API, documented live at <a className="text-accent hover:underline" href="/api/docs" target="_blank" rel="noreferrer">/api/docs</a>. Set <span className="font-mono">MTR_TRACKER_API_TOKEN</span> on the server to require a bearer token for all changes; reads stay open, but notification credentials and the webhook address are then shown masked unless the token is saved here.</p>
             <label className="label mt-3">Token for this browser</label>
             <div className="flex gap-2">
-              <input className="input font-mono" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="only needed when the server sets a token" autoComplete="off" />
+              <input className="input font-mono" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="API token" autoComplete="off" />
               <button className="btn" onClick={() => { setApiToken(token.trim()); toast(token.trim() ? "Token saved in this browser" : "Token cleared", "success"); }}>Save</button>
             </div>
-            <div className="help">Stored in local storage only; never sent to anyone but this server.</div>
+            <div className="help">Only needed when the server sets a token. Stored in local storage only; never sent to anyone but this server.</div>
             <div className="mt-4 border-t border-border pt-3">
               <div className="mb-2 text-xs font-semibold">Targets backup</div>
               <div className="flex flex-wrap items-center gap-2">

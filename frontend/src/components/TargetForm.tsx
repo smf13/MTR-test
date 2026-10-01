@@ -479,7 +479,7 @@ export function TargetForm({
             </div>
             <div>
               <label className="label">{dnsEncrypted ? "Resolver" : "Resolver (optional)"}</label>
-              <input className="input font-mono" aria-label="Resolver" value={form.options.resolver ?? ""} onChange={(e) => setOpt("resolver", e.target.value)} placeholder={dnsTransport === "doh" ? "https://dns.google/dns-query or dns.google" : dnsTransport === "dot" ? "dns.google or 1.1.1.1" : "system resolver, or e.g. 1.1.1.1"} spellCheck={false} />
+              <input className="input font-mono" aria-label="Resolver" value={form.options.resolver ?? ""} onChange={(e) => setOpt("resolver", e.target.value)} placeholder={dnsTransport === "doh" ? "https://dns.google/dns-query" : dnsTransport === "dot" ? "dns.google or 1.1.1.1" : "system resolver, or e.g. 1.1.1.1"} spellCheck={false} />
               {dnsTransport === "doh" && <div className="help">A host name or IP gets the standard /dns-query path; paste a full URL for any other path or port.</div>}
             </div>
             {dnsTransport !== "doh" && (
@@ -522,7 +522,7 @@ export function TargetForm({
         )}
         <div className="sm:col-span-2">
           <label className="label">Description (optional)</label>
-          <input className="input" value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="What this target represents and why it matters" />
+          <input className="input" value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="What this target is for" />
         </div>
         <div className="sm:col-span-2">
           <label className="label">Tags (comma separated)</label>
