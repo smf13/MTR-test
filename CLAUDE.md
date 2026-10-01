@@ -32,7 +32,7 @@ frontend/tests/     Vitest + jsdom + Testing Library component tests; setup.ts i
 docs/interface.md   Current UI navigation and control guide; docs/screenshots.md is the gallery of current captures (README embeds a subset)
 Dockerfile          Multi-stage: node build of frontend -> python:3.12-slim with mtr-tiny + iputils-ping + tini; unprivileged "mtr" user
 docker-entrypoint.sh  Runs as root only to chown /data, then setpriv to the mtr user (MTR_TRACKER_RUN_AS_ROOT=1 opts out); the image sets HOME=/app because setpriv keeps root's environment and asyncpg searches HOME for client certificates
-docker-compose.yml  The app plus a postgres:16-alpine service (db), one volume each, NET_RAW; the image's HEALTHCHECK on /healthz applies; .env.example carries the database password variable
+docker-compose.yml  The app plus a postgres:16-alpine service (db), one volume each, NET_RAW, IPv6 on the default network (enable_ipv6; Engine 27+ picks the subnet); the image's HEALTHCHECK on /healthz applies; .env.example carries the database password variable
 docker-compose.host.yml  Override for host networking (app on network_mode: host, db published on 127.0.0.1, URL pointed there); used with -f on top of the main file
 ```
 

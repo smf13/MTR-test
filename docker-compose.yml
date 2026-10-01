@@ -56,6 +56,14 @@ services:
     # the loopback interface (a service name like "db" does not resolve outside the Compose network).
     # The image's HEALTHCHECK (curl on /healthz) applies; it reads MTR_TRACKER_PORT inside the container.
 
+# IPv6 on the Compose network, so IPv6 targets (and "IPv6" in a target's IP version) work from the bridge. Docker
+# Engine 27 or newer picks an IPv6 subnet by itself and masquerades it to the host's IPv6 address; older engines need
+# a subnet here (ipam: config: - subnet: fd00:...::/64) or default-address-pools in daemon.json. The host itself needs
+# working IPv6. With docker-compose.host.yml the app uses the host's stack instead and this network only serves the db.
+networks:
+  default:
+    enable_ipv6: true
+
 volumes:
   mtr-tracker-data:
   mtr-tracker-postgres:
