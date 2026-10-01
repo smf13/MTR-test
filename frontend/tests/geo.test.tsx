@@ -275,7 +275,7 @@ describe("GeoIP lookup page", () => {
 
 const settings: SettingsT = {
   retention_days: 30, route_memory_runs: 20, asn_lookup: true, reverse_dns: true, webhook_url: "", webhook_events: [], pushover_enabled: false,
-  pushover_user_key: "", pushover_api_token: "", pushover_device: "", pushover_sound: "", pushover_priority: "auto", pushover_events: [],
+  pushover_user_key: "", pushover_api_token: "", pushover_device: "", pushover_sound: "", pushover_priority: "auto", pushover_events: [], notify_cooldown_min: 0,
   base_url: "", site_name: "MTR Tracker", tag_colors: {}, globalping_token: "", maxmind_account_id: "", maxmind_license_key: "", ip_api_enabled: false,
 };
 const geoipStatus: GeoIpStatus = {
@@ -318,6 +318,28 @@ describe("settings · ip-api.com GeoIP", () => {
     expect(await within(section).findByText(/Paused until in [34]m.*\(ip-api.com returned HTTP 503\)/)).toBeTruthy();
     expect(within(section).getByText("Last request failed: ip-api.com returned HTTP 503")).toBeTruthy();
     expect(within(section).getByText(/The MaxMind databases answer whatever ip-api.com cannot/)).toBeTruthy();
+  });
+});
+
+describe("settings · notification cooldown", () => {
+  it("saves the cooldown in minutes and explains it", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, "settings").mockResolvedValue(settings);
+    vi.spyOn(api, "status").mockRejectedValue(new Error("offline"));
+    vi.spyOn(api, "tags").mockResolvedValue([]);
+    vi.spyOn(api, "geoipStatus").mockResolvedValue(geoipStatus);
+    const update = vi.spyOn(api, "updateSettings").mockImplementation(async (patch) => ({ ...settings, ...patch } as SettingsT));
+    render(<MemoryRouter><Settings /></MemoryRouter>);
+
+    const section = (await screen.findByRole("heading", { name: "Notification cooldown" })).closest("section")!;
+    const field = within(section).getByLabelText("Cooldown (minutes)") as HTMLInputElement;
+    expect(field.value).toBe("0");
+    expect(within(section).getByText(/0 sends every alert as it happens/)).toBeTruthy();
+    await user.clear(field);
+    await user.type(field, "15");
+    expect(within(section).getByText(/At most one alert per target and kind every 15 minutes/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(expect.objectContaining({ notify_cooldown_min: 15 })));
   });
 });
 

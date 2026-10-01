@@ -371,6 +371,7 @@ class SettingsUpdate(BaseModel):
     pushover_sound: str | None = Field(default=None, max_length=32)
     pushover_priority: str | None = Field(default=None, max_length=8)
     pushover_events: list[str] | None = None
+    notify_cooldown_min: int | None = Field(default=None, ge=0, le=1440, description="at most one alert per target and kind within this many minutes; 0 = off")
     base_url: str | None = Field(default=None, max_length=2048)
     site_name: str | None = Field(default=None, max_length=60)
     tag_colors: dict[str, str] | None = Field(default=None, description="tag -> #rrggbb; tags without an entry get an automatic colour")

@@ -118,6 +118,13 @@ def format_pushover_text(payload: dict[str, Any]) -> tuple[str, str]:
     return title, "\n".join(lines)
 
 
+def wanted(settings: dict[str, Any], kind: str) -> bool:
+    """Whether any enabled channel delivers this kind of event (the same rules as dispatch_event)."""
+    webhook = bool((settings.get("webhook_url") or "").strip()) and kind in (settings.get("webhook_events") or [])
+    pushover = bool(settings.get("pushover_enabled")) and kind in (settings.get("pushover_events") or [])
+    return webhook or pushover
+
+
 async def dispatch_event(settings: dict[str, Any], payload: dict[str, Any]) -> None:
     """Fan an event payload out to every enabled channel; failures are logged, never raised."""
     kind = str(payload.get("event"))

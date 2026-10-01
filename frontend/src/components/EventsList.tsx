@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { AlertOctagon, AlertTriangle, CheckCircle2, GitBranch, Info } from "lucide-react";
+import { AlertOctagon, AlertTriangle, CheckCircle2, GitBranch, Info, Hourglass } from "lucide-react";
 import type { Event } from "../api";
 import { fmtDateTime, relTime } from "../utils";
 
@@ -47,6 +47,11 @@ export function EventsList({ events, now, showTarget = true }: { events: Event[]
             <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-[11px] text-faint">
               <span title={fmtDateTime(e.created_at)}>{relTime(e.created_at, now)}</span>
               <span>{fmtDateTime(e.created_at)}</span>
+              {e.details?.notification === "held back" && (
+                <span className="inline-flex items-center gap-1" title="Not sent when it happened: the notification cooldown held it back. If the status still differs from the last alert when the cooldown ends, one catch-up alert reports it.">
+                  <Hourglass size={11} /> notification held back by the cooldown
+                </span>
+              )}
               {e.run_id && (
                 <Link to={`/runs/${e.run_id}`} className="text-accent hover:underline">
                   view run #{e.run_id}

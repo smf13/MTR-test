@@ -490,6 +490,8 @@ export interface Settings {
   pushover_sound: string;
   pushover_priority: "auto" | "-2" | "-1" | "0" | "1" | "2";
   pushover_events: string[];
+  /** At most one alert per target and kind (status / route change) within this many minutes; 0 sends every alert. */
+  notify_cooldown_min: number;
   base_url: string;
   site_name: string;
   /** tag -> #rrggbb; tags without an entry get an automatic colour (see autoTagColor in utils.ts). */

@@ -199,7 +199,8 @@ async def test_notifications_are_tracked_and_drained_on_stop(client: AsyncClient
 
     monkeypatch.setattr(sched_mod, "dispatch_event", slow_dispatch)
     t = (await client.post("/api/targets", json={"name": "Notify", "host": "192.0.2.94", "interval_sec": 60, "enabled": False})).json()
-    await sched._event(t, None, "down", "critical", "test", {}, await app.state.db.get_settings())
+    settings = {**await app.state.db.get_settings(), "webhook_url": "https://hooks.example.test/mtr"}  # a channel that takes it
+    await sched._event(t, None, "down", "critical", "test", {}, settings)
     assert sched.pending_notifications == 1
     await sched.stop()  # waits for the delivery instead of dropping it
     assert delivered == ["down"] and sched.pending_notifications == 0

@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { api, type RunDetail, type Target, type TargetInput } from "../src/api";
+import { api, type Event, type RunDetail, type Target, type TargetInput } from "../src/api";
+import { EventsList } from "../src/components/EventsList";
 import { TargetDetail } from "../src/pages/TargetDetail";
 import { TargetForm } from "../src/components/TargetForm";
 import { RunsTable } from "../src/components/RunsTable";
@@ -125,5 +126,17 @@ describe("keyword regex", () => {
     render(<CheckDetails run={httpRun} type="http" />);
     expect(screen.getByText("Keyword regex")).toBeTruthy();
     expect(screen.getByTestId("keyword-result").textContent).toBe('/version \\d+/i matched "Version 42"');
+  });
+});
+
+describe("events held back by the cooldown", () => {
+  it("marks an event whose notification waited for the cooldown", () => {
+    const base = { target_id: 1, target_name: "Office WAN", target_host: "192.0.2.1", run_id: null, created_at: timestamp };
+    const events = [
+      { ...base, id: 2, kind: "recovered", severity: "info", message: "Office WAN recovered (down -> up)", details: { notification: "held back" } },
+      { ...base, id: 1, kind: "down", severity: "critical", message: "Office WAN is DOWN", details: {} },
+    ] as unknown as Event[];
+    render(<MemoryRouter><EventsList events={events} now={Date.now()} /></MemoryRouter>);
+    expect(screen.getAllByText("notification held back by the cooldown")).toHaveLength(1);
   });
 });

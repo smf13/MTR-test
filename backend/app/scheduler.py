@@ -13,7 +13,8 @@ from .config import config
 from .db import Database, IntegrityError
 from .globalping import PATH_MEASUREMENTS, run_globalping_path
 from .mtr import HopResult, MtrResult, route_signature, routes_equivalent, run_mtr
-from .notify import dispatch_event, target_url
+from .cooldown import NotifyGate
+from .notify import dispatch_event, target_url, wanted
 from .probes import run_probe, target_options
 from .resolver import resolve_host, reverse_lookup_many
 
@@ -39,6 +40,8 @@ class Scheduler:
         # Notification deliveries run detached from the run that produced them. asyncio keeps only weak
         # references to tasks, so hold them here (and drain them on stop()) or they can vanish mid-flight.
         self._notify_tasks: set[asyncio.Task[None]] = set()
+        # Holds back repeated alerts per target within settings.notify_cooldown_min (see cooldown.py).
+        self.notify_gate = NotifyGate(self._deliver_catch_up)
         self._wake = asyncio.Event()
         self.started_at = time.time()
         self.runs_completed = 0
@@ -61,6 +64,7 @@ class Scheduler:
         await asyncio.gather(*loops, *runs, return_exceptions=True)
         self._running.clear()
         await geoip.cancel_refresh()
+        await self.notify_gate.close()
         if self._notify_tasks:
             _, pending = await asyncio.wait(self._notify_tasks, timeout=NOTIFY_DRAIN_TIMEOUT)
             for t in pending:
@@ -82,6 +86,8 @@ class Scheduler:
 
     async def cancel(self, target_ids: Iterable[int]) -> None:
         """Abort in-flight runs for targets that are about to be deleted, and wait until they are gone."""
+        target_ids = list(target_ids)
+        self.notify_gate.forget(target_ids)
         tasks = {tid: self._running[tid] for tid in target_ids if tid in self._running}
         for t in tasks.values():
             t.cancel()
@@ -386,8 +392,8 @@ class Scheduler:
         settings: dict[str, Any],
     ) -> None:
         now = time.time()
-        await self.db.execute(
-            "INSERT INTO events(target_id, run_id, kind, severity, message, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        event_id = await self.db.fetchval(
+            "INSERT INTO events(target_id, run_id, kind, severity, message, details, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
             (t["id"], run_id, kind, severity, message, json.dumps(details), now),
         )
         log.info("event [%s] %s", kind, message)
@@ -406,9 +412,28 @@ class Scheduler:
             "url": target_url(settings, t["id"]),
             "timestamp": now,
         }
-        task = asyncio.create_task(dispatch_event(settings, payload), name=f"mtr-tracker-notify-{kind}")
+        if not wanted(settings, kind):
+            return  # no channel takes this kind of event, so it neither sends nor opens a cooldown window
+        if not self.notify_gate.submit(payload, settings):
+            # On record for the events page: this alert waits for the cooldown's catch-up (or is dropped as stale).
+            await self.db.execute("UPDATE events SET details = ? WHERE id = ?", (json.dumps({**details, "notification": "held back"}), event_id))
+            return
+        self._send(payload, settings)
+
+    def _send(self, payload: dict[str, Any], settings: dict[str, Any]) -> None:
+        task = asyncio.create_task(dispatch_event(settings, payload), name=f"mtr-tracker-notify-{payload.get('event')}")
         self._notify_tasks.add(task)
         task.add_done_callback(self._notify_tasks.discard)
+
+    async def _deliver_catch_up(self, payload: dict[str, Any]) -> None:
+        """A held-back alert whose cooldown ended: delivered with the settings and mute switch of now."""
+        target_id = (payload.get("target") or {}).get("id")
+        row = await self.db.fetchone("SELECT notify FROM targets WHERE id = ?", (target_id,))
+        if row is None or not row["notify"]:
+            return
+        settings = await self.db.get_settings()
+        if wanted(settings, str(payload.get("event"))):
+            self._send(payload, settings)
 
 
 def _summarise(final: HopResult, reached: bool) -> dict[str, Any]:

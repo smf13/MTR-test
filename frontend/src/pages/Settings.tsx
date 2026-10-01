@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload, Tags as TagsIcon, Globe, MapPin, CloudDownload } from "lucide-react";
+import { Save, Database, Cpu, FlaskConical, Webhook, BellRing, Send, KeyRound, Download, Upload, Tags as TagsIcon, Globe, MapPin, CloudDownload, Hourglass } from "lucide-react";
 import { api, getApiToken, setApiToken, type Settings as SettingsT, type TargetInput } from "../api";
 import { useNow, usePoll } from "../hooks";
 import { useToast } from "../components/Toast";
@@ -206,6 +206,18 @@ export function Settings() {
                 ) : (
                   <div className="text-sm text-faint">No tags yet. Tags added to targets appear here.</div>
                 )}
+              </section>
+
+              <section className="card p-5">
+                <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold"><Hourglass size={15} /> Notification cooldown</h2>
+                <p className="mb-3 text-xs text-faint">Stops a flapping target from flooding the webhook and Pushover. After an alert for a target, further alerts of the same kind wait until the cooldown ends; status alerts (down, degraded, recovered) and route changes count separately. A problem getting worse, such as degraded turning into down, is always sent at once. When the cooldown ends and the target's status differs from the last alert, one catch-up alert reports the current status and how many alerts were held back. Every event is still recorded on the events pages.</p>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="label" htmlFor="notify-cooldown">Cooldown (minutes)</label>
+                    <NumberInput id="notify-cooldown" className="input num" min={0} max={1440} value={form.notify_cooldown_min} onChange={(v) => setForm({ ...form, notify_cooldown_min: v ?? 0 })} />
+                    <div className="help">{form.notify_cooldown_min > 0 ? `At most one alert per target and kind every ${form.notify_cooldown_min} minute${form.notify_cooldown_min === 1 ? "" : "s"}, plus a catch-up when the status moved.` : "0 sends every alert as it happens."} Up to 1440 (one day).</div>
+                  </div>
+                </div>
               </section>
 
               <section className="card p-5">

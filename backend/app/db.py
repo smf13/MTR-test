@@ -170,6 +170,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pushover_sound": "",
     "pushover_priority": "auto",
     "pushover_events": ["down", "recovered", "degraded"],
+    # At most one alert per target and kind (status / route change) within this many minutes; 0 sends every alert.
+    "notify_cooldown_min": 0,
     "base_url": "",
     "site_name": "MTR Tracker",
     # tag -> "#rrggbb"; tags without an entry get an automatic colour in the UI.
