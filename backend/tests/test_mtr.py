@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import random
+from types import SimpleNamespace
 
 import pytest
 
+from app import mtr
 from app.mtr import build_command, parse_report, route_signature, routes_equivalent, run_mtr
 
 SAMPLE = {
@@ -75,7 +78,12 @@ def test_min_probe_interval_depends_on_root(monkeypatch: pytest.MonkeyPatch) -> 
     assert mtr.min_probe_interval() == 0.1
 
 
-async def test_simulator_reaches_destination() -> None:
+async def test_simulator_reaches_destination(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The simulator stages incidents at random (an outage silences the destination in about 1 run in 75), which is
+    # what the demo needs but made this test fail now and then. A fixed seed for the per-run generator keeps the
+    # path itself (seeded by the destination) and makes the run reproducible.
+    monkeypatch.setattr(mtr, "random", SimpleNamespace(Random=lambda seed=None: random.Random(1 if seed is None else seed)))
+    mtr._SIM_STATE.pop("198.51.100.7", None)
     result = await run_mtr(dst_ip="198.51.100.7", count=3, probe_interval=0.1, protocol="icmp", port=None, packet_size=64,
                            max_hops=30, ip_version="auto", asn_lookup=False, simulate=True)
     assert result.ok and result.hops
