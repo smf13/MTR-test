@@ -215,7 +215,7 @@ export function Settings() {
                   <div>
                     <label className="label" htmlFor="notify-cooldown">Cooldown (minutes)</label>
                     <NumberInput id="notify-cooldown" className="input num" min={0} max={1440} value={form.notify_cooldown_min} onChange={(v) => setForm({ ...form, notify_cooldown_min: v ?? 0 })} />
-                    <div className="help">{form.notify_cooldown_min > 0 ? `At most one alert per target and kind every ${form.notify_cooldown_min} minute${form.notify_cooldown_min === 1 ? "" : "s"}, plus a catch-up when the status moved.` : "0 sends every alert as it happens."} Up to 1440 (one day).</div>
+                    <div className="help">{form.notify_cooldown_min > 0 ? `At most one alert per target and kind every ${form.notify_cooldown_min} minute${form.notify_cooldown_min === 1 ? "" : "s"}, plus a catch-up when the status moved.` : "0 sends every alert as it happens."} The longest cooldown is 1440 minutes (one day).</div>
                   </div>
                 </div>
               </section>
