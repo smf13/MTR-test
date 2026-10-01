@@ -140,3 +140,23 @@ describe("events held back by the cooldown", () => {
     expect(screen.getAllByText("notification held back by the cooldown")).toHaveLength(1);
   });
 });
+
+describe("latency across targets colours", () => {
+  it("gives every target on the chart its own colour and line pattern", async () => {
+    const { OverviewChart } = await import("../src/components/Visuals");
+    const { seriesColor, seriesDash, SERIES_SLOTS, SERIES_DASHES } = await import("../src/utils");
+    // Ids 1 and 13 shared a colour when it was picked by database id (modulo the palette size).
+    const ids = [1, 13, 25, 2, 14, 3, 4, 5, 6, 7, 8, 9];
+    const data = { range_sec: 86400, bucket_sec: 600, targets: ids.map((id) => ({ id, name: `T${id}`, host: "192.0.2.1", enabled: true, points: [{ t: timestamp, avg: id, loss: 0, ok: true, n: 1 }] })) };
+    const { container } = render(<OverviewChart data={data} />);
+    const swatches = [...container.querySelectorAll("svg[data-series-color]")].map((el) => `${el.getAttribute("data-series-color")}|${el.getAttribute("data-series-dash")}`);
+    expect(swatches).toHaveLength(ids.length);
+    expect(new Set(swatches).size).toBe(ids.length);
+    expect(swatches.slice(0, 8).every((s) => s.endsWith("|"))).toBe(true);  // the first eight are solid lines
+    expect(swatches[8]).toBe("var(--series-1)|6 4");                     // the ninth repeats the first colour, dashed
+
+    // Unique up to slots × patterns.
+    const n = SERIES_SLOTS * SERIES_DASHES.length;
+    expect(new Set(Array.from({ length: n }, (_, i) => `${seriesColor(i)}|${seriesDash(i)}`)).size).toBe(n);
+  });
+});

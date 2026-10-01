@@ -115,11 +115,23 @@ export function classNames(...xs: (string | false | null | undefined)[]): string
   return xs.filter(Boolean).join(" ");
 }
 
-/** Categorical palette for multi-target charts; readable on dark, OLED and light backgrounds. */
-export const SERIES_COLORS = ["#38bdf8", "#f472b6", "#a3e635", "#fbbf24", "#a78bfa", "#fb923c", "#2dd4bf", "#f87171", "#60a5fa", "#e879f9", "#4ade80", "#facc15"];
+/** Slots of the categorical palette (`--series-1` … `--series-8` in index.css, stepped per theme). */
+export const SERIES_SLOTS = 8;
+/**
+ * Line patterns that extend the palette past eight series: series 9-16 repeat the colours dashed, 17-24 dotted
+ * and so on, so no two lines on a chart look alike up to SERIES_SLOTS × SERIES_DASHES.length series. More hues
+ * would not help: past eight, generated colours stop being tellable apart.
+ */
+export const SERIES_DASHES = ["", "6 4", "1.5 3", "10 3 2 3", "14 5", "4 2 1 2"];
 
+/** Colour of the i-th series (position on the chart, not a database id, so two shown series never share one). */
 export function seriesColor(i: number): string {
-  return SERIES_COLORS[i % SERIES_COLORS.length];
+  return `var(--series-${(((i % SERIES_SLOTS) + SERIES_SLOTS) % SERIES_SLOTS) + 1})`;
+}
+
+/** SVG stroke-dasharray of the i-th series; undefined (solid) for the first eight. */
+export function seriesDash(i: number): string | undefined {
+  return SERIES_DASHES[Math.floor(Math.max(0, i) / SERIES_SLOTS) % SERIES_DASHES.length] || undefined;
 }
 
 export function percentile(values: number[], p: number): number | null {

@@ -3,7 +3,7 @@ import { Area, Bar, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, Too
 import type { Hop, HopSummary, HourlyBucket, OverviewSeries, Routes, SeriesPoint } from "../api";
 import { HeatLegend } from "./HopHeatmap";
 import { Sized } from "./Charts";
-import { fmtNum, fmtTime, fmtDateTime, latencyColor, lossColor, percentile, seriesColor, classNames } from "../utils";
+import { fmtNum, fmtTime, fmtDateTime, latencyColor, lossColor, percentile, seriesColor, seriesDash, classNames } from "../utils";
 
 /* The status strip lives in StatusStrip.tsx so pages can show it without loading Recharts. */
 
@@ -14,6 +14,9 @@ import { fmtNum, fmtTime, fmtDateTime, latencyColor, lossColor, percentile, seri
 export function OverviewChart({ data, height = 240 }: { data: OverviewSeries; height?: number }) {
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const targets = data.targets;
+  // Colour and line pattern follow the target's position on this chart (the API lists them by name), so every
+  // line differs; hiding one through the legend keeps the others' colours.
+  const slot = useMemo(() => new Map(targets.map((t, i) => [`v${t.id}`, i])), [targets]);
   const rows = useMemo(() => {
     const byT = new Map<number, Record<string, number | null>>();
     targets.forEach((t) => {
@@ -54,7 +57,7 @@ export function OverviewChart({ data, height = 240 }: { data: OverviewSeries; he
                     <div className="num grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
                       {items.map((p) => (
                         <span key={String(p.dataKey)} className="contents">
-                          <span className="flex items-center gap-1.5 text-muted"><span className="inline-block h-2 w-2 rounded-full" style={{ background: p.color }} />{p.name}</span>
+                          <span className="flex items-center gap-1.5 text-muted"><SeriesSwatch index={slot.get(String(p.dataKey)) ?? 0} />{p.name}</span>
                           <span className="text-right">{fmtNum(Number(p.value))} ms</span>
                         </span>
                       ))}
@@ -63,26 +66,35 @@ export function OverviewChart({ data, height = 240 }: { data: OverviewSeries; he
                 );
               }}
             />
-            {targets.map((t) => (
-              <Line key={t.id} name={t.name} dataKey={`v${t.id}`} type="monotone" stroke={seriesColor(t.id)} strokeWidth={1.6} dot={false} isAnimationActive={false} connectNulls={false} hide={hidden.has(t.id)} activeDot={{ r: 3 }} />
+            {targets.map((t, i) => (
+              <Line key={t.id} name={t.name} dataKey={`v${t.id}`} type="monotone" stroke={seriesColor(i)} strokeDasharray={seriesDash(i)} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls={false} hide={hidden.has(t.id)} activeDot={{ r: 4 }} />
             ))}
           </ComposedChart>
         )}
       </Sized>
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 px-1">
-        {targets.map((t) => (
+        {targets.map((t, i) => (
           <button
             key={t.id}
             className={classNames("inline-flex items-center gap-1.5 rounded px-1 text-xs transition-opacity", hidden.has(t.id) ? "opacity-40" : "opacity-100")}
             onClick={() => setHidden((h) => { const n = new Set(h); if (n.has(t.id)) n.delete(t.id); else n.add(t.id); return n; })}
             title={hidden.has(t.id) ? "Show" : "Hide"}
           >
-            <span className="inline-block h-2 w-2 rounded-full" style={{ background: seriesColor(t.id) }} />
+            <SeriesSwatch index={i} />
             <span className={classNames(hidden.has(t.id) && "line-through")}>{t.name}</span>
           </button>
         ))}
       </div>
     </div>
+  );
+}
+
+/** A short sample of a series' line (colour and dash pattern), for legends and tooltips. */
+export function SeriesSwatch({ index }: { index: number }) {
+  return (
+    <svg width="18" height="8" viewBox="0 0 18 8" aria-hidden="true" className="shrink-0" data-series-color={seriesColor(index)} data-series-dash={seriesDash(index) ?? ""}>
+      <line x1="1" y1="4" x2="17" y2="4" stroke={seriesColor(index)} strokeWidth={2.5} strokeDasharray={seriesDash(index)} strokeLinecap="butt" />
+    </svg>
   );
 }
 
