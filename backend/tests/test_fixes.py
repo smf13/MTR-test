@@ -94,8 +94,13 @@ async def test_secrets_are_masked_without_the_token(protected_client: AsyncClien
     r2 = await c.post("/api/notifications/test", json={"channel": "webhook", "settings": {"webhook_url": masked["webhook_url"]}}, headers=auth)
     assert r2.status_code == 200 and calls[-1] == body["webhook_url"]
 
-    assert (await c.get("/api/status")).json()["database"] is None
+    anon = (await c.get("/api/status")).json()
+    assert anon["database"] is None
+    env = {e["name"]: e["value"] for e in anon["environment"]}
+    assert env["MTR_TRACKER_DATABASE_URL"] is None and env["MTR_TRACKER_DATA_DIR"] is None and env["MTR_TRACKER_API_TOKEN"] == "(set)"
     status = (await c.get("/api/status", headers=auth)).json()
+    env = {e["name"]: e["value"] for e in status["environment"]}
+    assert env["MTR_TRACKER_DATABASE_URL"] == status["database"] and env["MTR_TRACKER_DATA_DIR"]
     # Token holders see where the data lives, never the password.
     from urllib.parse import urlsplit
 

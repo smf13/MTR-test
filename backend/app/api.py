@@ -188,6 +188,25 @@ def _percentile(values: list[float], pct: float) -> float | None:
 # ---------------------------------------------------------------------------
 
 
+def _environment(db: Database, authed: bool) -> list[dict[str, Any]]:
+    """The startup configuration as the server applied it (defaults filled in), for the Settings page.
+
+    Locations are hidden (null) from callers without the token, like `database`; the token itself is never echoed.
+    """
+    return [
+        {"name": "MTR_TRACKER_HOST", "value": config.host},
+        {"name": "MTR_TRACKER_PORT", "value": str(config.port)},
+        {"name": "MTR_TRACKER_DATABASE_URL", "value": db.describe() if authed else None},
+        {"name": "MTR_TRACKER_DB_POOL_SIZE", "value": str(config.db_pool_size)},
+        {"name": "MTR_TRACKER_DATA_DIR", "value": str(config.data_dir) if authed else None},
+        {"name": "MTR_TRACKER_MAX_CONCURRENT_RUNS", "value": str(config.max_concurrent_runs)},
+        {"name": "MTR_TRACKER_MTR_BINARY", "value": config.mtr_binary},
+        {"name": "MTR_TRACKER_SIMULATE", "value": "1" if config.simulate else "0"},
+        {"name": "MTR_TRACKER_LOG_LEVEL", "value": config.log_level},
+        {"name": "MTR_TRACKER_API_TOKEN", "value": "(set)" if config.api_token else ""},
+    ]
+
+
 @router.get("/status")
 async def get_status(request: Request) -> dict[str, Any]:
     db = _db(request)
@@ -206,6 +225,7 @@ async def get_status(request: Request) -> dict[str, Any]:
     )
     events = await db.fetchone("SELECT COUNT(*) AS n FROM events WHERE created_at >= ?", (time.time() - 86400,))
     total_runs = await db.fetchone("SELECT COUNT(*) AS n FROM runs")
+    authed = is_authenticated(request)
     return {
         "app": "MTR Tracker",
         "version": __version__,
@@ -220,7 +240,8 @@ async def get_status(request: Request) -> dict[str, Any]:
         "runs_completed_since_start": sched.runs_completed,
         "db_size_bytes": await db.db_size_bytes(),
         # The database location is only shown to callers that hold the API token; the password is never included.
-        "database": db.describe() if is_authenticated(request) else None,
+        "database": db.describe() if authed else None,
+        "environment": _environment(db, authed),
         "targets": {k: int(counts[k] or 0) for k in ("total", "enabled", "up", "degraded", "down", "pending")},
         "runs_24h": {"total": int(runs["total"] or 0), "ok": int(runs["ok"] or 0)},
         "runs_total": int(total_runs["n"] or 0),

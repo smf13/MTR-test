@@ -140,6 +140,8 @@ Environment variables (read at startup):
 | `MTR_TRACKER_API_TOKEN` | empty | When set, all write requests need `Authorization: Bearer <token>`, and reads of the settings show credentials masked unless they carry it |
 | `MTR_TRACKER_RUN_AS_ROOT` | `0` | Docker only: `1` keeps the process as root (needed for mtr probe intervals below 1 s) |
 
+**Settings → Environment variables** shows the values the running server applied, defaults included (the token only as "(set)"; the database URL and data directory only when the API token is saved in the browser or none is configured).
+
 Everything else (retention days, chart route memory, reverse DNS, ASN lookup, notification channels, public URL, tag colours, the Globalping token, the ip-api.com switch, the MaxMind credentials) is set in the UI under **Settings** and stored in the database.
 
 The supplied Compose file publishes `8899:8899`. To change only the externally exposed port, change the left-hand value, for example `8080:8899`. If you change `MTR_TRACKER_PORT` inside the container, also update the right-hand value. When using the `uvicorn` development command below, its `--host` and `--port` arguments control the listener instead.
@@ -202,7 +204,7 @@ With both set up, ip-api.com is asked first and the databases answer whatever it
 
 The UI is a thin client over a JSON API, so anything you do by hand can be scripted. Interactive docs with every schema live at `/api/docs`.
 
-Set `MTR_TRACKER_API_TOKEN` on the server to require `Authorization: Bearer <token>` (or `X-Api-Token`) on `/api/` requests using `POST`, `PUT`, `PATCH` or `DELETE`. Reads stay open so dashboards and wall displays work without credentials, but with a token set, `GET /api/settings` masks the Pushover credentials (the end-to-end encryption key completely, without the last four characters the others keep), Globalping token and the path/query of the webhook URL unless the request carries the token, and `GET /api/status` omits `database` (the connection URL without its password). A masked value sent back in a `PUT` leaves the stored one untouched. When a token is set, the UI prompts after an unauthorized write and keeps the token in this browser; save it and retry the action, or enter it under **Settings → API access**.
+Set `MTR_TRACKER_API_TOKEN` on the server to require `Authorization: Bearer <token>` (or `X-Api-Token`) on `/api/` requests using `POST`, `PUT`, `PATCH` or `DELETE`. Reads stay open so dashboards and wall displays work without credentials, but with a token set, `GET /api/settings` masks the Pushover credentials (the end-to-end encryption key completely, without the last four characters the others keep), Globalping token and the path/query of the webhook URL unless the request carries the token, and `GET /api/status` omits `database` (the connection URL without its password) and hides the database URL and data directory in `environment`. A masked value sent back in a `PUT` leaves the stored one untouched. When a token is set, the UI prompts after an unauthorized write and keeps the token in this browser; save it and retry the action, or enter it under **Settings → API access**.
 
 `POST /api/probe` (quick trace) runs at most two traces at a time; further requests wait up to 30 s and then get `429`.
 
@@ -304,7 +306,7 @@ Interactive API documentation is available at `/api/docs`, with the OpenAPI sche
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/status` | Engine status, counters, mtr version, `db_size_bytes` (the database on disk, catalogs included) and, with the token, `database` (the connection URL without its password) |
+| `GET` | `/api/status` | Engine status, counters, mtr version, `db_size_bytes` (the database on disk, catalogs included), `environment` (the startup variables as applied, defaults filled in; the token only as `(set)`, the database URL and data directory only with the token) and, with the token, `database` (the connection URL without its password) |
 | `GET` / `PUT` | `/api/settings` | Global settings |
 | `GET` / `POST` | `/api/targets` | List (with 24h stats, sparkline and status timeline; sorted by name, case-insensitively) / create |
 | `GET` | `/api/tags` | Tags in use with target counts and configured colours (`settings.tag_colors`) |

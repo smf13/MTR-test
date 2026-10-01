@@ -69,6 +69,10 @@ async def test_validation_and_settings(client: AsyncClient) -> None:
 
     status = (await client.get("/api/status")).json()
     assert status["simulate"] is True and "targets" in status
+    # The Settings page lists the configuration the server actually applied, not a static example.
+    env = {e["name"]: e["value"] for e in status["environment"]}
+    assert env["MTR_TRACKER_SIMULATE"] == "1" and env["MTR_TRACKER_MAX_CONCURRENT_RUNS"] == str(status["max_concurrent_runs"])
+    assert env["MTR_TRACKER_API_TOKEN"] == "" and env["MTR_TRACKER_DATABASE_URL"] == status["database"]
 
 
 async def test_unresolvable_host_marks_target_down(client: AsyncClient) -> None:

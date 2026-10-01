@@ -674,6 +674,8 @@ export interface SystemStatus {
   db_size_bytes: number;
   /** Connection URL without its password; only present when the request carried the API token (or no token is configured). */
   database: string | null;
+  /** Startup configuration as applied, defaults filled in; `value` is null when hidden from callers without the token, and the token reads "(set)" or "". */
+  environment: { name: string; value: string | null }[];
   targets: { total: number; enabled: number; up: number; degraded: number; down: number; pending: number };
   runs_24h: { total: number; ok: number };
   runs_total: number;

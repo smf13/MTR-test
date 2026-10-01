@@ -505,16 +505,18 @@ export function Settings() {
           </section>
           <section className="card p-5 text-xs text-muted">
             <h2 className="mb-2 text-sm font-semibold text-text">Environment variables</h2>
-            <ul className="space-y-1 font-mono">
-              <li>MTR_TRACKER_PORT=8899</li>
-              <li>MTR_TRACKER_DATABASE_URL=postgresql://user:password@db:5432/mtr_tracker</li>
-              <li>MTR_TRACKER_DATA_DIR=/data</li>
-              <li>MTR_TRACKER_MAX_CONCURRENT_RUNS=8</li>
-              <li>MTR_TRACKER_MTR_BINARY=mtr</li>
-              <li>MTR_TRACKER_SIMULATE=0</li>
-              <li>MTR_TRACKER_API_TOKEN=</li>
-            </ul>
-            <p className="mt-2 font-sans">These are read at startup; restart the container to apply changes.</p>
+            {s?.environment ? (
+              <ul className="space-y-1 font-mono" data-testid="environment">
+                {s.environment.map((e) => (
+                  <li key={e.name} className="break-all">
+                    {e.name}={e.value ?? <span className="font-sans italic text-faint">hidden without the API token</span>}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-faint">Loading…</div>
+            )}
+            <p className="mt-2 font-sans">The values this server started with, defaults included. They are read at startup; restart the container to apply changes.</p>
           </section>
         </aside>
       </div>
