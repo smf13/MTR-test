@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Area, Bar, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
 import type { SeriesPoint } from "../api";
-import { fmtNum, fmtTime, lossColor } from "../utils";
+import { fmtAxisTime, fmtNum, fmtTime, lossColor, timeTicks } from "../utils";
 
 interface Row {
   t: number;
@@ -66,7 +66,7 @@ export function Sized({ height, children }: { height: number; children: (width: 
 }
 
 function tickFormatter(rangeSec: number) {
-  return (v: number) => fmtTime(new Date(v).toISOString(), { date: rangeSec > 86400 });
+  return (v: number) => fmtAxisTime(v, rangeSec > 86400);
 }
 
 function TooltipBox({ active, payload, rangeSec, bucketSec }: { active?: boolean; payload?: { payload: Row }[]; rangeSec: number; bucketSec: number | null }) {
@@ -135,7 +135,7 @@ export function thinRouteChanges<T extends { t: number; routeChanged: boolean }>
   return out;
 }
 
-export function LatencyChart({ points, rangeSec, bucketSec, height = 260, onPointClick }: { points: SeriesPoint[]; rangeSec: number; bucketSec: number | null; height?: number; onPointClick?: (runId: number) => void }) {
+export const LatencyChart = memo(function LatencyChart({ points, rangeSec, bucketSec, height = 260, onPointClick }: { points: SeriesPoint[]; rangeSec: number; bucketSec: number | null; height?: number; onPointClick?: (runId: number) => void }) {
   const rows = useMemo(() => toRows(points), [points]);
   const domain = useDomain(rows, rangeSec);
   if (!rows.length) return <Empty height={height} />;
@@ -153,7 +153,7 @@ export function LatencyChart({ points, rangeSec, bucketSec, height = 260, onPoin
           </linearGradient>
         </defs>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-        <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={48} />
+        <XAxis dataKey="t" type="number" domain={domain} scale="time" ticks={timeTicks(domain, width - LATENCY_PLOT_INSET)} tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={4} />
         <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
         <Tooltip content={<TooltipBox rangeSec={rangeSec} bucketSec={bucketSec} />} cursor={{ stroke: "var(--border-strong)" }} isAnimationActive={false} />
         {thinRouteChanges(rows, domain, width - LATENCY_PLOT_INSET).map((r) => (
@@ -165,9 +165,9 @@ export function LatencyChart({ points, rangeSec, bucketSec, height = 260, onPoin
       )}
     </Sized>
   );
-}
+});
 
-export function LossChart({ points, rangeSec, bucketSec, height = 120 }: { points: SeriesPoint[]; rangeSec: number; bucketSec: number | null; height?: number }) {
+export const LossChart = memo(function LossChart({ points, rangeSec, bucketSec, height = 120 }: { points: SeriesPoint[]; rangeSec: number; bucketSec: number | null; height?: number }) {
   const rows = useMemo(() => toRows(points), [points]);
   const domain = useDomain(rows, rangeSec);
   if (!rows.length) return <Empty height={height} />;
@@ -177,7 +177,7 @@ export function LossChart({ points, rangeSec, bucketSec, height = 120 }: { point
       {(width) => (
       <ComposedChart width={width} height={height} data={rows} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-        <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={48} />
+        <XAxis dataKey="t" type="number" domain={domain} scale="time" ticks={timeTicks(domain, width - LATENCY_PLOT_INSET)} tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={4} />
         <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={44} domain={[0, 100]} ticks={[0, 50, 100]} tickFormatter={(v: number) => `${v}%`} />
         <Tooltip content={<TooltipBox rangeSec={rangeSec} bucketSec={bucketSec} />} cursor={{ fill: "var(--surface-2)" }} isAnimationActive={false} />
         <Bar dataKey="maxLoss" barSize={barSize} isAnimationActive={false} minPointSize={1}>
@@ -189,9 +189,9 @@ export function LossChart({ points, rangeSec, bucketSec, height = 120 }: { point
       )}
     </Sized>
   );
-}
+});
 
-export function JitterChart({ points, rangeSec, bucketSec, height = 120 }: { points: SeriesPoint[]; rangeSec: number; bucketSec: number | null; height?: number }) {
+export const JitterChart = memo(function JitterChart({ points, rangeSec, bucketSec, height = 120 }: { points: SeriesPoint[]; rangeSec: number; bucketSec: number | null; height?: number }) {
   const rows = useMemo(() => toRows(points), [points]);
   const domain = useDomain(rows, rangeSec);
   if (!rows.length) return <Empty height={height} />;
@@ -200,7 +200,7 @@ export function JitterChart({ points, rangeSec, bucketSec, height = 120 }: { poi
       {(width) => (
       <ComposedChart width={width} height={height} data={rows} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-        <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={48} />
+        <XAxis dataKey="t" type="number" domain={domain} scale="time" ticks={timeTicks(domain, width - LATENCY_PLOT_INSET)} tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={4} />
         <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
         <Tooltip content={<TooltipBox rangeSec={rangeSec} bucketSec={bucketSec} />} cursor={{ stroke: "var(--border-strong)" }} isAnimationActive={false} />
         <Line type="monotone" dataKey="jitter" stroke="var(--chart-jitter)" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
@@ -208,7 +208,7 @@ export function JitterChart({ points, rangeSec, bucketSec, height = 120 }: { poi
       )}
     </Sized>
   );
-}
+});
 
 function Empty({ height }: { height: number }) {
   return (

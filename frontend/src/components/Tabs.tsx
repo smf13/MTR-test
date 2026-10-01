@@ -1,7 +1,9 @@
 import { useId, useRef } from "react";
+import { useSnappyChoice } from "../hooks";
 
 /** Arrow-key navigation with native buttons, also usable on touch screens. */
-export function Tabs<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: string }[]; onChange: (value: T) => void }) {
+export function Tabs<T extends string>({ label, value: current, options, onChange: change }: { label: string; value: T; options: { value: T; label: string }[]; onChange: (value: T) => void }) {
+  const [value, onChange] = useSnappyChoice(current, change);
   const ref = useRef<HTMLDivElement>(null);
   const id = useId();
   return <div ref={ref} role="tablist" aria-label={label} className="flex overflow-x-auto border-b border-border" onKeyDown={(e) => {

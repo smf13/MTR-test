@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Play, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays, Trash2 } from "lucide-react";
-import { api, cloneInput, type Target, type TargetInput, type Run, type HistoryDeleted } from "../api";
+import { api, cloneInput, type Target, type TargetInput, type Run, type HistoryDeleted, type SeriesPoint } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { MutedBadge, TargetActions } from "../components/TargetActions";
 import { Tabs } from "../components/Tabs";
@@ -32,6 +32,7 @@ import { PROBE_TYPE_LABEL } from "../api";
 
 type Tab = "path" | "history" | "summary" | "runs" | "events";
 const RUN_PAGE = 25;
+const NO_POINTS: SeriesPoint[] = [];
 
 export function TargetDetail() {
   const { id } = useParams();
@@ -61,6 +62,11 @@ export function TargetDetail() {
   const series = usePoll(() => api.series(targetId, range), pollMs, [targetId, range]);
   // The chart memory never hides route changes silently: the count and a link to the setting go under the caption.
   const hiddenRoutes = series.data?.route_changes.hidden ?? 0;
+  // Stable props, so the memoised charts skip a re-render that changes nothing they draw.
+  const points = series.data?.points ?? NO_POINTS;
+  const seriesRange = series.data?.range_sec ?? 86400;
+  const seriesBucket = series.data?.bucket_sec ?? null;
+  const openRun = useCallback((rid: number) => navigate(`/runs/${rid}`), [navigate]);
   const routeMemoryRuns = series.data?.route_changes.memory ?? 0;
   const latest = usePoll(async () => {
     const r = await api.runs(targetId, { limit: 1 });
@@ -74,6 +80,10 @@ export function TargetDetail() {
   const history = usePoll(() => api.hopHistory(targetId, range), pollMs, [targetId, range], pathTarget && shownTab === "history");
   // The summary also feeds the path profile's "Avg" view above the tabs.
   const summary = usePoll(() => api.hopSummary(targetId, range), pollMs, [targetId, range], pathTarget && (shownTab === "summary" || profileSource === "range"));
+  const profileRows = useMemo(
+    () => (profileSource === "latest" ? (latest.data ? profileFromHops(latest.data.hops) : []) : summary.data ? profileFromSummary(summary.data) : []),
+    [profileSource, latest.data, summary.data],
+  );
   const runs = usePoll(() => api.runs(targetId, { limit: RUN_PAGE, offset: runPage * RUN_PAGE, range, status: runFilter || undefined }), pollMs, [targetId, range, runFilter, runPage], shownTab === "runs");
   const events = usePoll(() => api.targetEvents(targetId, range), pollMs, [targetId, range]);
   const routes = usePoll(() => api.routes(targetId, range), pollMs, [targetId, range]);
@@ -306,22 +316,22 @@ export function TargetDetail() {
           </div>
           <div className="flex flex-wrap items-center gap-2"><Legend /><HelpTip label="latency chart">The line is average latency; the band spans best to worst. Dashed lines mark route changes; a change back to a route seen among the recent runs (the chart route memory) is not marked, and the caption says how many were hidden. Select a point to open its run.</HelpTip></div>
         </div>
-        <LatencyChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} onPointClick={(rid) => navigate(`/runs/${rid}`)} />
+        <LatencyChart points={points} rangeSec={seriesRange} bucketSec={seriesBucket} onPointClick={openRun} />
         {pathProbe && (
           <div className="mt-2 pl-16 pr-3">
             <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-muted"><Waypoints size={13} /> Route in use{routes.data ? ` · ${routes.data.routes.length} distinct path${routes.data.routes.length === 1 ? "" : "s"}` : ""}</div>
-            {routes.data ? <RouteTimeline routes={routes.data} onOpenRun={(rid) => navigate(`/runs/${rid}`)} /> : <div className="h-4" />}
+            {routes.data ? <RouteTimeline routes={routes.data} onOpenRun={openRun} /> : <div className="h-4" />}
           </div>
         )}
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
           <div>
             <h3 className="mb-1 text-xs font-semibold text-muted">{isPacketProbe(t.type, t.options) ? "Packet loss to destination" : "Failed checks (bar = check failed)"}</h3>
-            <LossChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} />
+            <LossChart points={points} rangeSec={seriesRange} bucketSec={seriesBucket} />
           </div>
           {singleSample ? null : (
             <div>
               <h3 className="mb-1 text-xs font-semibold text-muted">Jitter (average inter-probe variation)</h3>
-              <JitterChart points={series.data?.points ?? []} rangeSec={series.data?.range_sec ?? 86400} bucketSec={series.data?.bucket_sec ?? null} />
+              <JitterChart points={points} rangeSec={seriesRange} bucketSec={seriesBucket} />
             </div>
           )}
         </div>
@@ -337,7 +347,7 @@ export function TargetDetail() {
               </div>
               <Segmented value={profileSource} onChange={setProfileSource} options={[{ value: "latest", label: "Latest run" }, { value: "range", label: `Avg · ${range}` }]} />
             </div>
-            <PathProfileChart rows={profileSource === "latest" ? (latestRun ? profileFromHops(latestRun.hops) : []) : summary.data ? profileFromSummary(summary.data) : []} />
+            <PathProfileChart rows={profileRows} />
           </div>
         ) : (
           <div className="card p-4">
@@ -355,7 +365,7 @@ export function TargetDetail() {
             <h2 className="chart-heading"><BarChart3 size={15} /> Latency distribution · {range}<HelpTip label="latency distribution">Each bar counts samples in a latency interval. Percentile markers show p50, p95, and p99. A long tail indicates occasional slower samples.</HelpTip></h2>
             <p className="chart-caption">{series.data?.bucket_sec ? `Distribution of ${fmtDuration(series.data.bucket_sec)} averages` : "Distribution of reachable runs"}</p>
           </div>
-          <LatencyHistogram points={series.data?.points ?? []} />
+          <LatencyHistogram points={points} />
         </div>
       </div>
 
@@ -414,7 +424,7 @@ export function TargetDetail() {
               </div>
             </div>
             {history.data ? (
-              <HopHeatmap history={history.data} metric={heatMetric} rangeSec={series.data?.range_sec ?? 86400} onSelectRun={(rid) => navigate(`/runs/${rid}`)} />
+              <HopHeatmap history={history.data} metric={heatMetric} rangeSec={seriesRange} onSelectRun={openRun} />
             ) : history.error ? (
               <ErrorBanner message={`Could not load path history: ${history.error}`} />
             ) : (

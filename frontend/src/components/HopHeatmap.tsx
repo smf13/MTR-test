@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { HopHistory } from "../api";
 import { fmtNum, fmtTime, latencyColor, lossColor } from "../utils";
 
@@ -8,7 +8,7 @@ export type HeatMetric = "loss" | "avg" | "jitter";
  * Hop-by-run heatmap: each column is one MTR run, each row one hop.
  * Colour encodes loss %, average latency or jitter for that hop in that run.
  */
-export function HopHeatmap({ history, metric, rangeSec, onSelectRun }: { history: HopHistory; metric: HeatMetric; rangeSec: number; onSelectRun?: (runId: number) => void }) {
+export const HopHeatmap = memo(function HopHeatmap({ history, metric, rangeSec, onSelectRun }: { history: HopHistory; metric: HeatMetric; rangeSec: number; onSelectRun?: (runId: number) => void }) {
   const [hover, setHover] = useState<{ x: number; y: number; runIdx: number; hop: number } | null>(null);
   const runs = history.runs;
   const rowsCount = history.max_hops;
@@ -122,7 +122,7 @@ export function HopHeatmap({ history, metric, rangeSec, onSelectRun }: { history
       </div>
     </div>
   );
-}
+});
 
 export function HeatLegend({ metric, max = 1 }: { metric: HeatMetric; max?: number }) {
   const stops = metric === "loss" ? [0, 2, 10, 40, 100] : [0, 0.25, 0.5, 0.75, 1].map((r) => r * max);

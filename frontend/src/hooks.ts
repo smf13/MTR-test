@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState, useTransition } from "react";
 
 export interface PollState<T> {
   data: T | null;
@@ -26,6 +26,9 @@ export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, deps: 
   // discarded, and a request still in flight for the old parameters is never reused for the new ones
   // (which used to leave the previous target's or range's data on screen until the next tick).
   const generation = useRef(0);
+  // The JSON of the data on screen: a poll that brings back the same answer skips the re-render, which on the
+  // target page used to redraw every chart every ten seconds and made taps in between feel stuck.
+  const shownJson = useRef<string | null>(null);
   const inflight = useRef<{ generation: number; promise: Promise<void> } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -36,7 +39,17 @@ export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, deps: 
       try {
         const result = await fetcherRef.current();
         if (gen !== generation.current) return;
-        setData(result);
+        let json: string | null = null;
+        try {
+          json = JSON.stringify(result);
+        } catch {
+          json = null;
+        }
+        if (json === null || json !== shownJson.current) {
+          shownJson.current = json;
+          // A transition: drawing the new data yields to taps and typing instead of blocking them.
+          startTransition(() => setData(result));
+        }
         setError(null);
         setLastUpdated(Date.now());
       } catch (e) {
@@ -54,6 +67,7 @@ export function usePoll<T>(fetcher: () => Promise<T>, intervalMs: number, deps: 
   useEffect(() => {
     generation.current += 1;
     inflight.current = null;
+    shownJson.current = null;
     if (!enabled) return;
     setLoading(true);
     void refresh();
@@ -143,4 +157,22 @@ export function useTheme(): [Theme, (t: Theme) => void, () => void] {
   // Cycle dark -> oled -> light -> dark (used by the compact mobile button).
   const cycle = useCallback(() => setTheme((t) => THEMES[(THEMES.findIndex((x) => x.value === t) + 1) % THEMES.length].value), []);
   return [theme, setTheme, cycle];
+}
+
+/**
+ * A choice (range, tab, segment) that lights up on the tap itself: the highlight is local state, and the change it
+ * causes, often a page full of charts, is rendered as a transition the browser can paint and interrupt.
+ */
+export function useSnappyChoice<T>(value: T, onChange: (value: T) => void): [T, (value: T) => void] {
+  const [shown, setShown] = useState(value);
+  const [, startChoice] = useTransition();
+  useEffect(() => setShown(value), [value]);
+  const choose = useCallback(
+    (next: T) => {
+      setShown(next);
+      startChoice(() => onChange(next));
+    },
+    [onChange],
+  );
+  return [shown, choose];
 }

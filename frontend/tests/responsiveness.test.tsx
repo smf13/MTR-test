@@ -6,6 +6,8 @@ import { api, type RunDetail, type Target, type TargetInput } from "../src/api";
 import { TargetDetail } from "../src/pages/TargetDetail";
 import { TargetForm } from "../src/components/TargetForm";
 import { CheckDetails } from "../src/components/CheckDetails";
+import { RangePicker } from "../src/components/RangePicker";
+import { timeTicks } from "../src/utils";
 
 const timestamp = "2026-09-17T12:00:00Z";
 const run: RunDetail = {
@@ -140,5 +142,29 @@ describe("HTTP JSON query", () => {
     render(<CheckDetails run={httpRun} type="http" />);
     expect(screen.getByText('components[id = "x"].status')).toBeTruthy();
     expect(screen.getByTestId("json-result").textContent).toBe('"major_outage" (== operational)');
+  });
+});
+
+describe("tap responsiveness", () => {
+  it("gives a time axis a handful of round ticks instead of one per data point", () => {
+    const end = Date.UTC(2026, 9, 1, 12, 0);
+    const day = timeTicks([end - 86_400_000, end], 300);
+    expect(day.length).toBeGreaterThan(1);
+    expect(day.length).toBeLessThanOrEqual(5);
+    const step = day[1] - day[0];
+    expect(step % 3_600_000).toBe(0);
+    expect(day.every((t) => t >= end - 86_400_000 && t <= end)).toBe(true);
+    const month = timeTicks([end - 30 * 86_400_000, end], 300);
+    expect(month.length).toBeGreaterThan(1);
+    expect(month.length).toBeLessThanOrEqual(5);
+  });
+
+  it("lights up a range button on the tap and hands the change on", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<RangePicker value="24h" onChange={onChange} />);
+    await user.click(screen.getByRole("tab", { name: "7d" }));
+    expect(screen.getByRole("tab", { name: "7d" }).getAttribute("aria-selected")).toBe("true");
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith("7d"));
   });
 });

@@ -43,12 +43,46 @@ export function relTime(iso: string | null | undefined, now = Date.now()): strin
   return `${fmtDuration(diff)} ago`;
 }
 
-export function fmtTime(iso: string | null | undefined, opts: { seconds?: boolean; date?: boolean } = {}): string {
-  if (!iso) return "–";
+// toLocale*String builds a new Intl formatter on every call, which cost seconds when charts formatted thousands of labels.
+const TIME_FMT = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
+const TIME_SEC_FMT = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const DAY_FMT = new Intl.DateTimeFormat([], { month: "short", day: "numeric" });
+
+export function fmtTime(iso: string | number | null | undefined, opts: { seconds?: boolean; date?: boolean } = {}): string {
+  if (iso === null || iso === undefined || iso === "") return "–";
   const d = new Date(iso);
-  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: opts.seconds ? "2-digit" : undefined });
-  if (opts.date) return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+  const time = (opts.seconds ? TIME_SEC_FMT : TIME_FMT).format(d);
+  if (opts.date) return `${DAY_FMT.format(d)} ${time}`;
   return time;
+}
+
+/** A time-axis label: the date alone at local midnight on a multi-day axis, otherwise the time of day. */
+export function fmtAxisTime(v: number, multiDay: boolean): string {
+  const d = new Date(v);
+  if (multiDay && d.getHours() === 0 && d.getMinutes() === 0) return DAY_FMT.format(d);
+  return TIME_FMT.format(d);
+}
+
+const TICK_STEPS_MIN = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 4320, 10080, 20160];
+
+/**
+ * A few round, local-time tick positions (epoch ms) across `domain` for a time axis `plotWidth` pixels wide.
+ * Charts pass these as explicit `ticks`: without them Recharts treats every data point as a candidate tick and
+ * formats and measures thousands of labels on each render, which froze the target page for seconds on a phone.
+ */
+export function timeTicks(domain: [number, number], plotWidth: number): number[] {
+  const [start, end] = domain;
+  const span = end - start;
+  if (!(span > 0)) return [start];
+  // n labels need n - 1 gaps of about 64 px ("12:00 PM" at 12 px plus air).
+  const maxTicks = Math.max(2, Math.floor(plotWidth / 64) + 1);
+  const stepMin = TICK_STEPS_MIN.find((s) => span / (s * 60_000) <= maxTicks) ?? Math.ceil(span / 60_000 / maxTicks / 10080) * 10080;
+  const step = stepMin * 60_000;
+  // Align to the browser's local clock, so ticks land on 14:00 or midnight rather than on UTC boundaries.
+  const offset = new Date(start).getTimezoneOffset() * 60_000;
+  const ticks: number[] = [];
+  for (let t = Math.ceil((start - offset) / step) * step + offset; t <= end; t += step) ticks.push(t);
+  return ticks;
 }
 
 export function fmtDateTime(iso: string | null | undefined): string {

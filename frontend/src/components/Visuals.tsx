@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Area, Bar, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
 import type { Hop, HopSummary, HourlyBucket, OverviewSeries, Routes, SeriesPoint } from "../api";
 import { HeatLegend } from "./HopHeatmap";
 import { Sized } from "./Charts";
-import { fmtNum, fmtTime, fmtDateTime, latencyColor, lossColor, percentile, seriesColor, seriesDash, classNames } from "../utils";
+import { fmtNum, fmtTime, fmtDateTime, latencyColor, lossColor, percentile, seriesColor, seriesDash, classNames, fmtAxisTime, timeTicks } from "../utils";
 
 /* The status strip lives in StatusStrip.tsx so pages can show it without loading Recharts. */
 
@@ -11,7 +11,7 @@ import { fmtNum, fmtTime, fmtDateTime, latencyColor, lossColor, percentile, seri
 /* Multi-target latency overview                                        */
 /* ------------------------------------------------------------------ */
 
-export function OverviewChart({ data, height = 240 }: { data: OverviewSeries; height?: number }) {
+export const OverviewChart = memo(function OverviewChart({ data, height = 240 }: { data: OverviewSeries; height?: number }) {
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const targets = data.targets;
   // Colour and line pattern follow the target's position on this chart (the API lists them by name), so every
@@ -36,14 +36,14 @@ export function OverviewChart({ data, height = 240 }: { data: OverviewSeries; he
     return [Math.max(start, Math.min(first, now - 60_000)), now];
   }, [rows, data.range_sec]);
   if (!targets.length) return <div className="flex items-center justify-center text-sm text-faint" style={{ height }}>No runs yet.</div>;
-  const tick = (v: number) => fmtTime(new Date(v).toISOString(), { date: data.range_sec > 86400 });
+  const tick = (v: number) => fmtAxisTime(v, data.range_sec > 86400);
   return (
     <div>
       <Sized height={height}>
         {(width) => (
           <ComposedChart width={width} height={height} data={rows} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-            <XAxis dataKey="t" type="number" domain={domain} scale="time" tickFormatter={tick} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={48} />
+            <XAxis dataKey="t" type="number" domain={domain} scale="time" ticks={timeTicks(domain, width - 76)} tickFormatter={tick} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={4} />
             <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
             <Tooltip
               isAnimationActive={false}
@@ -87,7 +87,7 @@ export function OverviewChart({ data, height = 240 }: { data: OverviewSeries; he
       </div>
     </div>
   );
-}
+});
 
 /** A short sample of a series' line (colour and dash pattern), for legends and tooltips. */
 export function SeriesSwatch({ index }: { index: number }) {
@@ -133,7 +133,7 @@ export function profileFromSummary(summary: HopSummary): ProfileRow[] {
   }));
 }
 
-export function PathProfileChart({ rows, height = 240 }: { rows: ProfileRow[]; height?: number }) {
+export const PathProfileChart = memo(function PathProfileChart({ rows, height = 240 }: { rows: ProfileRow[]; height?: number }) {
   if (!rows.length) return <div className="flex items-center justify-center text-sm text-faint" style={{ height }}>No hop data.</div>;
   return (
     <Sized height={height}>
@@ -178,7 +178,7 @@ export function PathProfileChart({ rows, height = 240 }: { rows: ProfileRow[]; h
       )}
     </Sized>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /* Latency distribution histogram                                       */
@@ -235,7 +235,7 @@ export function layoutPercentileLabels(markers: PercentileMarker[], edges: [numb
   return rows;
 }
 
-export function LatencyHistogram({ points, height = 220, bins = 30 }: { points: SeriesPoint[]; height?: number; bins?: number }) {
+export const LatencyHistogram = memo(function LatencyHistogram({ points, height = 220, bins = 30 }: { points: SeriesPoint[]; height?: number; bins?: number }) {
   const { rows, p50, p95, p99, count, binWidth, edges } = useMemo(() => {
     const vals = points.filter((p) => p.ok && p.avg !== null).map((p) => p.avg as number);
     if (vals.length < 2) return { rows: [] as { x: number; label: string; n: number }[], p50: null, p95: null, p99: null, count: vals.length, binWidth: 0, edges: [0, 1] as [number, number] };
@@ -319,7 +319,7 @@ export function LatencyHistogram({ points, height = 220, bins = 30 }: { points: 
       </div>
     </div>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /* Day × hour heatmap                                                   */
@@ -327,7 +327,7 @@ export function LatencyHistogram({ points, height = 220, bins = 30 }: { points: 
 
 export type HourlyMetric = "avg" | "loss" | "jitter";
 
-export function HourlyHeatmap({ hours, metric }: { hours: HourlyBucket[]; metric: HourlyMetric }) {
+export const HourlyHeatmap = memo(function HourlyHeatmap({ hours, metric }: { hours: HourlyBucket[]; metric: HourlyMetric }) {
   const [hover, setHover] = useState<{ x: number; y: number; b: HourlyBucket } | null>(null);
   const { days, grid, max } = useMemo(() => {
     const grid = new Map<string, (HourlyBucket | null)[]>();
@@ -399,7 +399,7 @@ export function HourlyHeatmap({ hours, metric }: { hours: HourlyBucket[]; metric
       </div>
     </div>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /* Route timeline                                                       */
@@ -411,7 +411,7 @@ export function routeLabel(i: number): string {
   return i < ROUTE_LETTERS.length ? ROUTE_LETTERS[i] : `R${i + 1}`;
 }
 
-export function RouteTimeline({ routes, onOpenRun }: { routes: Routes; onOpenRun?: (runId: number) => void }) {
+export const RouteTimeline = memo(function RouteTimeline({ routes, onOpenRun }: { routes: Routes; onOpenRun?: (runId: number) => void }) {
   const [hover, setHover] = useState<number | null>(null);
   if (!routes.segments.length) return <div className="py-4 text-center text-xs text-faint">No completed runs in this range.</div>;
   const end = Date.now();
@@ -453,4 +453,4 @@ export function RouteTimeline({ routes, onOpenRun }: { routes: Routes; onOpenRun
       </div>
     </div>
   );
-}
+});
