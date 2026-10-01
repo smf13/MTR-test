@@ -321,6 +321,8 @@ export interface Target {
   options: ProbeOptions;
   description: string;
   tags: string[];
+  /** Dashboard group (a collapsible section); "" = ungrouped. */
+  group_name: string;
   interval_sec: number;
   count: number;
   probe_interval: number;
@@ -366,6 +368,7 @@ export function targetInput(t: Target): TargetInput {
     options: { ...(t.options || {}) },
     description: t.description,
     tags: [...t.tags],
+    group_name: t.group_name ?? "",
     interval_sec: t.interval_sec,
     count: t.count,
     probe_interval: t.probe_interval,

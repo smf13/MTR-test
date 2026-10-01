@@ -206,6 +206,9 @@ body {
 .seg button:not([data-active="true"]):hover { color: var(--text); }
 
 .icon-button { @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-text; }
+.group-header { @apply min-h-10 transition-colors; }
+.group-header:hover { background: var(--surface-2); }
+.table tr.group-row > td { background: var(--bg-elev); }
 .popover { @apply fixed z-[80] max-w-[calc(100vw-16px)] max-h-[calc(100dvh-16px)] overflow-y-auto rounded-xl border border-border-strong bg-surface shadow-lg; }
 .menu-item { @apply flex min-h-10 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm hover:bg-surface-2; }
 .chart-heading { @apply flex items-center gap-2 text-sm font-semibold; }

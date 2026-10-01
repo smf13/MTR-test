@@ -29,7 +29,7 @@ const run: RunDetail = {
 };
 const target: Target = {
   id: 1, name: "Office WAN", host: "192.0.2.1", type: "mtr", options: {}, description: "",
-  tags: ["wan"], interval_sec: 60, count: 10, probe_interval: 1, protocol: "icmp", port: null,
+  tags: ["wan"], group_name: "", interval_sec: 60, count: 10, probe_interval: 1, protocol: "icmp", port: null,
   packet_size: 64, ip_version: "auto", max_hops: 30, enabled: true, notify: true, alert_loss_pct: 5,
   alert_latency_ms: 200, created_at: timestamp, updated_at: timestamp, next_run_at: null,
   last_status: "up", latest_run: run, stats_24h: { runs: 1, availability_pct: 100, avg_ms: 12, loss_pct: 0, route_changes: 0 },
@@ -290,6 +290,54 @@ describe("dashboard", () => {
     await screen.findByRole("article", { name: "Target 1" });
     expect(screen.getByText("Mean latency").parentElement?.parentElement?.textContent).toContain("44.0 ms");
     expect(screen.getByText("Median latency").parentElement?.parentElement?.textContent).toContain("20.0 ms");
+  });
+
+  it("puts grouped targets in collapsible sections that remember their state", async () => {
+    const user = userEvent.setup();
+    const member = (id: number, name: string, group_name: string, last_status: Target["last_status"] = "up"): Target => ({ ...target, id, name, group_name, last_status });
+    vi.spyOn(api, "targets").mockResolvedValue([member(1, "Branch A", "branches"), member(2, "Branch B", "branches", "down"), member(3, "Core", "Datacentre"), member(4, "Loose", "")]);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("article", { name: "Branch A" });
+    const headers = screen.getAllByRole("button", { expanded: true }).filter((b) => b.classList.contains("group-header"));
+    // Case-insensitive order, ungrouped targets last.
+    expect(headers.map((h) => h.textContent)).toEqual([expect.stringMatching(/^branches2/), expect.stringMatching(/^Datacentre1/), expect.stringMatching(/^Ungrouped1/)]);
+    expect(within(headers[0]).getByTestId("group-summary").textContent).toBe("1 down1 up");
+    await user.click(headers[0]);
+    expect(headers[0].getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("article", { name: "Branch A" })).toBeNull();
+    expect(screen.getByRole("article", { name: "Core" })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem("mtr-tracker.collapsed-groups")!)).toEqual(["branches"]);
+    // A filter shows matches inside collapsed groups, and matches the group name too.
+    await user.type(screen.getByRole("textbox", { name: "Filter targets" }), "branch");
+    expect(screen.getByRole("article", { name: "Branch B" })).toBeTruthy();
+    expect(screen.queryByRole("article", { name: "Core" })).toBeNull();
+    await user.clear(screen.getByRole("textbox", { name: "Filter targets" }));
+    await user.click(screen.getByRole("button", { name: "Collapse all" }));
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Expand all" }));
+    expect(screen.getAllByRole("article")).toHaveLength(4);
+  });
+
+  it("groups the table view under the same headings", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("mtr-tracker.view", JSON.stringify("table"));
+    vi.spyOn(api, "targets").mockResolvedValue([{ ...target, id: 1, name: "Branch A", group_name: "Branches" }, { ...target, id: 2, name: "Loose", group_name: "" }]);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("link", { name: "Branch A" });
+    await user.click(screen.getByRole("button", { name: /^Branches/ }));
+    expect(screen.queryByRole("link", { name: "Branch A" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Loose" })).toBeTruthy();
+  });
+
+  it("shows the plain list while no target has a group", async () => {
+    vi.spyOn(api, "targets").mockResolvedValue([target]);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("article", { name: "Office WAN" });
+    expect(screen.queryByRole("button", { name: "Collapse all" })).toBeNull();
+    expect(document.querySelector(".group-header")).toBeNull();
   });
 
   it("keeps clone prefill and filtering working with the new card controls", async () => {

@@ -259,6 +259,11 @@ def sort_tags(tags: list[str]) -> list[str]:
     return sorted(tags, key=lambda t: (t.casefold(), t))
 
 
+def _clean_group_value(v: str) -> str:
+    """One line, single spaces, at most 60 characters; '' means ungrouped."""
+    return " ".join(v.split())[:60]
+
+
 def _clean_tags_value(v: list[str]) -> list[str]:
     cleaned: list[str] = []
     for tag in v:
@@ -299,6 +304,11 @@ class _TargetValidators(BaseModel):
     def _clean_tags(cls, v: list[str] | None) -> list[str] | None:
         return None if v is None else _clean_tags_value(v)
 
+    @field_validator("group_name", check_fields=False)
+    @classmethod
+    def _clean_group(cls, v: str | None) -> str | None:
+        return None if v is None else _clean_group_value(v)
+
 
 class TargetBase(_TargetValidators):
     name: str = Field(min_length=1, max_length=120)
@@ -307,6 +317,7 @@ class TargetBase(_TargetValidators):
     options: dict[str, Any] = Field(default_factory=dict)
     description: str = Field(default="", max_length=2000)
     tags: list[str] = Field(default_factory=list)
+    group_name: str = Field(default="", max_length=200, description="dashboard group; empty = ungrouped")
     interval_sec: int = Field(default=300, ge=10, le=86400, description="Seconds between MTR runs")
     count: int = Field(default=10, ge=1, le=200, description="Probes per hop per run")
     probe_interval: float = Field(default=1.0, ge=0.1, le=10.0, description="Seconds between probes")
@@ -343,6 +354,7 @@ class TargetUpdate(_TargetValidators):
     options: dict[str, Any] | None = None
     description: str | None = None
     tags: list[str] | None = None
+    group_name: str | None = Field(default=None, max_length=200)
     interval_sec: int | None = Field(default=None, ge=10, le=86400)
     count: int | None = Field(default=None, ge=1, le=200)
     probe_interval: float | None = Field(default=None, ge=0.1, le=10.0)

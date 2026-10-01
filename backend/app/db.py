@@ -31,7 +31,7 @@ log = logging.getLogger("mtr-tracker.db")
 IntegrityError = asyncpg.IntegrityConstraintViolationError
 Row = asyncpg.Record
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Matches the credentials of the bundled docker-compose service; a server elsewhere is named in MTR_TRACKER_DATABASE_URL.
 DEFAULT_DATABASE_URL = "postgresql://mtr:mtr@127.0.0.1:5432/mtr_tracker"
@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS targets (
     options TEXT NOT NULL DEFAULT '{}',
     description TEXT NOT NULL DEFAULT '',
     tags TEXT NOT NULL DEFAULT '[]',
+    group_name TEXT NOT NULL DEFAULT '',
     interval_sec INTEGER NOT NULL DEFAULT 300,
     count INTEGER NOT NULL DEFAULT 10,
     probe_interval DOUBLE PRECISION NOT NULL DEFAULT 1.0,
@@ -152,7 +153,14 @@ INDEXES: dict[str, str] = {
     "idx_events_run": "CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id)",
 }
 
-SCHEMA = TABLES + "\n" + ";\n".join(INDEXES.values()) + ";\n"
+# Columns added after a release: CREATE TABLE IF NOT EXISTS leaves an existing table as it was, so each new column is
+# also added here (idempotent) for databases created before it.
+COLUMN_UPGRADES = (
+    # Schema 5: the dashboard group a target belongs to; '' = ungrouped.
+    "ALTER TABLE targets ADD COLUMN IF NOT EXISTS group_name TEXT NOT NULL DEFAULT ''",
+)
+
+SCHEMA = TABLES + "\n" + ";\n".join((*COLUMN_UPGRADES, *INDEXES.values())) + ";\n"
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "retention_days": 30,

@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Plus, Search, Play, Clock, GitBranch, Activity, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, LineChart } from "lucide-react";
+import { Plus, Search, Play, Clock, GitBranch, Activity, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, ChevronRight, LineChart, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 import { api, cloneInput, type Target, type TargetInput } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { MutedBadge, TargetActions } from "../components/TargetActions";
@@ -19,6 +19,7 @@ import { useToast } from "../components/Toast";
 
 // Recharts only loads when the overview chart is actually shown.
 const OverviewChart = lazy(() => import("../components/Visuals").then((m) => ({ default: m.OverviewChart })));
+import type { Status } from "../api";
 import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe, isPacketProbe, latencyLabel, percentile } from "../utils";
 
 type SortKey = "name" | "status" | "latency" | "loss" | "hops";
@@ -58,7 +59,7 @@ export function Dashboard() {
   const list = useMemo(() => {
     const q = query.trim().toLowerCase();
     let items = targets.data ?? [];
-    if (q) items = items.filter((t) => [t.name, t.host, t.description, ...t.tags].some((s) => s.toLowerCase().includes(q)));
+    if (q) items = items.filter((t) => [t.name, t.host, t.description, t.group_name ?? "", ...t.tags].some((s) => s.toLowerCase().includes(q)));
     const sorted = [...items];
     sorted.sort((a, b) => {
       switch (sort) {
@@ -76,6 +77,23 @@ export function Dashboard() {
     });
     return sorted;
   }, [targets.data, query, sort]);
+
+  // Groups: one collapsible section per group name (case-insensitive order), ungrouped targets last. Without any
+  // group the dashboard shows the plain list as before.
+  const [collapsed, setCollapsed] = useLocalStorage<string[]>("mtr-tracker.collapsed-groups", []);
+  const groupNames = useMemo(() => {
+    const names = new Set((targets.data ?? []).map((t) => t.group_name ?? "").filter(Boolean));
+    return [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }) || a.localeCompare(b));
+  }, [targets.data]);
+  const sections = useMemo<Section[]>(() => {
+    if (!groupNames.length) return [{ name: null, items: list }];
+    return [...groupNames, ""].map((name) => ({ name, items: list.filter((t) => (t.group_name ?? "") === name) })).filter((sec) => sec.items.length > 0);
+  }, [groupNames, list]);
+  // A filter shows its matches even inside collapsed groups.
+  const filtering = query.trim() !== "";
+  const isOpen = (name: string | null) => name === null || filtering || !collapsed.includes(name);
+  const toggleGroup = (name: string) => setCollapsed(collapsed.includes(name) ? collapsed.filter((n) => n !== name) : [...collapsed, name]);
+  const allCollapsed = groupNames.length > 0 && [...groupNames, ""].every((n) => collapsed.includes(n));
 
   const counts = useMemo(() => {
     const c = { up: 0, degraded: 0, down: 0, paused: 0, pending: 0 };
@@ -238,7 +256,12 @@ export function Dashboard() {
             <option value="status">Status</option><option value="name">Name</option><option value="latency">Latency</option><option value="loss">Loss</option><option value="hops">Hops</option>
           </select>
         </label>
-        <div className="sm:ml-auto">
+        <div className="flex items-center gap-2 sm:ml-auto">
+        {groupNames.length > 0 && (
+          <button className="btn btn-sm" onClick={() => setCollapsed(allCollapsed ? [] : [...groupNames, ""])} title={allCollapsed ? "Expand every group" : "Collapse every group"}>
+            {allCollapsed ? <><ChevronsUpDown size={14} /> Expand all</> : <><ChevronsDownUp size={14} /> Collapse all</>}
+          </button>
+        )}
         <Segmented<View>
           value={view}
           onChange={setView}
@@ -268,18 +291,32 @@ export function Dashboard() {
       {total > 0 && !list.length && <div className="card"><EmptyState title="No matching targets" body="Try a different name, host, or tag." action={<button className="btn" onClick={() => setQuery("")}>Clear filter</button>} /></div>}
 
       {view === "cards" ? (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
-          {list.map((t) => (
-            <TargetCard key={t.id} t={t} now={now} onEdit={() => { setEditing(t); setFormOpen(true); }} onClone={() => clone(t)} onDelete={() => setDeleting(t)} onToggle={() => toggle(t)} onToggleNotify={() => toggleNotify(t)} onRun={() => runNow(t)} />
-          ))}
+        <div className="space-y-5">
+          {sections.map((sec) => {
+            const grid = (
+              <div id={sec.name !== null ? groupPanelId(sec.name) : undefined} className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                {sec.items.map((t) => (
+                  <TargetCard key={t.id} t={t} now={now} onEdit={() => { setEditing(t); setFormOpen(true); }} onClone={() => clone(t)} onDelete={() => setDeleting(t)} onToggle={() => toggle(t)} onToggleNotify={() => toggleNotify(t)} onRun={() => runNow(t)} />
+                ))}
+              </div>
+            );
+            if (sec.name === null) return <div key="all">{grid}</div>;
+            const open = isOpen(sec.name);
+            return (
+              <section key={sec.name} aria-label={groupLabel(sec.name)} className="space-y-3">
+                <GroupHeader name={sec.name} items={sec.items} open={open} forced={filtering} onToggle={() => toggleGroup(sec.name!)} />
+                {open && grid}
+              </section>
+            );
+          })}
         </div>
       ) : (
         <div className="card overflow-hidden">
-          <TargetTable list={list} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onToggleNotify={toggleNotify} onRun={runNow} />
+          <TargetTable sections={sections} isOpen={isOpen} forced={filtering} onToggleGroup={toggleGroup} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onToggleNotify={toggleNotify} onRun={runNow} />
         </div>
       )}
 
-      <TargetForm open={formOpen} initial={editing} prefill={prefill} title={formTitle} submitLabel={formTitle ? "Create clone" : undefined} onClose={closeForm} onSubmit={submit} submitting={saving} />
+      <TargetForm groups={groupNames} open={formOpen} initial={editing} prefill={prefill} title={formTitle} submitLabel={formTitle ? "Create clone" : undefined} onClose={closeForm} onSubmit={submit} submitting={saving} />
       <ConfirmDialog
         open={!!deleting}
         title={`Delete ${deleting?.name ?? ""}?`}
@@ -290,6 +327,48 @@ export function Dashboard() {
         onCancel={() => setDeleting(null)}
       />
     </div>
+  );
+}
+
+/** A run of targets under one heading; `name` null means the plain, ungrouped list (no group exists at all). */
+interface Section {
+  name: string | null;
+  items: Target[];
+}
+
+const groupLabel = (name: string) => name || "Ungrouped";
+const groupPanelId = (name: string) => `group-${encodeURIComponent(name || "-ungrouped").replace(/%/g, "_")}`;
+const SUMMARY_ORDER: Status[] = ["down", "degraded", "pending", "up", "paused"];
+
+/** The heading of a group: a toggle with the name, the number of targets and how many of them are in each state. */
+function GroupHeader({ name, items, open, forced, onToggle }: { name: string; items: Target[]; open: boolean; forced: boolean; onToggle: () => void }) {
+  const tally = new Map<Status, number>();
+  items.forEach((t) => tally.set(effectiveStatus(t), (tally.get(effectiveStatus(t)) ?? 0) + 1));
+  const worst = SUMMARY_ORDER.find((st) => tally.get(st) && st !== "paused" && st !== "pending") ?? (tally.get("pending") ? "pending" : "paused");
+  return (
+    <button
+      type="button"
+      className="group-header flex w-full min-w-0 items-center gap-2 rounded-lg px-1 py-1.5 text-left"
+      aria-expanded={open}
+      aria-controls={open ? groupPanelId(name) : undefined}
+      onClick={onToggle}
+      title={forced ? "Showing matches of the filter" : open ? "Collapse group" : "Expand group"}
+    >
+      <ChevronRight size={16} className={classNames("shrink-0 text-muted transition-transform", open && "rotate-90")} />
+      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: statusColor(worst) }} aria-hidden />
+      <span className={classNames("truncate text-sm font-semibold", !name && "text-muted")}>{groupLabel(name)}</span>
+      <span className="shrink-0 text-xs text-faint">{items.length}</span>
+      <span className="ml-auto flex shrink-0 items-center gap-2 text-xs sm:gap-2.5" data-testid="group-summary">
+        {SUMMARY_ORDER.filter((st) => tally.get(st)).map((st) => (
+          <span key={st} className="inline-flex items-center gap-1" title={`${tally.get(st)} ${st}`} style={{ color: st === "up" || st === "paused" || st === "pending" ? "var(--text-muted)" : statusColor(st) }}>
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: statusColor(st) }} aria-hidden />
+            {tally.get(st)}
+            {/* Phones keep the coloured dot and the count; the word stays for screen readers. */}
+            <span className="sr-only sm:not-sr-only"> {st}</span>
+          </span>
+        ))}
+      </span>
+    </button>
   );
 }
 
@@ -404,7 +483,9 @@ export function IconBtn({ title, onClick, children, danger }: { title: string; o
   );
 }
 
-function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { list: Target[]; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onToggleNotify: (t: Target) => void; onRun: (t: Target) => void }) {
+const TABLE_COLUMNS = 14;
+
+function TargetTable({ sections, isOpen, forced, onToggleGroup, now, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { sections: Section[]; isOpen: (name: string | null) => boolean; forced: boolean; onToggleGroup: (name: string) => void; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onToggleNotify: (t: Target) => void; onRun: (t: Target) => void }) {
   return (
     <div className="overflow-x-auto">
       <table className="table num">
@@ -426,8 +507,18 @@ function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onToggleN
             <th />
           </tr>
         </thead>
-        <tbody>
-          {list.map((t) => {
+        {sections.map((sec) => (
+        <tbody key={sec.name ?? "all"} id={sec.name !== null && isOpen(sec.name) ? groupPanelId(sec.name) : undefined}>
+          {sec.name !== null && (
+            <tr className="group-row">
+              <td colSpan={TABLE_COLUMNS} className="font-sans">
+                <div className="sticky left-0 w-[min(100%,calc(100vw-4rem))]">
+                  <GroupHeader name={sec.name} items={sec.items} open={isOpen(sec.name)} forced={forced} onToggle={() => onToggleGroup(sec.name!)} />
+                </div>
+              </td>
+            </tr>
+          )}
+          {isOpen(sec.name) && sec.items.map((t) => {
             const status = effectiveStatus(t);
             const run = t.latest_run;
             return (
@@ -460,6 +551,7 @@ function TargetTable({ list, now, onEdit, onClone, onDelete, onToggle, onToggleN
             );
           })}
         </tbody>
+        ))}
       </table>
     </div>
   );

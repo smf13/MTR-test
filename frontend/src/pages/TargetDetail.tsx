@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Play, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays, Trash2 } from "lucide-react";
+import { ArrowLeft, Play, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays, Trash2, Folder } from "lucide-react";
 import { api, cloneInput, type Target, type TargetInput, type Run, type HistoryDeleted, type SeriesPoint } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { MutedBadge, TargetActions } from "../components/TargetActions";
@@ -89,6 +89,9 @@ export function TargetDetail() {
   const routes = usePoll(() => api.routes(targetId, range), pollMs, [targetId, range]);
   const hourly = usePoll(() => api.hourly(targetId, range), Math.max(pollMs, 60000), [targetId, range]);
   const geo = usePoll(() => api.geo(targetId), pollMs, [targetId]);
+  // The other targets' group names, for the Group field's suggestions; fetched only while the form is open.
+  const others = usePoll(() => api.targets(), 60000, [], editing || cloning);
+  const groupNames = useMemo(() => [...new Set((others.data ?? []).map((o) => o.group_name ?? "").filter(Boolean))].sort((a, b) => a.localeCompare(b)), [others.data]);
 
   useEffect(() => setRunPage(0), [range, runFilter]);
   useEffect(() => setSelectedRuns(new Set()), [targetId, range, runFilter, runPage]);
@@ -243,6 +246,7 @@ export function TargetDetail() {
             {!t.notify && <MutedBadge />}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
+            {t.group_name && <span className="inline-flex items-center gap-1" title="Group"><Folder size={12} /> {t.group_name}</span>}
             <TypeBadge type={t.type} />
             <span className="font-mono break-all">{t.type === "http" ? t.host : hostLabel(t.host)}</span>
             {run?.dst_ip && run.dst_ip !== t.host && t.type !== "http" && <span className="font-mono text-faint">→ {run.dst_ip}</span>}
@@ -461,6 +465,7 @@ export function TargetDetail() {
       </div>
 
       <TargetForm
+        groups={groupNames}
         open={editing || cloning}
         initial={cloning ? null : t}
         prefill={clonePrefill}

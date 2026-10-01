@@ -23,6 +23,7 @@ const DEFAULTS: TargetInput = {
   options: {},
   description: "",
   tags: [],
+  group_name: "",
   interval_sec: 300,
   count: 10,
   probe_interval: 1.0,
@@ -83,8 +84,11 @@ export function TargetForm({
   onClose,
   onSubmit,
   submitting,
+  groups = [],
 }: {
   open: boolean;
+  /** Group names already in use, offered as suggestions in the Group field. */
+  groups?: string[];
   /** The target being edited; absent when adding (or cloning, where `prefill` carries the copy). */
   initial?: Target | null;
   /** Starting values for a new target: a host from the quick trace, or a full copy of a target being cloned. */
@@ -207,7 +211,7 @@ export function TargetForm({
       options.headers = headers;
     }
     try {
-      await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), tags, options, port: isMtr && form.protocol === "icmp" ? null : form.port });
+      await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), group_name: form.group_name.trim().replace(/\s+/g, " "), tags, options, port: isMtr && form.protocol === "icmp" ? null : form.port });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       return;
@@ -523,6 +527,12 @@ export function TargetForm({
         <div className="sm:col-span-2">
           <label className="label">Description (optional)</label>
           <input className="input" value={form.description} onChange={(e) => set("description", e.target.value)} placeholder="What this target is for" />
+        </div>
+        <div className="sm:col-span-2">
+          <label className="label" htmlFor="target-group">Group (optional)</label>
+          <input id="target-group" className="input" list="target-groups" value={form.group_name} onChange={(e) => set("group_name", e.target.value)} placeholder="e.g. Branch offices" maxLength={60} />
+          <datalist id="target-groups">{groups.map((g) => <option key={g} value={g} />)}</datalist>
+          <div className="help">Targets in the same group share a collapsible section on the dashboard. Leave empty for none.</div>
         </div>
         <div className="sm:col-span-2">
           <label className="label">Tags (comma separated)</label>

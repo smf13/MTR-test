@@ -440,11 +440,11 @@ async def list_tags(request: Request) -> list[dict[str, Any]]:
 async def _insert_target(db: Database, data: dict[str, Any]) -> int:
     now = time.time()
     return int(await db.fetchval(
-        "INSERT INTO targets(name, host, type, options, description, tags, interval_sec, count, probe_interval, protocol, port, packet_size, "
+        "INSERT INTO targets(name, host, type, options, description, tags, group_name, interval_sec, count, probe_interval, protocol, port, packet_size, "
         "ip_version, max_hops, enabled, notify, alert_loss_pct, alert_latency_ms, created_at, updated_at, next_run_at, last_status) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id",
         (
-            data["name"], data["host"], data["type"], json.dumps(data["options"]), data["description"], json.dumps(data["tags"]), data["interval_sec"],
+            data["name"], data["host"], data["type"], json.dumps(data["options"]), data["description"], json.dumps(data["tags"]), data.get("group_name") or "", data["interval_sec"],
             data["count"], data["probe_interval"], data["protocol"], data["port"], data["packet_size"], data["ip_version"], data["max_hops"],
             int(data["enabled"]), int(data.get("notify", True)), data["alert_loss_pct"], data["alert_latency_ms"], now, now, now,
         ),
@@ -452,7 +452,7 @@ async def _insert_target(db: Database, data: dict[str, Any]) -> int:
 
 
 EXPORT_FIELDS = (
-    "name", "host", "type", "options", "description", "tags", "interval_sec", "count", "probe_interval", "protocol", "port", "packet_size",
+    "name", "host", "type", "options", "description", "tags", "group_name", "interval_sec", "count", "probe_interval", "protocol", "port", "packet_size",
     "ip_version", "max_hops", "enabled", "notify", "alert_loss_pct", "alert_latency_ms",
 )
 _BOOL_FIELDS = ("enabled", "notify")
@@ -485,7 +485,8 @@ async def import_targets(request: Request, body: TargetImport) -> dict[str, Any]
         data = item.model_dump()
         tid = existing.get(data["name"].lower())
         if tid is not None:
-            cols = [k for k in EXPORT_FIELDS if k != "name"]
+            # A file exported before groups existed carries no group_name; it leaves the target's group alone.
+            cols = [k for k in EXPORT_FIELDS if k != "name" and (k != "group_name" or "group_name" in item.model_fields_set)]
             values = [json.dumps(data[k]) if k in ("options", "tags") else (int(data[k]) if k in _BOOL_FIELDS else data[k]) for k in cols]
             await db.execute(f"UPDATE targets SET {', '.join(f'{c} = ?' for c in cols)}, updated_at = ?, next_run_at = ? WHERE id = ?", [*values, time.time(), time.time(), tid])
             updated += 1

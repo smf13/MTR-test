@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
 
-from helpers import wait_for_runs as _wait_for_runs, wait_until
+from helpers import app_client, wait_for_runs as _wait_for_runs, wait_until
 
 
 async def test_target_lifecycle_and_run(client: AsyncClient) -> None:
@@ -371,3 +372,34 @@ async def test_clear_history_and_delete_runs(client: AsyncClient) -> None:
 
     assert (await client.delete(f"/api/targets/{tid}/runs?status=bogus")).status_code == 422
     assert (await client.delete("/api/targets/999999/runs")).status_code == 404
+
+
+async def test_target_groups(client: AsyncClient) -> None:
+    r = await client.post("/api/targets", json={"name": "Grouped", "host": "192.0.2.90", "interval_sec": 60, "enabled": False, "group_name": "  Head   office "})
+    assert r.status_code == 201, r.text
+    tid = r.json()["id"]
+    assert r.json()["group_name"] == "Head office"
+    plain = (await client.post("/api/targets", json={"name": "Plain", "host": "192.0.2.91", "interval_sec": 60, "enabled": False})).json()
+    assert plain["group_name"] == ""
+    assert (await client.put(f"/api/targets/{tid}", json={"group_name": "Branches"})).json()["group_name"] == "Branches"
+    assert (await client.put(f"/api/targets/{tid}", json={"group_name": None})).status_code == 422
+    assert (await client.put(f"/api/targets/{tid}", json={"group_name": ""})).json()["group_name"] == ""
+    await client.put(f"/api/targets/{tid}", json={"group_name": "Branches"})
+
+    exported = {e["name"]: e for e in (await client.get("/api/targets/export")).json()}
+    assert exported["Grouped"]["group_name"] == "Branches"
+    # A file exported before groups existed leaves the group alone; one that names a group sets it.
+    older = {k: v for k, v in exported["Grouped"].items() if k != "group_name"}
+    await client.post("/api/targets/import", json={"targets": [older], "mode": "upsert"})
+    assert (await client.get(f"/api/targets/{tid}")).json()["group_name"] == "Branches"
+    await client.post("/api/targets/import", json={"targets": [{**exported["Plain"], "group_name": "Branches"}], "mode": "upsert"})
+    assert (await client.get(f"/api/targets/{plain['id']}")).json()["group_name"] == "Branches"
+
+
+async def test_group_column_is_added_to_an_existing_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async with app_client(tmp_path, monkeypatch) as c:
+        tid = (await c.post("/api/targets", json={"name": "Old", "host": "192.0.2.92", "interval_sec": 60, "enabled": False})).json()["id"]
+        db = c._transport.app.state.db  # type: ignore[attr-defined]
+        await db.execute("ALTER TABLE targets DROP COLUMN group_name")
+    async with app_client(tmp_path, monkeypatch, fresh_database=False) as c:
+        assert (await c.get(f"/api/targets/{tid}")).json()["group_name"] == ""
