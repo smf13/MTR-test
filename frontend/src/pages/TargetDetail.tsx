@@ -27,7 +27,7 @@ import { ClearHistoryDialog } from "../components/ClearHistory";
 import { ErrorBanner } from "../components/EmptyState";
 import { TagList, useTagColors } from "../components/Tags";
 import { useToast } from "../components/Toast";
-import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, fmtDateTime, hostLabel, isPathProbe, isPacketProbe, latencyLabel } from "../utils";
+import { effectiveStatus, fmtDuration, fmtPct, relTime, fmtDateTime, hostLabel, isPathProbe, isPacketProbe, latencyLabel, fmtMs, fmtMsJoin } from "../utils";
 import { CheckDetails } from "../components/CheckDetails";
 import { PathMapCard } from "../components/PathMapCard";
 import { PROBE_TYPE_LABEL } from "../api";
@@ -296,9 +296,9 @@ export function TargetDetail() {
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <StatTile label={`${latencyWord} now`} value={run?.reached ? `${fmtNum(run.avg_ms)} ms` : run ? "unreachable" : "–"} sub={run?.reached ? `best ${fmtNum(run.best_ms)} · worst ${fmtNum(run.worst_ms)}` : run?.error ?? undefined} tone={status === "down" ? "down" : status === "degraded" ? "degraded" : undefined} icon={<Gauge size={15} />} />
-        <StatTile label={`Avg · ${range}`} value={stats?.avg_ms !== null && stats?.avg_ms !== undefined ? `${fmtNum(stats.avg_ms)} ms` : "–"} sub={stats?.best_ms !== null && stats?.best_ms !== undefined ? `best ${fmtNum(stats.best_ms)} · worst ${fmtNum(stats.worst_ms)}` : undefined} icon={<Activity size={15} />} />
-        <StatTile label={`Median · ${range}`} value={stats?.p50_ms !== null && stats?.p50_ms !== undefined ? `${fmtNum(stats.p50_ms)} ms` : "–"} sub={stats?.p95_ms !== null && stats?.p95_ms !== undefined ? `p95 ${fmtNum(stats.p95_ms)} · p99 ${fmtNum(stats.p99_ms)}` : undefined} icon={<Activity size={15} />} />
+        <StatTile label={`${latencyWord} now`} value={run?.reached ? fmtMs(run.avg_ms) : run ? "unreachable" : "–"} sub={run?.reached ? fmtMsJoin([run.best_ms, run.worst_ms], { sep: " · ", labels: ["best", "worst"], trailingUnit: false }) : run?.error ?? undefined} tone={status === "down" ? "down" : status === "degraded" ? "degraded" : undefined} icon={<Gauge size={15} />} />
+        <StatTile label={`Avg · ${range}`} value={fmtMs(stats?.avg_ms)} sub={stats?.best_ms !== null && stats?.best_ms !== undefined ? fmtMsJoin([stats.best_ms, stats.worst_ms], { sep: " · ", labels: ["best", "worst"], trailingUnit: false }) : undefined} icon={<Activity size={15} />} />
+        <StatTile label={`Median · ${range}`} value={fmtMs(stats?.p50_ms)} sub={stats?.p95_ms !== null && stats?.p95_ms !== undefined ? fmtMsJoin([stats.p95_ms, stats.p99_ms], { sep: " · ", labels: ["p95", "p99"], trailingUnit: false }) : undefined} icon={<Activity size={15} />} />
         <StatTile label={`Loss · ${range}`} value={fmtPct(stats?.loss_pct)} sub={stats?.max_loss_pct ? `max ${fmtPct(stats.max_loss_pct)}` : "no loss recorded"} tone={stats && (stats.loss_pct ?? 0) >= t.alert_loss_pct && t.alert_loss_pct > 0 ? "degraded" : undefined} icon={<Percent size={15} />} />
         <StatTile label={`Uptime · ${range}`} value={fmtPct(stats?.availability_pct, stats?.availability_pct === 100 ? 0 : 2)} sub={stats ? `${stats.ok_runs}/${stats.runs} runs reached` : undefined} tone={stats && stats.availability_pct !== null && stats.availability_pct < 99 ? "degraded" : "up"} icon={<Timer size={15} />} />
         {singleSample ? (
@@ -310,7 +310,7 @@ export function TargetDetail() {
             icon={<Route size={15} />}
           />
         ) : (
-          <StatTile label={`Jitter · ${range}`} value={stats?.jitter_ms !== null && stats?.jitter_ms !== undefined ? `${fmtNum(stats.jitter_ms)} ms` : "–"} sub={run?.reached ? `now ${fmtNum(run.jitter_avg_ms)} ms` : undefined} icon={<Route size={15} />} />
+          <StatTile label={`Jitter · ${range}`} value={fmtMs(stats?.jitter_ms)} sub={run?.reached ? `now ${fmtMs(run.jitter_avg_ms)}` : undefined} icon={<Route size={15} />} />
         )}
         {pathProbe ? (
           <StatTile label={`Reroutes · ${range}`} value={stats?.route_changes ?? 0} sub={stats?.hop_count_min ? `${stats.hop_count_min === stats.hop_count_max ? stats.hop_count_min : `${stats.hop_count_min}–${stats.hop_count_max}`} hops` : undefined} tone={stats?.route_changes ? "degraded" : undefined} icon={<GitBranch size={15} />} />

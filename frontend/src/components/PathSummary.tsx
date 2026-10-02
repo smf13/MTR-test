@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { HopSummary, HopSummaryEntry } from "../api";
-import { fmtNum, lossColor } from "../utils";
+import { fmtNum, lossColor, fmtMsCell } from "../utils";
 import { NetworkCell } from "./HopTable";
 
 /** Aggregated per-hop statistics over a time range, including alternate (ECMP / rerouted) hops. */
@@ -89,11 +89,11 @@ function Row({ hop, entry, alt, altCount, silentRuns, expanded, onToggle, maxAvg
         </span>
       </td>
       <td className="text-right text-muted">{fmtNum(entry.max_loss_pct)}%</td>
-      <td className="text-right font-semibold">{fmtNum(entry.avg_ms)}</td>
-      <td className="text-right">{fmtNum(entry.best_ms)}</td>
-      <td className="text-right">{fmtNum(entry.worst_ms)}</td>
-      <td className="text-right text-muted">{fmtNum(entry.stdev_ms)}</td>
-      <td className="text-right text-muted">{fmtNum(entry.jitter_ms)}</td>
+      <td className="text-right font-semibold">{fmtMsCell(entry.avg_ms)}</td>
+      <td className="text-right">{fmtMsCell(entry.best_ms)}</td>
+      <td className="text-right">{fmtMsCell(entry.worst_ms)}</td>
+      <td className="text-right text-muted">{fmtMsCell(entry.stdev_ms)}</td>
+      <td className="text-right text-muted">{fmtMsCell(entry.jitter_ms)}</td>
       <td>
         {entry.ip && (
           <div className="relative h-3 w-full rounded-sm" style={{ background: alt ? "var(--bg-elev)" : "var(--surface-2)" }}>

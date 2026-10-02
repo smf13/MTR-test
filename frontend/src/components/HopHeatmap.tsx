@@ -1,6 +1,6 @@
 import { memo, useMemo, useState } from "react";
 import type { HopHistory } from "../api";
-import { fmtNum, fmtTime, latencyColor, lossColor } from "../utils";
+import { fmtNum, fmtTime, latencyColor, lossColor, fmtMs, msParts, fmtMsJoin } from "../utils";
 
 export type HeatMetric = "loss" | "avg" | "jitter";
 
@@ -109,10 +109,10 @@ export const HopHeatmap = memo(function HopHeatmap({ history, metric, rangeSec, 
               <span>{fmtNum(hoveredHop.loss)}%</span>
               <span className="text-muted">Avg / Best / Worst</span>
               <span>
-                {fmtNum(hoveredHop.avg)} / {fmtNum(hoveredHop.best)} / {fmtNum(hoveredHop.worst)} ms
+                {fmtMsJoin([hoveredHop.avg, hoveredHop.best, hoveredHop.worst])}
               </span>
               <span className="text-muted">Jitter</span>
-              <span>{fmtNum(hoveredHop.jitter)} ms</span>
+              <span>{fmtMs(hoveredHop.jitter)}</span>
             </div>
           ) : (
             <div className="text-faint">hop not present in this run</div>
@@ -126,12 +126,15 @@ export const HopHeatmap = memo(function HopHeatmap({ history, metric, rangeSec, 
 
 export function HeatLegend({ metric, max = 1 }: { metric: HeatMetric; max?: number }) {
   const stops = metric === "loss" ? [0, 2, 10, 40, 100] : [0, 0.25, 0.5, 0.75, 1].map((r) => r * max);
+  // From 1000 ms up the scale reads in seconds, like every other latency.
+  const seconds = metric !== "loss" && msParts(max).unit === "s";
+  const unit = seconds ? "s" : "ms";
   return (
     <div className="mb-3 flex flex-wrap items-end gap-x-3 gap-y-2 text-xs text-muted" aria-label={`${metric === "loss" ? "Loss" : metric === "jitter" ? "Jitter" : "Latency"} scale`}>
-      <span className="self-center">{metric === "loss" ? "Loss (%)" : metric === "jitter" ? "Jitter (ms)" : "Latency (ms)"}</span>
+      <span className="self-center">{metric === "loss" ? "Loss (%)" : metric === "jitter" ? `Jitter (${unit})` : `Latency (${unit})`}</span>
       {stops.map((value, index) => <span key={index} className="flex min-w-8 flex-col gap-1 text-center">
         <span className="h-2.5 rounded-sm" style={{ background: metric === "loss" ? lossColor(value) : latencyColor(value, max) }} />
-        <span className="num">{fmtNum(value, metric === "loss" ? 0 : 1)}</span>
+        <span className="num">{metric === "loss" ? fmtNum(value, 0) : seconds ? fmtNum(value / 1000, max < 10000 ? 2 : max < 100000 ? 1 : 0) : fmtNum(value, 1)}</span>
       </span>)}
       {metric !== "loss" && <span className="ml-1 inline-flex items-center gap-1.5 self-center"><span className="h-2.5 w-4 rounded-sm bg-down" />No response</span>}
       <span className="inline-flex items-center gap-1.5 self-center"><span className="h-2.5 w-4 rounded-sm border border-border bg-surface-2" />No data</span>

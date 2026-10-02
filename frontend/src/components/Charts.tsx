@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Area, Bar, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, Tooltip, XAxis, YAxis } from "recharts";
 import type { SeriesPoint } from "../api";
-import { fmtAxisTime, fmtNum, fmtTime, lossColor, timeTicks } from "../utils";
+import { fmtAxisTime, fmtNum, fmtTime, lossColor, timeTicks, fmtMs, fmtMsTick, fmtMsJoin } from "../utils";
 
 interface Row {
   t: number;
@@ -80,12 +80,12 @@ function TooltipBox({ active, payload, rangeSec, bucketSec }: { active?: boolean
       </div>
       <div className="num grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
         <span className="text-muted">Avg</span>
-        <span className="text-right font-semibold">{r.avg !== null ? `${fmtNum(r.avg)} ms` : "unreachable"}</span>
+        <span className="text-right font-semibold">{r.avg !== null ? fmtMs(r.avg) : "unreachable"}</span>
         {r.band && (
           <>
             <span className="text-muted">Best / Worst</span>
             <span className="text-right">
-              {fmtNum(r.band[0])} / {fmtNum(r.band[1])} ms
+              {fmtMsJoin([r.band[0], r.band[1]])}
             </span>
           </>
         )}
@@ -96,7 +96,7 @@ function TooltipBox({ active, payload, rangeSec, bucketSec }: { active?: boolean
         {r.jitter !== null && (
           <>
             <span className="text-muted">Jitter</span>
-            <span className="text-right">{fmtNum(r.jitter)} ms</span>
+            <span className="text-right">{fmtMs(r.jitter)}</span>
           </>
         )}
         {r.hops !== null && (
@@ -154,7 +154,7 @@ export const LatencyChart = memo(function LatencyChart({ points, rangeSec, bucke
         </defs>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
         <XAxis dataKey="t" type="number" domain={domain} scale="time" ticks={timeTicks(domain, width - LATENCY_PLOT_INSET)} tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={4} />
-        <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
+        <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => fmtMsTick(v)} domain={[0, "auto"]} />
         <Tooltip content={<TooltipBox rangeSec={rangeSec} bucketSec={bucketSec} />} cursor={{ stroke: "var(--border-strong)" }} isAnimationActive={false} />
         {thinRouteChanges(rows, domain, width - LATENCY_PLOT_INSET).map((r) => (
           <ReferenceLine key={r.t} x={r.t} stroke="var(--chart-jitter)" strokeDasharray="3 3" strokeOpacity={0.7} />
@@ -201,7 +201,7 @@ export const JitterChart = memo(function JitterChart({ points, rangeSec, bucketS
       <ComposedChart width={width} height={height} data={rows} margin={{ top: 4, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
         <XAxis dataKey="t" type="number" domain={domain} scale="time" ticks={timeTicks(domain, width - LATENCY_PLOT_INSET)} tickFormatter={tickFormatter(rangeSec)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={4} />
-        <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
+        <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => fmtMsTick(v)} domain={[0, "auto"]} />
         <Tooltip content={<TooltipBox rangeSec={rangeSec} bucketSec={bucketSec} />} cursor={{ stroke: "var(--border-strong)" }} isAnimationActive={false} />
         <Line type="monotone" dataKey="jitter" stroke="var(--chart-jitter)" strokeWidth={1.5} dot={false} isAnimationActive={false} connectNulls={false} />
       </ComposedChart>

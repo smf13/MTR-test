@@ -21,7 +21,7 @@ import { useToast } from "../components/Toast";
 // Recharts only loads when the overview chart is actually shown.
 const OverviewChart = lazy(() => import("../components/Visuals").then((m) => ({ default: m.OverviewChart })));
 import type { Status } from "../api";
-import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe, isPacketProbe, latencyLabel, percentile } from "../utils";
+import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe, isPacketProbe, latencyLabel, percentile, fmtMs, fmtMsCell, msParts } from "../utils";
 
 type SortKey = "name" | "status" | "latency" | "loss" | "hops";
 type View = "cards" | "table";
@@ -263,8 +263,8 @@ export function Dashboard() {
             ))}
           </div>
         </div>
-        <StatTile label="Mean latency" value={latency.mean !== null ? `${fmtNum(latency.mean)} ms` : "–"} sub="latest run, all targets" icon={<Activity size={16} />} />
-        <StatTile label="Median latency" value={latency.median !== null ? `${fmtNum(latency.median)} ms` : "–"} sub="latest run, all targets" icon={<Activity size={16} />} />
+        <StatTile label="Mean latency" value={fmtMs(latency.mean)} sub="latest run, all targets" icon={<Activity size={16} />} />
+        <StatTile label="Median latency" value={fmtMs(latency.median)} sub="latest run, all targets" icon={<Activity size={16} />} />
         <StatTile label="Route changes" value={(targets.data ?? []).reduce((a, t) => a + t.stats_24h.route_changes, 0)} sub="last 24 hours" icon={<GitBranch size={16} />} />
       </div>
 
@@ -535,10 +535,10 @@ function TargetCard({ t, now, selected, onSelect, onEdit, onClone, onDelete, onT
       <div className="mt-5 grid grid-cols-2 items-center gap-4">
         <div>
           <div className="text-xs font-medium text-muted">{latencyLabel(t.type, t.options)}</div>
-          <div className="num mt-1 text-3xl font-semibold tracking-tight">{run?.reached ? fmtNum(run.avg_ms) : "–"}{run?.reached && <span className="ml-1 text-sm font-normal text-muted">ms</span>}</div>
+          <div className="num mt-1 text-3xl font-semibold tracking-tight">{run?.reached ? msParts(run.avg_ms).value : "–"}{run?.reached && <span className="ml-1 text-sm font-normal text-muted">{msParts(run.avg_ms).unit}</span>}</div>
           <div className="num mt-1 text-xs leading-snug text-muted" data-testid="card-latency-24h" title="Average and median of the reached runs over the last 24 hours">
-            <div className="truncate">24h avg <span className="font-medium text-text">{fmtNum(t.stats_24h.avg_ms)}</span>{t.stats_24h.avg_ms !== null && " ms"}</div>
-            <div className="truncate">24h median <span className="font-medium text-text">{fmtNum(t.stats_24h.median_ms)}</span>{t.stats_24h.median_ms !== null && " ms"}</div>
+            <div className="truncate">24h avg <span className="font-medium text-text">{msParts(t.stats_24h.avg_ms).value}</span>{t.stats_24h.avg_ms !== null && ` ${msParts(t.stats_24h.avg_ms).unit}`}</div>
+            <div className="truncate">24h median <span className="font-medium text-text">{msParts(t.stats_24h.median_ms).value}</span>{t.stats_24h.median_ms !== null && ` ${msParts(t.stats_24h.median_ms).unit}`}</div>
           </div>
         </div>
         <Link to={`/targets/${t.id}`} className="block min-w-0" aria-label={`View latency for ${t.name}`}>
@@ -592,7 +592,7 @@ function ThirdMetric({ t }: { t: Target }) {
     case "dns":
       return <Metric label="Answers" value={Array.isArray(d.answers) ? String((d.answers as unknown[]).length) : "–"} />;
     case "ping":
-      return <Metric label="Jitter" value={run?.reached ? fmtNum(run.jitter_avg_ms) : "–"} unit="ms" />;
+      return <Metric label="Jitter" value={run?.reached ? msParts(run.jitter_avg_ms).value : "–"} unit={msParts(run?.jitter_avg_ms).unit} />;
     case "globalping": {
       if (isPathProbe(t.type, t.options)) return <Metric label="Hops" value={run?.hop_count ? String(run.hop_count) : "–"} />;
       const measurement = String(t.options.measurement ?? "ping");
@@ -696,13 +696,13 @@ function TargetTable({ sections, isOpen, forced, onToggleGroup, onRenameGroup, s
                   <div className="flex items-center gap-1.5 font-mono text-xs text-faint"><TypeBadge type={t.type} /><span className="truncate max-w-[220px]" title={t.host}>{hostLabel(t.host)}</span></div>
                 </td>
                 <td><div className="flex items-center gap-1.5"><StatusBadge status={status} running={t.running} />{!t.notify && <MutedBadge />}</div></td>
-                <td className="text-right font-semibold">{run?.reached ? fmtNum(run.avg_ms) : "–"}</td>
-                <td className="text-right text-muted">{run?.reached ? fmtNum(run.best_ms) : "–"}</td>
-                <td className="text-right text-muted">{run?.reached ? fmtNum(run.worst_ms) : "–"}</td>
+                <td className="text-right font-semibold">{run?.reached ? fmtMsCell(run.avg_ms) : "–"}</td>
+                <td className="text-right text-muted">{run?.reached ? fmtMsCell(run.best_ms) : "–"}</td>
+                <td className="text-right text-muted">{run?.reached ? fmtMsCell(run.worst_ms) : "–"}</td>
                 <td className="text-right font-semibold" style={{ color: (run?.loss_pct ?? 0) > 0 ? lossColor(run?.loss_pct) : undefined }}>{fmtPct(run?.loss_pct)}</td>
                 <td className="text-right">{isPathProbe(t.type, t.options) ? run?.hop_count || "–" : latencyLabel(t.type, t.options) === "Response" ? String((run?.details as Record<string, unknown> | null)?.status ?? "–") : "–"}</td>
                 <td className="text-right">{fmtPct(t.stats_24h.availability_pct)}</td>
-                <td className="text-right text-muted">{fmtNum(t.stats_24h.avg_ms)}</td>
+                <td className="text-right text-muted">{fmtMsCell(t.stats_24h.avg_ms)}</td>
                 <td><Sparkline points={t.sparkline} width={120} height={26}  /></td>
                 <td><StatusStrip buckets={t.timeline.buckets} bucketSec={t.timeline.bucket_sec} since={t.timeline.since} height={10} className="w-36" /></td>
                 <td className="text-muted">{fmtDuration(t.interval_sec)}</td>

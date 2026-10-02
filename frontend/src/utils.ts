@@ -6,6 +6,56 @@ export function fmtNum(v: number | null | undefined, digits = 1): string {
   return v.toFixed(digits);
 }
 
+/** Decimals for a value in seconds: 1.23 s, 48.6 s, 7458465 s. */
+const secDigits = (s: number) => (Math.abs(s) < 10 ? 2 : Math.abs(s) < 100 ? 1 : 0);
+
+/**
+ * A latency or jitter in milliseconds, split into number and unit: milliseconds below 1000 ms (judged after rounding,
+ * so 999.97 never reads "1000.0 ms"), seconds from there on.
+ */
+export function msParts(v: number | null | undefined, digits = 1): { value: string; unit: "ms" | "s" | "" } {
+  if (v === null || v === undefined || Number.isNaN(v)) return { value: "–", unit: "" };
+  if (Math.abs(Number(v.toFixed(digits))) < 1000) return { value: v.toFixed(digits), unit: "ms" };
+  const s = v / 1000;
+  return { value: s.toFixed(secDigits(s)), unit: "s" };
+}
+
+/** A latency or jitter with its unit: "12.3 ms", or "1.23 s" from 1000 ms up; "–" when missing. */
+export function fmtMs(v: number | null | undefined, digits = 1): string {
+  const p = msParts(v, digits);
+  return p.unit ? `${p.value} ${p.unit}` : p.value;
+}
+
+/** A cell of a column headed "(ms)": the bare number below 1000 ms, the value with "s" from there on. */
+export function fmtMsCell(v: number | null | undefined, digits = 1): string {
+  const p = msParts(v, digits);
+  return p.unit === "s" ? `${p.value} s` : p.value;
+}
+
+/**
+ * Latencies printed side by side ("10.0 / 15.0 ms", "best 10.0 · worst 15.0"): while all are below 1000 ms they stay
+ * bare numbers sharing `unit` (" ms"); once one reaches seconds each text carries its own unit and `unit` is "".
+ */
+export function msGroup(values: (number | null | undefined)[], digits = 1): { texts: string[]; unit: string } {
+  if (values.some((v) => msParts(v, digits).unit === "s")) return { texts: values.map((v) => fmtMs(v, digits)), unit: "" };
+  return { texts: values.map((v) => fmtNum(v, digits)), unit: " ms" };
+}
+
+/**
+ * `msGroup` joined into one text: `fmtMsJoin([10, 15])` = "10.0 / 15.0 ms", with `labels` "best 10.0 · worst 15.0 ms";
+ * `trailingUnit: false` leaves the shared " ms" off (a tile whose value already names the unit).
+ */
+export function fmtMsJoin(values: (number | null | undefined)[], { sep = " / ", labels, digits = 1, trailingUnit = true }: { sep?: string; labels?: string[]; digits?: number; trailingUnit?: boolean } = {}): string {
+  const { texts, unit } = msGroup(values, digits);
+  return texts.map((t, i) => (labels ? `${labels[i]} ${t}` : t)).join(sep) + (trailingUnit ? unit : "");
+}
+
+/** An axis tick in milliseconds: "250 ms", "2.5 s". */
+export function fmtMsTick(v: number, digits?: number): string {
+  if (Math.abs(v) < 1000) return `${digits === undefined ? v : fmtNum(v, digits)} ms`;
+  return `${Number((v / 1000).toFixed(3))} s`;
+}
+
 export function fmtPct(v: number | null | undefined, digits = 1): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "–";
   return `${v.toFixed(digits)}%`;

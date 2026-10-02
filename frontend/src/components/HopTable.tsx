@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { Hop } from "../api";
-import { fmtNum, lossColor, classNames } from "../utils";
+import { fmtNum, lossColor, classNames, fmtMsCell, fmtMsJoin } from "../utils";
 
 /** The ASN cell of the hop tables: the number, with the organisation's name beneath it when a GeoIP provider knows it. */
 export function NetworkCell({ asn, name }: { asn: string | null; name: string | null }) {
@@ -79,16 +79,16 @@ export function HopTable({ hops, dstIp, compact = false }: { hops: Hop[]; dstIp?
                 </td>
                 <td className="text-right text-muted">{h.sent}</td>
                 {!compact && <td className="text-right text-muted">{h.received}</td>}
-                <td className="text-right">{fmtNum(h.last_ms)}</td>
-                <td className="text-right font-semibold">{fmtNum(h.avg_ms)}</td>
-                <td className="text-right">{fmtNum(h.best_ms)}</td>
-                <td className="text-right">{fmtNum(h.worst_ms)}</td>
-                <td className="text-right text-muted">{fmtNum(h.stdev_ms)}</td>
-                <td className="text-right text-muted">{fmtNum(h.jitter_avg_ms)}</td>
-                {!compact && <td className="text-right text-muted">{fmtNum(h.jitter_max_ms)}</td>}
+                <td className="text-right">{fmtMsCell(h.last_ms)}</td>
+                <td className="text-right font-semibold">{fmtMsCell(h.avg_ms)}</td>
+                <td className="text-right">{fmtMsCell(h.best_ms)}</td>
+                <td className="text-right">{fmtMsCell(h.worst_ms)}</td>
+                <td className="text-right text-muted">{fmtMsCell(h.stdev_ms)}</td>
+                <td className="text-right text-muted">{fmtMsCell(h.jitter_avg_ms)}</td>
+                {!compact && <td className="text-right text-muted">{fmtMsCell(h.jitter_max_ms)}</td>}
                 <td>
                   {!noReply && (
-                    <div className="relative h-3 w-full rounded-sm" style={{ background: "var(--surface-2)" }} title={`best ${fmtNum(best)} · avg ${fmtNum(avg)} · worst ${fmtNum(worst)} ms`}>
+                    <div className="relative h-3 w-full rounded-sm" style={{ background: "var(--surface-2)" }} title={fmtMsJoin([best, avg, worst], { sep: " · ", labels: ["best", "avg", "worst"] })}>
                       <div className="absolute top-0 h-full rounded-sm" style={{ left: `${(best / maxAvg) * 100}%`, width: `${Math.max(0.5, ((worst - best) / maxAvg) * 100)}%`, background: "var(--accent)", opacity: 0.3 }} />
                       <div className="absolute top-0 h-full w-[2px] rounded-sm" style={{ left: `${(avg / maxAvg) * 100}%`, background: "var(--accent)" }} />
                     </div>

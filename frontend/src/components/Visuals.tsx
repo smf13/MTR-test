@@ -3,7 +3,7 @@ import { Area, Bar, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, Too
 import type { Hop, HopSummary, HourlyBucket, OverviewSeries, Routes, SeriesPoint } from "../api";
 import { HeatLegend } from "./HopHeatmap";
 import { Sized } from "./Charts";
-import { fmtNum, fmtTime, fmtDateTime, latencyColor, lossColor, percentile, seriesColor, seriesDash, classNames, fmtAxisTime, timeTicks } from "../utils";
+import { fmtNum, fmtTime, fmtDateTime, latencyColor, lossColor, percentile, seriesColor, seriesDash, classNames, fmtAxisTime, timeTicks, fmtMs, fmtMsTick, fmtMsJoin } from "../utils";
 
 /* The status strip lives in StatusStrip.tsx so pages can show it without loading Recharts. */
 
@@ -44,7 +44,7 @@ export const OverviewChart = memo(function OverviewChart({ data, height = 240 }:
           <ComposedChart width={width} height={height} data={rows} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
             <XAxis dataKey="t" type="number" domain={domain} scale="time" ticks={timeTicks(domain, width - 76)} tickFormatter={tick} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} minTickGap={4} />
-            <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
+            <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => fmtMsTick(v)} domain={[0, "auto"]} />
             <Tooltip
               isAnimationActive={false}
               cursor={{ stroke: "var(--border-strong)" }}
@@ -58,7 +58,7 @@ export const OverviewChart = memo(function OverviewChart({ data, height = 240 }:
                       {items.map((p) => (
                         <span key={String(p.dataKey)} className="contents">
                           <span className="flex items-center gap-1.5 text-muted"><SeriesSwatch index={slot.get(String(p.dataKey)) ?? 0} />{p.name}</span>
-                          <span className="text-right">{fmtNum(Number(p.value))} ms</span>
+                          <span className="text-right">{fmtMs(Number(p.value))}</span>
                         </span>
                       ))}
                     </div>
@@ -147,7 +147,7 @@ export const PathProfileChart = memo(function PathProfileChart({ rows, height = 
           </defs>
           <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
           <XAxis dataKey="hop" tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} />
-          <YAxis yAxisId="ms" tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => `${v} ms`} domain={[0, "auto"]} />
+          <YAxis yAxisId="ms" tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={64} tickFormatter={(v: number) => fmtMsTick(v)} domain={[0, "auto"]} />
           <YAxis yAxisId="loss" orientation="right" domain={[0, 100]} ticks={[0, 50, 100]} tickFormatter={(v: number) => `${v}%`} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={40} />
           <Tooltip
             isAnimationActive={false}
@@ -159,8 +159,8 @@ export const PathProfileChart = memo(function PathProfileChart({ rows, height = 
                 <div className="chart-tooltip">
                   <div className="font-semibold">Hop {r.hop} · <span className="font-mono font-normal">{r.label}</span></div>
                   <div className="num mt-1 grid grid-cols-[auto_1fr] gap-x-3">
-                    <span className="text-muted">Avg</span><span className="text-right">{r.avg !== null ? `${fmtNum(r.avg)} ms` : "–"}</span>
-                    {r.band && <><span className="text-muted">Best / Worst</span><span className="text-right">{fmtNum(r.band[0])} / {fmtNum(r.band[1])} ms</span></>}
+                    <span className="text-muted">Avg</span><span className="text-right">{fmtMs(r.avg)}</span>
+                    {r.band && <><span className="text-muted">Best / Worst</span><span className="text-right">{fmtMsJoin([r.band[0], r.band[1]])}</span></>}
                     <span className="text-muted">Loss</span><span className="text-right" style={{ color: r.loss > 0 ? lossColor(r.loss) : undefined }}>{fmtNum(r.loss)}%</span>
                   </div>
                 </div>
@@ -250,7 +250,7 @@ export const LatencyHistogram = memo(function LatencyHistogram({ points, height 
       counts[i] += 1;
     });
     return {
-      rows: counts.map((n, i) => ({ x: min + i * width + width / 2, label: `${fmtNum(min + i * width, 1)}–${fmtNum(min + (i + 1) * width, 1)} ms`, n })),
+      rows: counts.map((n, i) => ({ x: min + i * width + width / 2, label: `${fmtMs(min + i * width)}–${fmtMs(min + (i + 1) * width)}`, n })),
       p50: percentile(vals, 0.5),
       p95: percentile(vals, 0.95),
       p99: percentile(vals, 0.99),
@@ -270,7 +270,7 @@ export const LatencyHistogram = memo(function LatencyHistogram({ points, height 
           return (
           <ComposedChart width={width} height={height} data={rows} margin={{ top: 6 + rowCount * HIST_LABEL_ROW_H, right: HIST_MARGIN_RIGHT, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-            <XAxis dataKey="x" type="number" domain={edges} tickFormatter={(v: number) => fmtNum(v, edges[1] - edges[0] < 10 ? 1 : 0)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} unit=" ms" />
+            <XAxis dataKey="x" type="number" domain={edges} tickFormatter={(v: number) => fmtMsTick(v, edges[1] - edges[0] < 10 ? 1 : 0)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={HIST_Y_AXIS_W} allowDecimals={false} />
             <Tooltip
               isAnimationActive={false}
@@ -312,10 +312,10 @@ export const LatencyHistogram = memo(function LatencyHistogram({ points, height 
       </Sized>
       <div className="num mt-1 flex flex-wrap gap-x-4 px-1 text-xs text-faint">
         <span>{count} runs</span>
-        <span>bin {fmtNum(binWidth, 2)} ms</span>
-        <span style={{ color: "var(--up)" }}>p50 {fmtNum(p50)} ms</span>
-        <span style={{ color: "var(--degraded)" }}>p95 {fmtNum(p95)} ms</span>
-        <span style={{ color: "var(--down)" }}>p99 {fmtNum(p99)} ms</span>
+        <span>bin {fmtMs(binWidth, 2)}</span>
+        <span style={{ color: "var(--up)" }}>p50 {fmtMs(p50)}</span>
+        <span style={{ color: "var(--degraded)" }}>p95 {fmtMs(p95)}</span>
+        <span style={{ color: "var(--down)" }}>p99 {fmtMs(p99)}</span>
       </div>
     </div>
   );
@@ -388,10 +388,10 @@ export const HourlyHeatmap = memo(function HourlyHeatmap({ hours, metric }: { ho
         <div className="card pointer-events-none absolute z-10 px-2.5 py-1.5 text-xs" style={{ left: Math.min(hover.x + 8, width - 220), top: hover.y + 20, borderColor: "var(--border-strong)" }}>
           <div className="font-semibold">{fmtDateTime(hover.b.t).replace(/:\d\d:\d\d/, ":00")}</div>
           <div className="num mt-0.5 grid grid-cols-[auto_1fr] gap-x-3">
-            <span className="text-muted">Avg</span><span>{hover.b.avg !== null ? `${fmtNum(hover.b.avg)} ms` : "unreachable"}</span>
-            <span className="text-muted">Worst</span><span>{fmtNum(hover.b.worst)} ms</span>
+            <span className="text-muted">Avg</span><span>{hover.b.avg !== null ? fmtMs(hover.b.avg) : "unreachable"}</span>
+            <span className="text-muted">Worst</span><span>{fmtMs(hover.b.worst)}</span>
             <span className="text-muted">Loss</span><span>{fmtNum(hover.b.loss)}% (max {fmtNum(hover.b.max_loss)}%)</span>
-            <span className="text-muted">Jitter</span><span>{fmtNum(hover.b.jitter)} ms</span>
+            <span className="text-muted">Jitter</span><span>{fmtMs(hover.b.jitter)}</span>
             <span className="text-muted">Runs</span><span>{hover.b.ok_n}/{hover.b.n} reached</span>
           </div>
         </div>

@@ -5,7 +5,7 @@ import { usePoll } from "../hooks";
 import { HopTable } from "../components/HopTable";
 import { StatTile } from "../components/StatTile";
 import { ErrorBanner } from "../components/EmptyState";
-import { fmtDateTime, fmtNum, fmtPct } from "../utils";
+import { fmtDateTime, fmtPct, fmtMs, fmtMsJoin, msGroup } from "../utils";
 import { CheckDetails } from "../components/CheckDetails";
 
 export function RunView() {
@@ -50,9 +50,9 @@ export function RunView() {
         <StatTile label="Result" value={r.status !== "ok" ? "Error" : r.reached ? "Reached" : "Unreachable"} tone={ok ? "up" : "down"} />
         <StatTile label={r.hop_count ? "Hops" : "Probe"} value={r.hop_count || PROBE_TYPE_LABEL[r.target_type]} />
         <StatTile label="Loss (dst)" value={fmtPct(r.loss_pct)} tone={(r.loss_pct ?? 0) > 0 ? "degraded" : undefined} />
-        <StatTile label="Avg" value={ok ? `${fmtNum(r.avg_ms)} ms` : "–"} sub={ok ? `last ${fmtNum(r.last_ms)} ms` : undefined} />
-        <StatTile label="Best / Worst" value={ok ? `${fmtNum(r.best_ms)} / ${fmtNum(r.worst_ms)}` : "–"} sub="ms" />
-        <StatTile label="StDev / Jitter" value={ok ? `${fmtNum(r.stdev_ms)} / ${fmtNum(r.jitter_avg_ms)}` : "–"} sub={ok ? `jitter max ${fmtNum(r.jitter_max_ms)} ms` : undefined} />
+        <StatTile label="Avg" value={ok ? fmtMs(r.avg_ms) : "–"} sub={ok ? `last ${fmtMs(r.last_ms)}` : undefined} />
+        <StatTile label="Best / Worst" value={ok ? fmtMsJoin([r.best_ms, r.worst_ms], { trailingUnit: false }) : "–"} sub={ok ? msGroup([r.best_ms, r.worst_ms]).unit.trim() || undefined : undefined} />
+        <StatTile label="StDev / Jitter" value={ok ? fmtMsJoin([r.stdev_ms, r.jitter_avg_ms], { trailingUnit: false }) : "–"} sub={ok ? `jitter max ${fmtMs(r.jitter_max_ms)}` : undefined} />
       </div>
 
       {r.target_type === "mtr" || r.hop_count > 0 ? (

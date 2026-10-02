@@ -520,3 +520,40 @@ describe("target groups on the target page", () => {
     expect(update.mock.calls[0][1]).toMatchObject({ group_name: "Edge sites" });
   });
 });
+
+describe("latencies of a second or more", () => {
+  it("switch from milliseconds to seconds at 1000 ms", async () => {
+    const { fmtMs, fmtMsCell, fmtMsJoin, fmtMsTick } = await import("../src/utils");
+    expect(fmtMs(12.34)).toBe("12.3 ms");
+    expect(fmtMs(999.94)).toBe("999.9 ms");
+    // Judged after rounding: never "1000.0 ms".
+    expect(fmtMs(999.96)).toBe("1.00 s");
+    expect(fmtMs(1234)).toBe("1.23 s");
+    expect(fmtMs(48_640)).toBe("48.6 s");
+    expect(fmtMs(7458464799.7)).toBe("7458465 s");
+    expect(fmtMs(null)).toBe("–");
+    expect(fmtMsCell(42.2)).toBe("42.2");
+    expect(fmtMsCell(2500)).toBe("2.50 s");
+    expect(fmtMsJoin([10, 15])).toBe("10.0 / 15.0 ms");
+    expect(fmtMsJoin([10, 1500], { sep: " · ", labels: ["best", "worst"] })).toBe("best 10.0 ms · worst 1.50 s");
+    expect(fmtMsTick(250)).toBe("250 ms");
+    expect(fmtMsTick(2500)).toBe("2.5 s");
+  });
+
+  it("prints a card's latency, averages and jitter in seconds", async () => {
+    const slow: Target = {
+      ...target, type: "ping",
+      latest_run: { ...target.latest_run!, avg_ms: 7458464799.7, jitter_avg_ms: 1520 },
+      stats_24h: { ...target.stats_24h, avg_ms: 2400, median_ms: 980 },
+    };
+    vi.spyOn(api, "targets").mockResolvedValue([slow]);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    const card = await screen.findByRole("article", { name: "Office WAN" });
+    expect(card.textContent).toContain("7458465s");
+    expect(within(card).getByTestId("card-latency-24h").textContent).toBe("24h avg 2.40 s24h median 980.0 ms");
+    expect(card.textContent).toContain("Jitter1.52s");
+    // The Mean and Median latency tiles.
+    expect(screen.getAllByText("7458465 s")).toHaveLength(2);
+  });
+});

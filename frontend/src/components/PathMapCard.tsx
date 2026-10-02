@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { ChevronDown, ChevronRight, Map as MapIcon, MapPin, Network, Circle } from "lucide-react";
 import type { GeoHop, GeoPoint, PathGeo } from "../api";
 import { useDocumentTheme } from "../hooks";
-import { fmtNum } from "../utils";
+import { fmtNum, fmtMs } from "../utils";
 import { HelpTip } from "./Popover";
 
 // Leaflet (and its stylesheet) load only when a map is actually shown.
@@ -87,7 +87,7 @@ export function networkText(asn: string | null | undefined, name: string | null 
 
 function hopLine(h: GeoHop): string {
   const who = h.hostname && h.ip ? `${h.hostname} (${h.ip})` : h.hostname || h.ip || "no response";
-  const stats = [networkText(h.asn, h.as_name), h.avg_ms !== null ? `${fmtNum(h.avg_ms)} ms` : null, h.loss_pct ? `${fmtNum(h.loss_pct)}% loss` : null].filter(Boolean).join(" · ");
+  const stats = [networkText(h.asn, h.as_name), h.avg_ms !== null ? fmtMs(h.avg_ms) : null, h.loss_pct ? `${fmtNum(h.loss_pct)}% loss` : null].filter(Boolean).join(" · ");
   return `${h.hop_no}. ${who}${stats ? ` · ${stats}` : ""}`;
 }
 

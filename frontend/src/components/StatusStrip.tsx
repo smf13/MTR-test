@@ -1,5 +1,5 @@
 import type { TimelineBucket } from "../api";
-import { fmtNum, fmtTime, classNames } from "../utils";
+import { fmtTime, classNames, fmtMs } from "../utils";
 
 /* Status timeline strip (one cell per bucket; 24h on the dashboard, the selected range on a target page). Plain divs: no charting library, so the dashboard's
    first paint does not have to wait for it. */
@@ -15,7 +15,7 @@ export function StatusStrip({ buckets, bucketSec, since, height = 8, className, 
       {buckets.map((b, i) => {
         const from = new Date(start + i * bucketSec * 1000);
         const title = b
-          ? `${fmtTime(from.getTime(), { date: withDate })}: ${b.s}${b.avg !== null ? ` · avg ${fmtNum(b.avg)} ms` : ""} · ${b.n} run${b.n === 1 ? "" : "s"}`
+          ? `${fmtTime(from.getTime(), { date: withDate })}: ${b.s}${b.avg !== null ? ` · avg ${fmtMs(b.avg)}` : ""} · ${b.n} run${b.n === 1 ? "" : "s"}`
           : `${fmtTime(from.getTime(), { date: withDate })}: no runs`;
         return <div key={i} className="flex-1 rounded-[1px]" style={{ background: b ? STATUS_FILL[b.s] : "var(--surface-2)", opacity: b ? 0.9 : 1 }} title={title} />;
       })}

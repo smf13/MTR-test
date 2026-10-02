@@ -1,6 +1,6 @@
 import { CheckCircle2, XCircle, ShieldAlert, ShieldCheck, ExternalLink } from "lucide-react";
 import { DNS_STANDARD_PORT, DNS_TRANSPORT_LABEL, type DnsTransport, type GlobalpingDnsProbe, type GlobalpingHttpProbe, type GlobalpingProbe, type Run, type ProbeType, type TlsInfo } from "../api";
-import { fmtDateTime, fmtNum, lossColor } from "../utils";
+import { fmtDateTime, fmtNum, lossColor, fmtMs, fmtMsJoin } from "../utils";
 
 /** Human-friendly rendering of a non-MTR run's `details` (ping samples, HTTP status, TLS, DNS answers, remote probes…). */
 export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
@@ -27,7 +27,7 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
         {type === "http" && (
           <>
             <Row k="Status" v={d.status !== undefined ? <span style={{ color: d.status_ok ? "var(--up)" : "var(--down)" }}>{String(d.status)} {String(d.reason ?? "")}</span> : "–"} />
-            <Row k="Response time" v={run.avg_ms !== null ? `${fmtNum(run.avg_ms)} ms` : "–"} />
+            <Row k="Response time" v={fmtMs(run.avg_ms)} />
             <Row k="Size" v={d.bytes !== undefined ? `${(Number(d.bytes) / 1024).toFixed(1)} KB` : "–"} />
             <Row k="Content type" v={String(d.content_type ?? "–")} />
             <Row k="Server" v={String(d.server ?? "–")} />
@@ -43,7 +43,7 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
         {type === "tcp" && (
           <>
             <Row k="Port" v={String(d.port ?? run.command ?? "–")} mono />
-            <Row k="Connect time" v={run.avg_ms !== null ? `${fmtNum(run.avg_ms)} ms` : "–"} />
+            <Row k="Connect time" v={fmtMs(run.avg_ms)} />
             <Row k="Connected" v={<span style={{ color: d.connected ? "var(--up)" : "var(--down)" }}>{d.connected ? "yes" : "no"}</span>} />
             <Row k="Address" v={run.dst_ip ?? "–"} mono />
           </>
@@ -54,7 +54,7 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
             {d.random_prefix === true && <Row k="Queried name" v={<>{String(d.queried_name ?? "–")} <span className="font-sans text-faint">(random label, uncached)</span></>} mono wide />}
             <Row k="Resolver" v={<>{String(d.resolver ?? "system")}{d.nameserver && d.nameserver !== d.resolver ? <span className="font-sans text-faint"> · {String(d.nameserver)}</span> : null}</>} mono wide />
             <Row k="Transport" v={<>{DNS_TRANSPORT_LABEL[(d.transport as DnsTransport) ?? "udp"] ?? String(d.transport)}{typeof d.port === "number" && d.port !== DNS_STANDARD_PORT[(d.transport as DnsTransport) ?? "udp"] ? ` · port ${d.port}` : ""}{d.tcp_fallback === true ? <span className="text-faint"> · answer truncated over UDP, retried over TCP</span> : null}</>} />
-            <Row k="Lookup time" v={run.avg_ms !== null ? `${fmtNum(run.avg_ms)} ms` : "–"} />
+            <Row k="Lookup time" v={fmtMs(run.avg_ms)} />
             {d.rcode !== undefined && <Row k="Result" v={<>{String(d.rcode)}{d.rcode === "NXDOMAIN" && d.random_prefix === true ? <span className="text-faint"> · expected for a random label; the timing is the measurement</span> : null}</>} />}
             <Row k="TTL" v={d.ttl !== undefined && d.ttl !== null ? `${d.ttl}s` : "–"} />
             {Array.isArray(d.answers) && <Row k="Answers" v={<span className="whitespace-pre-wrap break-all">{(d.answers as string[]).join("\n") || "(none)"}</span>} mono wide />}
@@ -64,8 +64,8 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
           <>
             <Row k="Sent / received" v={`${d.sent ?? run.sent ?? "–"} / ${d.received ?? "–"}`} />
             <Row k="Loss" v={<span style={{ color: (run.loss_pct ?? 0) > 0 ? lossColor(run.loss_pct) : undefined }}>{fmtNum(run.loss_pct)}%</span>} />
-            <Row k="Avg / best / worst" v={`${fmtNum(run.avg_ms)} / ${fmtNum(run.best_ms)} / ${fmtNum(run.worst_ms)} ms`} />
-            <Row k="StDev / jitter" v={`${fmtNum(run.stdev_ms)} / ${fmtNum(run.jitter_avg_ms)} ms`} />
+            <Row k="Avg / best / worst" v={fmtMsJoin([run.avg_ms, run.best_ms, run.worst_ms])} />
+            <Row k="StDev / jitter" v={fmtMsJoin([run.stdev_ms, run.jitter_avg_ms])} />
             <Row k="Address" v={run.dst_ip ?? "–"} mono />
             <Row k="Packet size" v={d.packet_size !== undefined ? `${d.packet_size} B` : "–"} />
           </>
@@ -77,7 +77,7 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
             {measurement === "ping" && (
               <>
                 <Row k="Loss" v={<span style={{ color: (run.loss_pct ?? 0) > 0 ? lossColor(run.loss_pct) : undefined }}>{fmtNum(run.loss_pct)}%</span>} />
-                <Row k="Avg / best / worst" v={`${fmtNum(run.avg_ms)} / ${fmtNum(run.best_ms)} / ${fmtNum(run.worst_ms)} ms`} />
+                <Row k="Avg / best / worst" v={fmtMsJoin([run.avg_ms, run.best_ms, run.worst_ms])} />
               </>
             )}
             {measurement === "dns" && (
@@ -85,7 +85,7 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
                 <Row k="Record" v={String(d.record_type ?? "A")} mono />
                 <Row k="Resolver" v={String(d.resolver ?? "probe default")} mono />
                 <Row k="Transport" v={DNS_TRANSPORT_LABEL[(d.transport as DnsTransport) ?? "udp"] ?? String(d.transport)} />
-                <Row k="Lookup time" v={run.avg_ms !== null ? `${fmtNum(run.avg_ms)} ms${probes.length > 1 ? " (average of the probes that passed)" : ""}` : "–"} />
+                <Row k="Lookup time" v={run.avg_ms !== null ? `${fmtMs(run.avg_ms)}${probes.length > 1 ? " (average of the probes that passed)" : ""}` : "–"} />
                 {d.rcode !== undefined && d.rcode !== null && <Row k="Result" v={String(d.rcode)} mono />}
                 {Array.isArray(d.answers) && <Row k="Answers" v={<span className="whitespace-pre-wrap break-all">{(d.answers as string[]).join("\n") || "(none)"}</span>} mono wide />}
               </>
@@ -98,8 +98,8 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
                   k="Response time"
                   v={
                     <>
-                      {run.avg_ms !== null ? `${fmtNum(run.avg_ms)} ms` : "–"}
-                      {timings && <span className="text-faint"> · dns {fmtNum(timings.dns, 0)} · tcp {fmtNum(timings.tcp, 0)} · tls {fmtNum(timings.tls, 0)} · first byte {fmtNum(timings.firstByte, 0)} · download {fmtNum(timings.download, 0)} ms</span>}
+                      {fmtMs(run.avg_ms)}
+                      {timings && <span className="text-faint"> · {fmtMsJoin([timings.dns, timings.tcp, timings.tls, timings.firstByte, timings.download], { sep: " · ", labels: ["dns", "tcp", "tls", "first byte", "download"], digits: 0 })}</span>}
                     </>
                   }
                   wide
@@ -174,7 +174,7 @@ function PingSamples({ samples, sent }: { samples: number[]; sent: number }) {
       <div className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-faint">Round-trip per ping</div>
       <div className="flex h-16 items-end gap-[3px]">
         {samples.map((s, i) => (
-          <div key={i} className="flex-1 rounded-sm" style={{ height: `${Math.max(4, (s / max) * 100)}%`, background: "var(--chart-avg)", opacity: 0.85 }} title={`#${i + 1}: ${fmtNum(s, 2)} ms`} />
+          <div key={i} className="flex-1 rounded-sm" style={{ height: `${Math.max(4, (s / max) * 100)}%`, background: "var(--chart-avg)", opacity: 0.85 }} title={`#${i + 1}: ${fmtMs(s, 2)}`} />
         ))}
         {Array.from({ length: lost }, (_, i) => (
           <div key={`lost-${i}`} className="flex-1 rounded-sm" style={{ height: "100%", background: "var(--down)", opacity: 0.5 }} title="lost" />
@@ -254,7 +254,7 @@ function DnsProbeTable({ probes }: { probes: GlobalpingDnsProbe[] }) {
               <ProbeCell p={p} />
               <PassCell passed={p.passed} reason={p.passed ? null : p.reason} />
               <td className="font-mono text-xs text-muted">{p.resolver ?? "–"}</td>
-              <td className="text-right font-semibold">{p.total_ms !== null ? `${fmtNum(p.total_ms, 0)} ms` : "–"}</td>
+              <td className="text-right font-semibold">{fmtMs(p.total_ms, 0)}</td>
               <td className="max-w-[360px] whitespace-normal font-mono text-xs text-muted">{p.answers.length ? p.answers.map((a) => `${a.type ?? ""} ${a.value ?? ""}`.trim()).join(", ") : p.rcode ?? "–"}</td>
             </tr>
           ))}
@@ -287,7 +287,7 @@ function HttpProbeTable({ probes }: { probes: GlobalpingHttpProbe[] }) {
               <ProbeCell p={p} />
               <PassCell passed={p.passed} reason={p.passed ? null : p.reason} />
               <td className="text-right">{p.status_code ?? "–"}</td>
-              <td className="text-right font-semibold">{p.total_ms !== null ? `${fmtNum(p.total_ms, 0)} ms` : "–"}</td>
+              <td className="text-right font-semibold">{fmtMs(p.total_ms, 0)}</td>
               <td className="text-right text-muted">{fmtNum(p.timings?.dns, 0)}</td>
               <td className="text-right text-muted">{fmtNum(p.timings?.tcp, 0)}</td>
               <td className="text-right text-muted">{fmtNum(p.timings?.tls, 0)}</td>

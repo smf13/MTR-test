@@ -1,6 +1,6 @@
 import { GitBranch, ExternalLink } from "lucide-react";
 import type { Run } from "../api";
-import { fmtDateTime, fmtNum, lossColor, relTime } from "../utils";
+import { fmtDateTime, fmtNum, lossColor, relTime, fmtMsCell } from "../utils";
 
 /**
  * The runs list. With `selected` and `onSelect` each row gets a checkbox (clicking it never opens the run) and the
@@ -80,11 +80,11 @@ export function RunsTable({ runs, onOpen, now, selected, onSelect }: { runs: Run
                     {fmtNum(r.loss_pct)}%
                   </span>
                 </td>
-                <td className="text-right font-semibold">{fmtNum(r.avg_ms)}</td>
-                <td className="text-right">{fmtNum(r.best_ms)}</td>
-                <td className="text-right">{fmtNum(r.worst_ms)}</td>
-                <td className="text-right text-muted">{fmtNum(r.stdev_ms)}</td>
-                <td className="text-right text-muted">{fmtNum(r.jitter_avg_ms)}</td>
+                <td className="text-right font-semibold">{fmtMsCell(r.avg_ms)}</td>
+                <td className="text-right">{fmtMsCell(r.best_ms)}</td>
+                <td className="text-right">{fmtMsCell(r.worst_ms)}</td>
+                <td className="text-right text-muted">{fmtMsCell(r.stdev_ms)}</td>
+                <td className="text-right text-muted">{fmtMsCell(r.jitter_avg_ms)}</td>
                 <td className="text-right text-muted">{r.duration_ms !== null ? `${(r.duration_ms / 1000).toFixed(1)}s` : "–"}</td>
                 <td className="text-faint">
                   <ExternalLink size={13} />
