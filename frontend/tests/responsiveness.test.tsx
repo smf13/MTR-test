@@ -7,7 +7,7 @@ import { TargetDetail } from "../src/pages/TargetDetail";
 import { TargetForm } from "../src/components/TargetForm";
 import { CheckDetails } from "../src/components/CheckDetails";
 import { RangePicker } from "../src/components/RangePicker";
-import { timeTicks } from "../src/utils";
+import { fmtDuration, timeTicks } from "../src/utils";
 
 const timestamp = "2026-09-17T12:00:00Z";
 const run: RunDetail = {
@@ -146,6 +146,15 @@ describe("HTTP JSON query", () => {
 });
 
 describe("tap responsiveness", () => {
+  it("rounds durations without impossible remainders", () => {
+    expect(fmtDuration(6 * 86400 + 23.7 * 3600)).toBe("7d");
+    expect(fmtDuration(3599.6)).toBe("1h");
+    expect(fmtDuration(59.6)).toBe("1m");
+    expect(fmtDuration(380)).toBe("6m 20s");
+    expect(fmtDuration(2 * 86400 + 19 * 3600)).toBe("2d 19h");
+    expect(fmtDuration(86399)).toBe("1d");
+  });
+
   it("gives a time axis a handful of round ticks instead of one per data point", () => {
     const end = Date.UTC(2026, 9, 1, 12, 0);
     const day = timeTicks([end - 86_400_000, end], 300);

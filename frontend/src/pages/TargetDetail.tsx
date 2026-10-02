@@ -9,6 +9,7 @@ import { HelpTip } from "../components/Popover";
 import { StatusBadge } from "../components/StatusBadge";
 import { StatTile } from "../components/StatTile";
 import { RangePicker, Segmented } from "../components/RangePicker";
+import { StatusHistoryPanel } from "../components/StatusHistory";
 import { LatencyChart, LossChart, JitterChart } from "../components/Charts";
 import { HopTable } from "../components/HopTable";
 import { HopHeatmap, type HeatMetric } from "../components/HopHeatmap";
@@ -30,7 +31,7 @@ import { CheckDetails } from "../components/CheckDetails";
 import { PathMapCard } from "../components/PathMapCard";
 import { PROBE_TYPE_LABEL } from "../api";
 
-type Tab = "path" | "history" | "summary" | "runs" | "events";
+type Tab = "path" | "history" | "summary" | "status" | "runs" | "events";
 const RUN_PAGE = 25;
 const NO_POINTS: SeriesPoint[] = [];
 
@@ -76,7 +77,7 @@ export function TargetDetail() {
   // in the range, and those requests used to hold database connections that a save or "Run now" then waited for.
   const pathTarget = target.data ? isPathProbe(target.data.type, target.data.options) : false;
   // Null until the target has loaded: its type decides which tabs exist, so nothing tab-specific is fetched before.
-  const shownTab = !target.data ? null : !pathTarget && tab !== "runs" && tab !== "events" ? "runs" : tab;
+  const shownTab = !target.data ? null : !pathTarget && tab !== "runs" && tab !== "events" && tab !== "status" ? "runs" : tab;
   const history = usePoll(() => api.hopHistory(targetId, range), pollMs, [targetId, range], pathTarget && shownTab === "history");
   // The summary also feeds the path profile's "Avg" view above the tabs.
   const summary = usePoll(() => api.hopSummary(targetId, range), pollMs, [targetId, range], pathTarget && (shownTab === "summary" || profileSource === "range"));
@@ -84,6 +85,7 @@ export function TargetDetail() {
     () => (profileSource === "latest" ? (latest.data ? profileFromHops(latest.data.hops) : []) : summary.data ? profileFromSummary(summary.data) : []),
     [profileSource, latest.data, summary.data],
   );
+  const statusHistory = usePoll(() => api.statusHistory(targetId, range), pollMs, [targetId, range], shownTab === "status");
   const runs = usePoll(() => api.runs(targetId, { limit: RUN_PAGE, offset: runPage * RUN_PAGE, range, status: runFilter || undefined }), pollMs, [targetId, range, runFilter, runPage], shownTab === "runs");
   const events = usePoll(() => api.targetEvents(targetId, range), pollMs, [targetId, range]);
   const routes = usePoll(() => api.routes(targetId, range), pollMs, [targetId, range]);
@@ -301,10 +303,10 @@ export function TargetDetail() {
 
       <div className="card px-4 py-3">
         <div className="mb-1.5 flex items-center justify-between text-xs">
-          <span className="font-semibold">Status · last 24 hours</span>
+          <span className="font-semibold">Status · {range}</span>
           <span className="text-faint">{fmtDuration(t.timeline.bucket_sec)} per cell · hover for details</span>
         </div>
-        <StatusStrip buckets={t.timeline.buckets} bucketSec={t.timeline.bucket_sec} since={t.timeline.since} height={12} />
+        <StatusStrip buckets={t.timeline.buckets} bucketSec={t.timeline.bucket_sec} since={t.timeline.since} height={12} label={`Status over the last ${range}`} />
       </div>
 
       <div className="card p-4">
@@ -395,6 +397,7 @@ export function TargetDetail() {
             { value: "history" as const, label: "Path history" },
             { value: "summary" as const, label: `Path summary · ${range}` },
           ] : []),
+          { value: "status", label: "Status history" },
           { value: "runs", label: "Runs" },
           { value: "events", label: `Events${events.data?.length ? ` (${events.data.length})` : ""}` },
         ]} />
@@ -444,6 +447,7 @@ export function TargetDetail() {
           </div>
         )}
 
+        {activeTab === "status" && <StatusHistoryPanel data={statusHistory.data} range={range} />}
         {activeTab === "runs" && (
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">

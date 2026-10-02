@@ -45,6 +45,15 @@ function mockDetail(t: Target = target) {
   vi.spyOn(api, "hopHistory").mockResolvedValue({ runs: [], max_hops: 0 });
   vi.spyOn(api, "hopSummary").mockResolvedValue({ total_runs: 0, hops: [] });
   vi.spyOn(api, "targetEvents").mockResolvedValue([]);
+  vi.spyOn(api, "statusHistory").mockResolvedValue({
+    range_sec: 86400, since: "2026-09-16T12:00:00Z", start: "2026-09-16T12:00:00Z", paused: false, changes: 2, truncated: false, uptime_pct: 95.833,
+    totals: { up: 82800, degraded: 0, down: 3600 },
+    periods: [
+      { status: "up", start: "2026-09-17T10:00:00Z", end: null, ongoing: true, duration_sec: 7200, message: "Office WAN recovered (down -> up)", run_id: 12 },
+      { status: "down", start: "2026-09-17T09:00:00Z", end: "2026-09-17T10:00:00Z", ongoing: false, duration_sec: 3600, message: "Office WAN is DOWN: destination unreachable", run_id: 11 },
+      { status: "up", start: "2026-09-16T12:00:00Z", end: "2026-09-17T09:00:00Z", ongoing: false, duration_sec: 75600, message: null, run_id: null },
+    ],
+  });
   vi.spyOn(api, "routes").mockResolvedValue({ routes: [], segments: [], since: timestamp, range_sec: 86400, total_runs: 0 });
   vi.spyOn(api, "hourly").mockResolvedValue({ hours: [], range_sec: 86400 });
   vi.spyOn(api, "geo").mockResolvedValue({ enabled: false, ip_api_enabled: false, available: false, asn_available: false, run_id: null, sources: [], hops: [], destination: null });
@@ -193,7 +202,7 @@ describe("detail navigation", () => {
     mockDetail();
     renderDetail();
     const navigation = await screen.findByRole("tablist", { name: "Target data" });
-    expect(within(navigation).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Current path", "Path history", "Path summary · 24h", "Runs", "Events"]);
+    expect(within(navigation).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Current path", "Path history", "Path summary · 24h", "Status history", "Runs", "Events"]);
     const currentPath = within(navigation).getByRole("tab", { name: "Current path" });
     expect(currentPath.getAttribute("aria-selected")).toBe("true");
     const table = await screen.findByRole("table");
@@ -219,6 +228,24 @@ describe("detail navigation", () => {
     await user.keyboard("{End}{ArrowLeft}");
     expect(within(navigation).getByRole("tab", { name: "Runs" }).getAttribute("aria-selected")).toBe("true");
     expect(JSON.parse(localStorage.getItem("mtr-tracker.tab")!)).toBe("runs");
+  });
+
+  it("lists the status history of the selected range, newest period first", async () => {
+    const user = userEvent.setup();
+    mockDetail();
+    renderDetail();
+    const navigation = await screen.findByRole("tablist", { name: "Target data" });
+    await user.click(within(navigation).getByRole("tab", { name: "Status history" }));
+    await waitFor(() => expect(screen.getAllByTestId("status-period")).toHaveLength(3));
+    expect(vi.mocked(api.statusHistory)).toHaveBeenCalledWith(1, "24h");
+    const [current, outage, first] = screen.getAllByTestId("status-period");
+    expect(current.textContent).toContain("2h so far");
+    expect(current.textContent).toContain("now");
+    expect(outage.textContent).toContain("Office WAN is DOWN: destination unreachable");
+    expect(within(outage).getByRole("link", { name: "Run #11" }).getAttribute("href")).toBe("/runs/11");
+    expect(first.textContent).toContain("Status when the range begins");
+    expect(screen.getByTestId("status-totals").textContent).toContain("Down4.17% · 1h");
+    expect(screen.getByTestId("status-totals").textContent).toContain("2 status changes · 24h");
   });
 
   it("restores a remembered path summary with all metrics and expandable alternate addresses", async () => {

@@ -19,19 +19,23 @@ export function fmtBytes(n: number): string {
 }
 
 export function fmtDuration(sec: number): string {
-  if (sec < 60) return `${Math.round(sec)}s`;
-  if (sec < 3600) {
-    const m = Math.floor(sec / 60);
-    const s = Math.round(sec % 60);
+  // Round to the smallest unit shown first, so 59m 59.6s reads "1h", never "59m 60s" (nor "6d 24h").
+  if (sec < 59.5) return `${Math.round(sec)}s`;
+  if (sec < 3570) {
+    const total = Math.round(sec);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
     return s ? `${m}m ${s}s` : `${m}m`;
   }
-  if (sec < 86400) {
-    const h = Math.floor(sec / 3600);
-    const m = Math.round((sec % 3600) / 60);
+  if (sec < 84600) {
+    const total = Math.round(sec / 60);
+    const h = Math.floor(total / 60);
+    const m = total % 60;
     return m ? `${h}h ${m}m` : `${h}h`;
   }
-  const d = Math.floor(sec / 86400);
-  const h = Math.round((sec % 86400) / 3600);
+  const total = Math.round(sec / 3600);
+  const d = Math.floor(total / 24);
+  const h = total % 24;
   return h ? `${d}d ${h}h` : `${d}d`;
 }
 

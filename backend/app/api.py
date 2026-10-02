@@ -31,7 +31,6 @@ _RANGE_RE = re.compile(r"^(\d+)([smhdw])$")
 _RANGE_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 SPARKLINE_POINTS = 60
 TIMELINE_BUCKETS = 48
-TIMELINE_BUCKET_SEC = 86400 // TIMELINE_BUCKETS
 
 
 def _iso(ts: float | None) -> str | None:
@@ -341,12 +340,17 @@ async def test_notification(request: Request, body: NotificationTest) -> dict[st
 # ---------------------------------------------------------------------------
 
 
-async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+async def _attach_summaries(db: Database, targets: list[dict[str, Any]], timeline_sec: int = 86400) -> list[dict[str, Any]]:
+    """Latest run, 24-hour stats and sparkline per target, plus a status timeline over `timeline_sec` (the dashboard's
+    24 hours, or the range selected on a target page) in TIMELINE_BUCKETS cells."""
     if not targets:
         return []
     ids = [t["id"] for t in targets]
     placeholders = ",".join("?" for _ in ids)
-    since = time.time() - 86400
+    now = time.time()
+    since = now - 86400
+    bucket_sec = max(1, timeline_sec // TIMELINE_BUCKETS)
+    timeline_since = now - bucket_sec * TIMELINE_BUCKETS
 
     # Latest run and sparkline as a LATERAL top-N per target: each walks idx_runs_target_started from the newest
     # run and stops after N rows. A GROUP BY MAX() join or a ROW_NUMBER() window over the target's runs reads its
@@ -371,7 +375,7 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list
         f"MAX(CASE WHEN r.status != 'ok' OR r.reached = 0 THEN 3 "
         f"WHEN (t.alert_loss_pct > 0 AND r.loss_pct >= t.alert_loss_pct) OR (t.alert_latency_ms > 0 AND r.avg_ms >= t.alert_latency_ms) THEN 2 ELSE 1 END) AS worst "
         f"FROM runs r JOIN targets t ON t.id = r.target_id WHERE r.started_at >= ? AND r.target_id IN ({placeholders}) GROUP BY r.target_id, b",
-        [since, TIMELINE_BUCKET_SEC, since, *ids],
+        [timeline_since, bucket_sec, timeline_since, *ids],
     )
     timelines: dict[int, list[dict[str, Any] | None]] = {tid: [None] * TIMELINE_BUCKETS for tid in ids}
     worst_label = {1: "up", 2: "degraded", 3: "down"}
@@ -408,7 +412,7 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]]) -> list
             "route_changes": int(st.get("route_changes") or 0),
         }
         item["sparkline"] = sparks.get(tid, [])
-        item["timeline"] = {"bucket_sec": TIMELINE_BUCKET_SEC, "since": _iso(since), "buckets": timelines.get(tid, [])}
+        item["timeline"] = {"bucket_sec": bucket_sec, "since": _iso(timeline_since), "buckets": timelines.get(tid, [])}
         out.append(item)
     return out
 
@@ -528,7 +532,7 @@ async def _load_target(request: Request, target_id: int, range_sec: int = 86400)
     if row is None:
         raise HTTPException(404, "target not found")
     target = _target_out(dict(row))
-    [target] = await _attach_summaries(db, [target])
+    [target] = await _attach_summaries(db, [target], timeline_sec=range_sec)
     target["stats"] = await _range_stats(db, target_id, range_sec)
     target["running"] = target_id in _sched(request).active_run_ids
     return target
@@ -537,6 +541,107 @@ async def _load_target(request: Request, target_id: int, range_sec: int = 86400)
 @router.get("/targets/{target_id}")
 async def get_target(request: Request, target_id: int, range: str | None = Query(default="24h")) -> dict[str, Any]:  # noqa: A002
     return await _load_target(request, target_id, parse_range(range))
+
+
+# Status events and the status each one leaves the target in; older rows may lack details.current.
+_STATUS_EVENTS = {"down": "down", "degraded": "degraded", "recovered": "up"}
+STATUS_HISTORY_MAX_PERIODS = 500
+
+
+def _event_status(row: Any) -> tuple[str, str | None]:
+    """(status after the event, status before it) of a down/degraded/recovered event row."""
+    try:
+        details = json.loads(row["details"] or "{}")
+    except (json.JSONDecodeError, TypeError):
+        details = {}
+    if not isinstance(details, dict):
+        details = {}
+    current = details.get("current") if details.get("current") in ("up", "degraded", "down") else _STATUS_EVENTS[row["kind"]]
+    previous = details.get("previous") if isinstance(details.get("previous"), str) else None
+    return current, previous
+
+
+@router.get("/targets/{target_id}/status-history")
+async def status_history(request: Request, target_id: int, range: str | None = Query(default="24h")) -> dict[str, Any]:  # noqa: A002
+    """The target's up / degraded / down periods over the range, newest first, rebuilt from its status events.
+
+    Covered time starts at the range start when the target has runs before it, else at its first run; the status at
+    that point is the one the last earlier status event left (up when there is none, because a target's first "up"
+    raises no event). Pending stretches before a first verdict are left out.
+    """
+    db = _db(request)
+    target = await db.fetchone("SELECT id, enabled, last_status FROM targets WHERE id = ?", (target_id,))
+    if target is None:
+        raise HTTPException(404, "target not found")
+    range_sec = parse_range(range)
+    now = time.time()
+    since = now - range_sec
+    kinds = tuple(_STATUS_EVENTS)
+    kind_marks = ",".join("?" for _ in kinds)
+    earlier = await db.fetchone(
+        f"SELECT kind, details FROM events WHERE target_id = ? AND kind IN ({kind_marks}) AND created_at < ? ORDER BY created_at DESC, id DESC LIMIT 1",
+        (target_id, *kinds, since),
+    )
+    runs_before = await db.fetchval("SELECT EXISTS(SELECT 1 FROM runs WHERE target_id = ? AND started_at < ?)", (target_id, since))
+    first_run = await db.fetchval("SELECT MIN(started_at) FROM runs WHERE target_id = ? AND started_at >= ?", (target_id, since))
+    rows = await db.fetchall(
+        f"SELECT id, kind, message, run_id, details, created_at FROM events WHERE target_id = ? AND kind IN ({kind_marks}) AND created_at >= ? "
+        "ORDER BY created_at, id",
+        (target_id, *kinds, since),
+    )
+    base: dict[str, Any] = {"range_sec": range_sec, "since": _iso(since), "paused": not target["enabled"]}
+    if runs_before or earlier is not None:
+        start: float | None = since
+    elif first_run is not None:
+        start = float(first_run)
+    else:
+        start = float(rows[0]["created_at"]) if rows else None
+    if start is None:
+        return {**base, "start": None, "periods": [], "totals": {"up": 0, "degraded": 0, "down": 0}, "uptime_pct": None, "changes": 0, "truncated": False}
+
+    if earlier is not None:
+        status: str | None = _event_status(earlier)[0]
+    elif runs_before:
+        status = "up"
+    elif rows:
+        previous = _event_status(rows[0])[1]
+        status = previous if previous in ("up", "degraded", "down") else None
+    else:
+        status = "up" if target["last_status"] in ("up", "pending") else str(target["last_status"])
+
+    periods: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = {"status": status, "start": start, "message": None, "run_id": None} if status else None
+    for row in rows:
+        new_status = _event_status(row)[0]
+        at = max(float(row["created_at"]), start)
+        if current is not None and current["status"] == new_status:
+            continue
+        if current is not None and at > current["start"]:
+            periods.append({**current, "end": at})
+        current = {"status": new_status, "start": at if current is not None else start, "message": row["message"], "run_id": row["run_id"]}
+    if current is not None:
+        periods.append({**current, "end": None})
+
+    totals = {"up": 0.0, "degraded": 0.0, "down": 0.0}
+    for p in periods:
+        totals[p["status"]] += (p["end"] if p["end"] is not None else now) - p["start"]
+    covered = sum(totals.values())
+    out = []
+    for p in reversed(periods[-STATUS_HISTORY_MAX_PERIODS:]):
+        end = p["end"] if p["end"] is not None else now
+        out.append({
+            "status": p["status"], "start": _iso(p["start"]), "end": _iso(p["end"]) if p["end"] is not None else None,
+            "ongoing": p["end"] is None, "duration_sec": round(end - p["start"]), "message": p["message"], "run_id": p["run_id"],
+        })
+    return {
+        **base,
+        "start": _iso(start),
+        "periods": out,
+        "totals": {k: round(v) for k, v in totals.items()},
+        "uptime_pct": round(100.0 * totals["up"] / covered, 3) if covered > 0 else None,
+        "changes": max(0, len(periods) - 1),
+        "truncated": len(periods) > STATUS_HISTORY_MAX_PERIODS,
+    }
 
 
 async def _range_stats(db: Database, target_id: int, range_sec: int) -> dict[str, Any]:

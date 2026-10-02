@@ -403,3 +403,52 @@ async def test_group_column_is_added_to_an_existing_database(tmp_path: Path, mon
         await db.execute("ALTER TABLE targets DROP COLUMN group_name")
     async with app_client(tmp_path, monkeypatch, fresh_database=False) as c:
         assert (await c.get(f"/api/targets/{tid}")).json()["group_name"] == ""
+
+
+async def test_status_history_rebuilds_periods_from_status_events(client: AsyncClient) -> None:
+    import json as _json
+    import time as _time
+
+    tid = (await client.post("/api/targets", json={"name": "Hist", "host": "192.0.2.93", "interval_sec": 60, "enabled": False})).json()["id"]
+    db = client._transport.app.state.db  # type: ignore[attr-defined]
+    now = _time.time()
+    empty = (await client.get(f"/api/targets/{tid}/status-history?range=24h")).json()
+    assert empty["start"] is None and empty["periods"] == [] and empty["paused"] is True
+
+    async def run_at(at: float) -> None:
+        await db.execute("INSERT INTO runs(target_id, started_at, status, reached) VALUES (?, ?, 'ok', 1)", (tid, at))
+
+    async def event(kind: str, at: float, previous: str, current: str) -> None:
+        await db.execute(
+            "INSERT INTO events(target_id, kind, severity, message, details, created_at) VALUES (?, ?, 'info', ?, ?, ?)",
+            (tid, kind, f"{kind} at {at}", _json.dumps({"previous": previous, "current": current}), at),
+        )
+
+    # Two days ago it went down and came back before this range; inside the range: degraded, down, up again.
+    await run_at(now - 2 * 86400)
+    await event("down", now - 2 * 86400 + 60, "up", "down")
+    await event("recovered", now - 2 * 86400 + 600, "down", "up")
+    await event("degraded", now - 3600 * 10, "up", "degraded")
+    await event("down", now - 3600 * 9, "degraded", "down")
+    await event("recovered", now - 3600 * 8, "down", "up")
+    hist = (await client.get(f"/api/targets/{tid}/status-history?range=24h")).json()
+    assert [p["status"] for p in hist["periods"]] == ["up", "down", "degraded", "up"]
+    assert hist["periods"][0]["ongoing"] is True and hist["periods"][0]["end"] is None
+    assert abs(hist["periods"][1]["duration_sec"] - 3600) <= 2 and hist["periods"][1]["message"].startswith("down at")
+    assert abs(hist["totals"]["down"] - 3600) <= 2 and abs(hist["totals"]["degraded"] - 3600) <= 2
+    assert hist["changes"] == 3 and 91 < hist["uptime_pct"] < 92
+
+    # A target whose first verdict came in the range: no pending stretch, the first status starts at its first run.
+    fresh = (await client.post("/api/targets", json={"name": "Fresh", "host": "192.0.2.94", "interval_sec": 60, "enabled": False})).json()["id"]
+    await db.execute("INSERT INTO runs(target_id, started_at, status, reached) VALUES (?, ?, 'error', 0)", (fresh, now - 600))
+    await db.execute(
+        "INSERT INTO events(target_id, kind, severity, message, details, created_at) VALUES (?, 'down', 'critical', 'gone', ?, ?)",
+        (fresh, _json.dumps({"previous": "pending", "current": "down"}), now - 590),
+    )
+    hist = (await client.get(f"/api/targets/{fresh}/status-history?range=1h")).json()
+    assert [p["status"] for p in hist["periods"]] == ["down"] and abs(hist["periods"][0]["duration_sec"] - 600) <= 2
+
+    # The target's status strip follows the requested range.
+    t = (await client.get(f"/api/targets/{tid}?range=7d")).json()
+    assert t["timeline"]["bucket_sec"] == 7 * 86400 // 48 and len(t["timeline"]["buckets"]) == 48
+    assert (await client.get(f"/api/targets/{tid}")).json()["timeline"]["bucket_sec"] == 1800

@@ -389,6 +389,34 @@ export function cloneInput(t: Target): TargetInput {
   return { ...targetInput(t), name: `${t.name} (copy)` };
 }
 
+/** One stretch of a single status, rebuilt from the target's status events (GET /api/targets/{id}/status-history). */
+export interface StatusPeriod {
+  status: "up" | "degraded" | "down";
+  start: string;
+  /** null while the period is still going on. */
+  end: string | null;
+  ongoing: boolean;
+  duration_sec: number;
+  /** The event message that began the period; null for the status the range opened with. */
+  message: string | null;
+  run_id: number | null;
+}
+
+export interface StatusHistory {
+  range_sec: number;
+  since: string;
+  /** Where covered time begins: the range start, or the first run of a newer target; null without any run. */
+  start: string | null;
+  paused: boolean;
+  /** Newest first, at most 500. */
+  periods: StatusPeriod[];
+  /** Seconds spent in each status within the range. */
+  totals: { up: number; degraded: number; down: number };
+  uptime_pct: number | null;
+  changes: number;
+  truncated: boolean;
+}
+
 export interface SeriesPoint {
   t: string;
   run_id: number | null;
@@ -802,6 +830,7 @@ export const api = {
   hourly: (id: number, range: string) => request<{ range_sec: number; hours: HourlyBucket[] }>(`/api/targets/${id}/hourly?range=${encodeURIComponent(range)}`),
   routes: (id: number, range: string) => request<Routes>(`/api/targets/${id}/routes?range=${encodeURIComponent(range)}`),
   geo: (id: number) => request<PathGeo>(`/api/targets/${id}/geo`),
+  statusHistory: (id: number, range: string) => request<StatusHistory>(`/api/targets/${id}/status-history?range=${encodeURIComponent(range)}`),
   targetEvents: (id: number, range?: string) =>
     request<Event[]>(`/api/targets/${id}/events?limit=200${range ? `&range=${encodeURIComponent(range)}` : ""}`),
 
