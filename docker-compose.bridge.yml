@@ -1,0 +1,17 @@
+# The Compose bridge network for the app instead of host networking. Use it on top of the main file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.bridge.yml up -d --build
+#
+# The app then gets its own network namespace: the first hop of every path is the Docker bridge rather than the host's
+# gateway, the web UI is published on port 8899, the database is reached by its service name and is not published on
+# the host. IPv6 targets need an IPv6-enabled network here (networks: default: enable_ipv6: true, which needs Docker
+# Engine 27+ or an IPv6 subnet in daemon.json). Needs Docker Compose 2.24 or newer (for !reset).
+services:
+  db:
+    ports: !reset []
+  mtr-tracker:
+    network_mode: !reset null
+    ports:
+      - "8899:8899"
+    environment:
+      MTR_TRACKER_DATABASE_URL: postgresql://mtr:${MTR_TRACKER_DB_PASSWORD:-mtr}@db:5432/mtr_tracker?sslmode=disable

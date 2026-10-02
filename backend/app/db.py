@@ -246,8 +246,9 @@ def _hint(exc: BaseException) -> str:
     """What a connection failure usually means in this deployment, appended to the log line and the final error."""
     if isinstance(exc, socket.gaierror):
         return (
-            " (the host name does not resolve: with network_mode: host a Compose service name such as db is unreachable;"
-            " start with docker-compose.host.yml or point MTR_TRACKER_DATABASE_URL at 127.0.0.1)"
+            " (the host name does not resolve: on host networking, the default in docker-compose.yml, a Compose service name"
+            " such as db is unreachable; point MTR_TRACKER_DATABASE_URL at 127.0.0.1 and the published port, or start with"
+            " docker-compose.bridge.yml to put the app on the Compose network)"
         )
     if isinstance(exc, asyncpg.InvalidPasswordError):
         return (

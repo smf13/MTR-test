@@ -294,9 +294,9 @@ async def test_connect_names_the_host_network_case_when_the_name_does_not_resolv
         raise socket.gaierror(-3, "Temporary failure in name resolution")
 
     monkeypatch.setattr(asyncpg, "create_pool", unresolved)
-    with pytest.raises(RuntimeError, match="docker-compose.host.yml") as info:
+    with pytest.raises(RuntimeError, match="docker-compose.bridge.yml") as info:
         await Database("postgresql://mtr@db:5432/mtr_tracker", connect_timeout=1).connect()
-    assert "name resolution" in str(info.value) and "docker-compose.host.yml" in caplog.text
+    assert "name resolution" in str(info.value) and "docker-compose.bridge.yml" in caplog.text and "127.0.0.1" in caplog.text
 
 
 async def test_connect_explains_a_password_changed_after_the_first_start(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -58,6 +58,7 @@ jobs:
       - uses: actions/checkout@v4
       # Validates the two-service Compose file (interpolation, healthcheck, depends_on) without starting anything.
       - run: docker compose config -q
+      - run: docker compose -f docker-compose.yml -f docker-compose.bridge.yml config -q
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
