@@ -21,7 +21,7 @@ import { StatusStrip } from "../components/StatusStrip";
 import { Pager } from "../components/Pager";
 import { TypeBadge } from "../components/TypeBadge";
 import { TargetForm } from "../components/TargetForm";
-import { GroupMenu } from "../components/GroupPicker";
+import { GroupMenu, moveConfirm } from "../components/GroupPicker";
 import { ConfirmDialog } from "../components/Modal";
 import { ClearHistoryDialog } from "../components/ClearHistory";
 import { ErrorBanner } from "../components/EmptyState";
@@ -265,7 +265,7 @@ export function TargetDetail() {
             {!t.notify && <MutedBadge />}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
-            <span className="inline-flex items-center gap-1" title="Group"><Folder size={12} aria-hidden /><GroupMenu label="Group" groups={groupNames} current={t.group_name ?? ""} onPick={moveToGroup} /></span>
+            <span className="inline-flex items-center gap-1" title="Group"><Folder size={12} aria-hidden /><GroupMenu label="Group" groups={groupNames} current={t.group_name ?? ""} onPick={moveToGroup} confirm={(group, isNew) => moveConfirm([t.name], group, isNew, t.group_name || undefined)} /></span>
             <TypeBadge type={t.type} />
             <span className="font-mono break-all">{t.type === "http" ? t.host : hostLabel(t.host)}</span>
             {run?.dst_ip && run.dst_ip !== t.host && t.type !== "http" && <span className="font-mono text-faint">→ {run.dst_ip}</span>}

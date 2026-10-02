@@ -10,7 +10,7 @@ import { StatTile } from "../components/StatTile";
 import { Sparkline } from "../components/Sparkline";
 import { TargetForm } from "../components/TargetForm";
 import { ConfirmDialog, Modal } from "../components/Modal";
-import { GroupMenu, cleanGroupName } from "../components/GroupPicker";
+import { GroupMenu, cleanGroupName, moveConfirm } from "../components/GroupPicker";
 import { EmptyState, ErrorBanner } from "../components/EmptyState";
 import { Segmented } from "../components/RangePicker";
 import { StatusStrip } from "../components/StatusStrip";
@@ -329,7 +329,7 @@ export function Dashboard() {
           <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())} disabled={!selectedIds.length}>Clear</button>
           <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
             {selectedIds.length === 0 && <span className="text-xs text-faint">Tick targets, then pick a group</span>}
-            <GroupMenu label="Move selected targets to group" groups={groupNames} disabled={!selectedIds.length} onPick={moveSelected} />
+            <GroupMenu label="Move selected targets to group" groups={groupNames} disabled={!selectedIds.length} onPick={moveSelected} confirm={(group, isNew) => moveConfirm((targets.data ?? []).filter((t) => selected.has(t.id)).map((t) => t.name), group, isNew)} />
           </div>
         </div>
       )}

@@ -411,7 +411,16 @@ describe("dashboard", () => {
     // The Ungrouped heading's box reflects that both of its targets are chosen.
     expect((screen.getByRole("checkbox", { name: "Select every target in Ungrouped" }) as HTMLInputElement).checked).toBe(true);
     expect([...menu.options].map((o) => o.textContent)).toEqual(["Move to group…", "Branches", "Datacentre", "Remove from group", "New group…"]);
+    // Nothing moves before the confirmation; Cancel leaves the selection as it was.
     await user.selectOptions(menu, "Branches");
+    expect(screen.getByRole("heading", { name: "Move 2 targets to Branches?" })).toBeTruthy();
+    expect(screen.getByTestId("move-targets").textContent).toBe("Loose, Spare");
+    expect(screen.getByText(/They join the group/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(move).not.toHaveBeenCalled();
+    expect(within(bar).getByTestId("selection-count").textContent).toBe("2 selected");
+    await user.selectOptions(menu, "Branches");
+    await user.click(screen.getByRole("button", { name: "Move" }));
     expect(move).toHaveBeenCalledWith([3, 4], "Branches");
     await waitFor(() => expect(within(bar).getByTestId("selection-count").textContent).toBe("0 selected"));
 
@@ -420,6 +429,9 @@ describe("dashboard", () => {
     await user.selectOptions(within(bar).getByRole("combobox", { name: "Move selected targets to group" }), "New group…");
     await user.type(within(bar).getByRole("textbox", { name: "New group name" }), "  Core   sites ");
     await user.click(within(bar).getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("heading", { name: "Move Core to Core sites?" })).toBeTruthy();
+    expect(screen.getByText(/This creates the new group/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Move" }));
     expect(move).toHaveBeenLastCalledWith([2], "Core sites");
     await user.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("checkbox")).toBeNull();
@@ -436,6 +448,8 @@ describe("dashboard", () => {
     await user.click(screen.getByRole("button", { name: "Select" }));
     await user.click(screen.getByRole("checkbox", { name: "Select every target shown" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "Move selected targets to group" }), "Remove from group");
+    expect(screen.getByRole("heading", { name: "Remove 2 targets from their groups?" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Remove from group" }));
     expect(move).toHaveBeenCalledWith([1, 2], "");
   });
 
@@ -490,10 +504,20 @@ describe("target groups on the target page", () => {
     await waitFor(() => expect([...menu.options].map((o) => o.textContent)).toEqual(["No group", "Branches", "Datacentre", "New group…"]));
     expect(menu.value).toBe("Branches");
     await user.selectOptions(menu, "Datacentre");
+    expect(screen.getByRole("heading", { name: "Move Office WAN to Datacentre?" })).toBeTruthy();
+    expect(screen.getByText(/It leaves/).textContent).toContain("Branches");
+    // Escape closes the dialog without a write.
+    await user.keyboard("{Escape}");
+    expect(update).not.toHaveBeenCalled();
+    expect(menu.value).toBe("Branches");
+    await user.selectOptions(menu, "Datacentre");
+    await user.click(screen.getByRole("button", { name: "Move" }));
     expect(update).toHaveBeenCalledWith(1, { group_name: "Datacentre" });
     expect(menu.value).toBe("Datacentre");
     await user.selectOptions(menu, "New group…");
     await user.type(screen.getByRole("textbox", { name: "New group name" }), "Labs{Enter}");
+    expect(screen.getByRole("heading", { name: "Move Office WAN to Labs?" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Move" }));
     expect(update).toHaveBeenLastCalledWith(1, { group_name: "Labs" });
     // Escape leaves the name field without a write.
     await user.selectOptions(screen.getByRole("combobox", { name: "Group" }), "New group…");
