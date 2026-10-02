@@ -7,6 +7,18 @@ import { TagColorPicker, useTagColors } from "./Tags";
 import { useToast } from "./Toast";
 import { classNames, latencyLabel, sortTags } from "../utils";
 
+// Well-known public resolvers offered as one-click fills for the encrypted transports.
+const ENCRYPTED_DNS_PRESETS: { name: string; dot: string; doh: string }[] = [
+  { name: "Cloudflare", dot: "one.one.one.one", doh: "https://cloudflare-dns.com/dns-query" },
+  { name: "Google", dot: "dns.google", doh: "https://dns.google/dns-query" },
+  { name: "Quad9", dot: "dns.quad9.net", doh: "https://dns.quad9.net/dns-query" },
+];
+const DNS_TRANSPORT_HELP: Record<DnsTransport, string> = {
+  udp: "Plain DNS, the default. Leave the resolver empty to use this server's own resolver.",
+  tcp: "Plain DNS over a TCP connection, as dig +tcp does. Leave the resolver empty to use this server's own resolver.",
+  dot: "Encrypted DNS over TLS on port 853. Enter the resolver's host name or IP below, or pick a public one.",
+  doh: "Encrypted DNS over HTTPS (RFC 8484). Enter the resolver's URL, host name or IP below, or pick a public one.",
+};
 const DNS_RECORD_TYPES: DnsRecordType[] = ["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA", "PTR", "SRV"];
 const GLOBALPING_HELP: Record<GlobalpingMeasurement, string> = {
   ping: "Round-trip time and loss as seen from the remote probe(s).",
@@ -256,7 +268,7 @@ export function TargetForm({
             {isPing && "ICMP echo to the destination only. Lightweight; good for many targets on short intervals."}
             {isHttp && "Fetch a URL and check the status code, and optionally a keyword or a JSON value. Warns before the TLS certificate expires."}
             {isTcp && "Open a TCP connection to a port and measure connect time. Good for services that do not answer ping."}
-            {isDns && "Resolve a name and check the answer, optionally against a specific resolver."}
+            {isDns && "Resolve a name and check the answer, optionally against a specific resolver. For encrypted DNS, choose DNS over TLS (DoT) or DNS over HTTPS (DoH) under Transport."}
             {isGlobalping && "Ping, traceroute, MTR, DNS or HTTP run from a remote Globalping probe (globalping.io): pick a country, city, network or ASN and see the result from there."}
           </div>
         </div>
@@ -480,11 +492,25 @@ export function TargetForm({
               <select className="input" aria-label="DNS transport" value={dnsTransport} onChange={(e) => setOpt("transport", e.target.value as DnsTransport)}>
                 {(Object.keys(DNS_TRANSPORT_LABEL) as DnsTransport[]).map((k) => <option key={k} value={k}>{DNS_TRANSPORT_LABEL[k]}</option>)}
               </select>
+              <div className="help" data-testid="dns-transport-help">{DNS_TRANSPORT_HELP[dnsTransport]}</div>
             </div>
             <div>
               <label className="label">{dnsEncrypted ? "Resolver" : "Resolver (optional)"}</label>
               <input className="input font-mono" aria-label="Resolver" value={form.options.resolver ?? ""} onChange={(e) => setOpt("resolver", e.target.value)} placeholder={dnsTransport === "doh" ? "https://dns.google/dns-query" : dnsTransport === "dot" ? "dns.google or 1.1.1.1" : "system resolver, or e.g. 1.1.1.1"} spellCheck={false} />
               {dnsTransport === "doh" && <div className="help">A host name or IP gets the standard /dns-query path; paste a full URL for any other path or port.</div>}
+              {dnsEncrypted && (
+                <div className="mt-1 flex flex-wrap items-center gap-1 text-xs" role="group" aria-label="Public resolvers">
+                  <span className="text-muted">Public:</span>
+                  {ENCRYPTED_DNS_PRESETS.map((p) => {
+                    const value = dnsTransport === "doh" ? p.doh : p.dot;
+                    return (
+                      <button key={p.name} type="button" className="btn btn-sm" title={value} aria-pressed={(form.options.resolver ?? "") === value} onClick={() => setOpt("resolver", value)}>
+                        {p.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             {dnsTransport !== "doh" && (
               <div>

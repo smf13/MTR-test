@@ -41,6 +41,8 @@ A **DNS** target asks one resolver for one record per run. **Transport** picks h
 | **DNS over TLS (DoT, port 853)** | Required: a host name or IP. | 853, or **Resolver port** |
 | **DNS over HTTPS (DoH)** | Required: a host name or IP (the standard `/dns-query` path is added) or a full `https://` URL for any other path or port. | From the URL, 443 by default |
 
+To set up encrypted DNS, select **Add target**, choose **DNS** as the probe type, enter the **Name to resolve** (for example `example.com`), then pick **DNS over TLS (DoT, port 853)** or **DNS over HTTPS (DoH)** under **Transport**. A help line under **Transport** says what the chosen transport does. For DoT and DoH, the **Public:** buttons under **Resolver** (**Cloudflare**, **Google**, **Quad9**) fill in that provider's resolver for the chosen transport (`one.one.one.one` / `https://cloudflare-dns.com/dns-query`, `dns.google` / `https://dns.google/dns-query`, `dns.quad9.net` / `https://dns.quad9.net/dns-query`); hovering a button shows the value, and the button of the resolver in the field shows as pressed. Any other resolver can be typed in.
+
 For DoT and DoH, **Verify the resolver's certificate** (on by default) checks the certificate against the resolver's host name, or its IP when an address is given. Turn it off only for internal resolvers with private certificates. The form refuses DoT or DoH without a resolver. A run's details list the **Resolver**, the address that answered and the **Transport**, with the port when it is not the standard one.
 
 A **Globalping** DNS measurement offers **Transport** too, limited to **UDP (port 53)** and **TCP (port 53)**: the remote probes speak plain DNS only.

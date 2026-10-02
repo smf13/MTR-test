@@ -87,6 +87,25 @@ describe("DNS transport", () => {
     expect(onSubmit.mock.calls[0][0].options).toMatchObject({ transport: "doh", resolver: "https://dns.example/dns-query", verify_tls: true });
   });
 
+  it("explains the chosen transport and fills a public resolver for DoT and DoH", async () => {
+    const onSubmit = vi.fn(async (_values: TargetInput) => undefined);
+    const user = await openDnsForm(onSubmit);
+    expect(screen.queryByRole("group", { name: "Public resolvers" })).toBeNull();  // plain DNS keeps the system resolver
+    const transport = screen.getByRole("combobox", { name: "DNS transport" });
+
+    await user.selectOptions(transport, "dot");
+    expect(screen.getByTestId("dns-transport-help").textContent).toMatch(/DNS over TLS on port 853/);
+    await user.click(screen.getByRole("button", { name: "Cloudflare" }));
+    expect((screen.getByRole("textbox", { name: "Resolver" }) as HTMLInputElement).value).toBe("one.one.one.one");
+
+    await user.selectOptions(transport, "doh");
+    await user.click(screen.getByRole("button", { name: "Google" }));
+    expect(screen.getByRole("button", { name: "Google" }).getAttribute("aria-pressed")).toBe("true");
+    await user.click(screen.getByRole("button", { name: "Add target" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].options).toMatchObject({ transport: "doh", resolver: "https://dns.google/dns-query" });
+  });
+
   it("keeps TCP on port 53 against the system resolver without asking for one", async () => {
     const onSubmit = vi.fn(async (_values: TargetInput) => undefined);
     const user = await openDnsForm(onSubmit);
