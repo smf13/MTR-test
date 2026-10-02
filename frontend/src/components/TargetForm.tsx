@@ -4,6 +4,7 @@ import { Modal } from "./Modal";
 import { NumberInput } from "./NumberInput";
 import { Segmented } from "./RangePicker";
 import { TagColorPicker, useTagColors } from "./Tags";
+import { GroupSelect, cleanGroupName } from "./GroupPicker";
 import { useToast } from "./Toast";
 import { classNames, latencyLabel, sortTags } from "../utils";
 
@@ -99,7 +100,7 @@ export function TargetForm({
   groups = [],
 }: {
   open: boolean;
-  /** Group names already in use, offered as suggestions in the Group field. */
+  /** Group names already in use, offered by the Group dropdown. */
   groups?: string[];
   /** The target being edited; absent when adding (or cloning, where `prefill` carries the copy). */
   initial?: Target | null;
@@ -223,7 +224,7 @@ export function TargetForm({
       options.headers = headers;
     }
     try {
-      await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), group_name: form.group_name.trim().replace(/\s+/g, " "), tags, options, port: isMtr && form.protocol === "icmp" ? null : form.port });
+      await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), group_name: cleanGroupName(form.group_name), tags, options, port: isMtr && form.protocol === "icmp" ? null : form.port });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       return;
@@ -556,9 +557,8 @@ export function TargetForm({
         </div>
         <div className="sm:col-span-2">
           <label className="label" htmlFor="target-group">Group (optional)</label>
-          <input id="target-group" className="input" list="target-groups" value={form.group_name} onChange={(e) => set("group_name", e.target.value)} placeholder="e.g. Branch offices" maxLength={60} />
-          <datalist id="target-groups">{groups.map((g) => <option key={g} value={g} />)}</datalist>
-          <div className="help">Targets in the same group share a collapsible section on the dashboard. Leave empty for none.</div>
+          <GroupSelect id="target-group" value={form.group_name} groups={groups} onChange={(v) => set("group_name", v)} />
+          <div className="help">Targets in the same group share a collapsible section on the dashboard. Pick <em>New group…</em> to start one.</div>
         </div>
         <div className="sm:col-span-2">
           <label className="label">Tags (comma separated)</label>

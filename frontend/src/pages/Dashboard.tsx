@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Plus, Search, Play, Clock, GitBranch, Activity, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, ChevronRight, LineChart, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
+import { Plus, Search, Play, Clock, GitBranch, Activity, ShieldCheck, RefreshCw, ChevronDown, ChevronUp, ChevronRight, LineChart, ChevronsDownUp, ChevronsUpDown, ListChecks, Pencil } from "lucide-react";
 import { api, cloneInput, type Target, type TargetInput } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { MutedBadge, TargetActions } from "../components/TargetActions";
@@ -9,7 +9,8 @@ import { StatusBadge } from "../components/StatusBadge";
 import { StatTile } from "../components/StatTile";
 import { Sparkline } from "../components/Sparkline";
 import { TargetForm } from "../components/TargetForm";
-import { ConfirmDialog } from "../components/Modal";
+import { ConfirmDialog, Modal } from "../components/Modal";
+import { GroupMenu, cleanGroupName } from "../components/GroupPicker";
 import { EmptyState, ErrorBanner } from "../components/EmptyState";
 import { Segmented } from "../components/RangePicker";
 import { StatusStrip } from "../components/StatusStrip";
@@ -43,6 +44,10 @@ export function Dashboard() {
   const [prefill, setPrefill] = useState<Partial<TargetInput> | null>(null);
   // Set while cloning, so the form says which target the copy comes from.
   const [formTitle, setFormTitle] = useState<string | undefined>(undefined);
+  // Selection mode: a checkbox on every card and row, and a bar that moves the chosen targets into a group.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
+  const [renaming, setRenaming] = useState<string | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -94,6 +99,45 @@ export function Dashboard() {
   const isOpen = (name: string | null) => name === null || filtering || !collapsed.includes(name);
   const toggleGroup = (name: string) => setCollapsed(collapsed.includes(name) ? collapsed.filter((n) => n !== name) : [...collapsed, name]);
   const allCollapsed = groupNames.length > 0 && [...groupNames, ""].every((n) => collapsed.includes(n));
+
+  // Targets deleted meanwhile drop out of the selection.
+  const selectedIds = useMemo(() => (targets.data ?? []).filter((t) => selected.has(t.id)).map((t) => t.id), [targets.data, selected]);
+  const shownIds = sections.filter((sec) => isOpen(sec.name)).flatMap((sec) => sec.items.map((t) => t.id));
+  const select = (ids: number[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
+      return next;
+    });
+  const stopSelecting = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
+
+  const moveSelected = async (group: string) => {
+    const ids = selectedIds;
+    if (!ids.length) return false;
+    try {
+      await api.moveToGroup(ids, group);
+      const what = `${ids.length} target${ids.length === 1 ? "" : "s"}`;
+      toast(group ? `Moved ${what} to ${group}` : `Removed ${what} from their group`, "success");
+      setSelected(new Set());
+      // Show where they went.
+      if (collapsed.includes(group)) setCollapsed(collapsed.filter((n) => n !== group));
+      void targets.refresh();
+      return true;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+      return false;
+    }
+  };
+
+  const renamed = (from: string, to: string) => {
+    // A collapsed group stays collapsed under its new name.
+    if (collapsed.includes(from)) setCollapsed([...collapsed.filter((n) => n !== from && n !== to), to]);
+    setRenaming(null);
+    void targets.refresh();
+  };
 
   const counts = useMemo(() => {
     const c = { up: 0, degraded: 0, down: 0, paused: 0, pending: 0 };
@@ -257,6 +301,11 @@ export function Dashboard() {
           </select>
         </label>
         <div className="flex items-center gap-2 sm:ml-auto">
+        {total > 0 && (
+          <button className={classNames("btn btn-sm", selecting && "btn-primary")} aria-pressed={selecting} onClick={() => (selecting ? stopSelecting() : setSelecting(true))} title={selecting ? "Leave selection mode" : "Select targets to move them into a group"}>
+            <ListChecks size={14} /> {selecting ? "Done" : "Select"}
+          </button>
+        )}
         {groupNames.length > 0 && (
           <button className="btn btn-sm" onClick={() => setCollapsed(allCollapsed ? [] : [...groupNames, ""])} title={allCollapsed ? "Expand every group" : "Collapse every group"}>
             {allCollapsed ? <><ChevronsUpDown size={14} /> Expand all</> : <><ChevronsDownUp size={14} /> Collapse all</>}
@@ -272,6 +321,18 @@ export function Dashboard() {
         />
         </div>
       </div>
+
+      {selecting && total > 0 && (
+        <div className="card sticky top-16 z-20 flex flex-wrap items-center gap-2 px-4 py-2.5 shadow-lg lg:top-2" role="region" aria-label="Selected targets">
+          <span className="text-sm font-medium" data-testid="selection-count">{selectedIds.length} selected</span>
+          <button className="btn btn-ghost btn-sm" onClick={() => select(shownIds, true)} disabled={!shownIds.length || shownIds.every((id) => selected.has(id))}>Select all shown</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())} disabled={!selectedIds.length}>Clear</button>
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            {selectedIds.length === 0 && <span className="text-xs text-faint">Tick targets, then pick a group</span>}
+            <GroupMenu label="Move selected targets to group" groups={groupNames} disabled={!selectedIds.length} onPick={moveSelected} />
+          </div>
+        </div>
+      )}
 
       {!targets.loading && total === 0 && (
         <div className="card">
@@ -296,7 +357,7 @@ export function Dashboard() {
             const grid = (
               <div id={sec.name !== null ? groupPanelId(sec.name) : undefined} className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
                 {sec.items.map((t) => (
-                  <TargetCard key={t.id} t={t} now={now} onEdit={() => { setEditing(t); setFormOpen(true); }} onClone={() => clone(t)} onDelete={() => setDeleting(t)} onToggle={() => toggle(t)} onToggleNotify={() => toggleNotify(t)} onRun={() => runNow(t)} />
+                  <TargetCard key={t.id} t={t} now={now} selected={selecting ? selected.has(t.id) : undefined} onSelect={(on) => select([t.id], on)} onEdit={() => { setEditing(t); setFormOpen(true); }} onClone={() => clone(t)} onDelete={() => setDeleting(t)} onToggle={() => toggle(t)} onToggleNotify={() => toggleNotify(t)} onRun={() => runNow(t)} />
                 ))}
               </div>
             );
@@ -304,7 +365,7 @@ export function Dashboard() {
             const open = isOpen(sec.name);
             return (
               <section key={sec.name} aria-label={groupLabel(sec.name)} className="space-y-3">
-                <GroupHeader name={sec.name} items={sec.items} open={open} forced={filtering} onToggle={() => toggleGroup(sec.name!)} />
+                <GroupHeading name={sec.name} items={sec.items} open={open} forced={filtering} onToggle={() => toggleGroup(sec.name!)} onRename={() => setRenaming(sec.name)} selected={selecting ? selected : undefined} onSelect={select} />
                 {open && grid}
               </section>
             );
@@ -312,11 +373,12 @@ export function Dashboard() {
         </div>
       ) : (
         <div className="card overflow-hidden">
-          <TargetTable sections={sections} isOpen={isOpen} forced={filtering} onToggleGroup={toggleGroup} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onToggleNotify={toggleNotify} onRun={runNow} />
+          <TargetTable sections={sections} isOpen={isOpen} forced={filtering} onToggleGroup={toggleGroup} onRenameGroup={setRenaming} selected={selecting ? selected : undefined} onSelect={select} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onToggleNotify={toggleNotify} onRun={runNow} />
         </div>
       )}
 
       <TargetForm groups={groupNames} open={formOpen} initial={editing} prefill={prefill} title={formTitle} submitLabel={formTitle ? "Create clone" : undefined} onClose={closeForm} onSubmit={submit} submitting={saving} />
+      <RenameGroupDialog name={renaming} groups={groupNames} onClose={() => setRenaming(null)} onDone={renamed} />
       <ConfirmDialog
         open={!!deleting}
         title={`Delete ${deleting?.name ?? ""}?`}
@@ -372,15 +434,95 @@ function GroupHeader({ name, items, open, forced, onToggle }: { name: string; it
   );
 }
 
-function TargetCard({ t, now, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { t: Target; now: number; onEdit: () => void; onClone: () => void; onDelete: () => void; onToggle: () => void; onToggleNotify: () => void; onRun: () => void }) {
+/**
+ * A group's heading row: the toggle, a pencil that renames the group (not on Ungrouped) and, in selection mode, a
+ * checkbox that selects or clears every target of the group.
+ */
+function GroupHeading({ name, items, open, forced, onToggle, onRename, selected, onSelect }: { name: string; items: Target[]; open: boolean; forced: boolean; onToggle: () => void; onRename: () => void; selected?: ReadonlySet<number>; onSelect: (ids: number[], on: boolean) => void }) {
+  const chosen = selected ? items.filter((t) => selected.has(t.id)).length : 0;
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      {selected && (
+        <input
+          type="checkbox"
+          className="ml-1 shrink-0"
+          aria-label={`Select every target in ${groupLabel(name)}`}
+          checked={chosen === items.length}
+          ref={(el) => {
+            if (el) el.indeterminate = chosen > 0 && chosen < items.length;
+          }}
+          onChange={(e) => onSelect(items.map((t) => t.id), e.target.checked)}
+        />
+      )}
+      <div className="min-w-0 flex-1">
+        <GroupHeader name={name} items={items} open={open} forced={forced} onToggle={onToggle} />
+      </div>
+      {name && (
+        <button type="button" className="btn btn-ghost btn-sm shrink-0 text-faint" onClick={onRename} aria-label={`Rename group ${name}`} title="Rename group">
+          <Pencil size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Rename a group: every target in it gets the new name; a name already in use merges the two groups. */
+function RenameGroupDialog({ name, groups, onClose, onDone }: { name: string | null; groups: string[]; onClose: () => void; onDone: (from: string, to: string) => void }) {
+  const toast = useToast();
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (name !== null) setDraft(name);
+  }, [name]);
+  const next = cleanGroupName(draft);
+  const mergesInto = name !== null && next !== name ? groups.find((g) => g === next) : undefined;
+  const submit = async () => {
+    if (name === null || !next) return;
+    if (next === name) return onClose();
+    setSaving(true);
+    try {
+      const r = await api.renameGroup(name, next);
+      toast(r.merged ? `Merged ${name} into ${r.new_name}` : `Renamed ${name} to ${r.new_name}`, "success");
+      onDone(name, r.new_name);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal
+      open={name !== null}
+      onClose={onClose}
+      title={`Rename group ${name ?? ""}`}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" form="rename-group-form" type="submit" disabled={!next || saving}>{mergesInto ? "Merge groups" : "Rename"}</button>
+        </>
+      }
+    >
+      <form id="rename-group-form" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+        <label className="label" htmlFor="rename-group">New name</label>
+        <input id="rename-group" className="input" autoFocus value={draft} maxLength={60} onChange={(e) => setDraft(e.target.value)} />
+        <div className="help" data-testid="rename-group-help">
+          {mergesInto ? <>A group named <strong>{mergesInto}</strong> already exists; its targets and these will form one group.</> : "Every target in the group moves to the new name."}
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function TargetCard({ t, now, selected, onSelect, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { t: Target; now: number; selected?: boolean; onSelect: (on: boolean) => void; onEdit: () => void; onClone: () => void; onDelete: () => void; onToggle: () => void; onToggleNotify: () => void; onRun: () => void }) {
   const status = effectiveStatus(t);
   const run = t.latest_run;
   const loss = run?.loss_pct ?? null;
   const { colors: tagColors } = useTagColors();
   return (
-    <article className="card fade-in min-w-0 p-4" aria-label={t.name}>
+    <article className={classNames("card fade-in min-w-0 p-4", selected && "ring-2 ring-accent")} aria-label={t.name}>
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        {selected !== undefined && <input type="checkbox" className="mt-1.5 shrink-0" aria-label={`Select ${t.name}`} checked={selected} onChange={(e) => onSelect(e.target.checked)} />}
+        <div className="min-w-0 flex-1">
           <Link to={`/targets/${t.id}`} className="block truncate text-base font-semibold hover:text-accent">{t.name}</Link>
           <div className="mt-1 flex items-center gap-2 text-xs text-muted"><TypeBadge type={t.type} /><span className="truncate font-mono" title={t.host}>{hostLabel(t.host)}</span></div>
         </div>
@@ -489,12 +631,27 @@ export function IconBtn({ title, onClick, children, danger }: { title: string; o
 
 const TABLE_COLUMNS = 14;
 
-function TargetTable({ sections, isOpen, forced, onToggleGroup, now, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { sections: Section[]; isOpen: (name: string | null) => boolean; forced: boolean; onToggleGroup: (name: string) => void; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onToggleNotify: (t: Target) => void; onRun: (t: Target) => void }) {
+function TargetTable({ sections, isOpen, forced, onToggleGroup, onRenameGroup, selected, onSelect, now, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { sections: Section[]; isOpen: (name: string | null) => boolean; forced: boolean; onToggleGroup: (name: string) => void; onRenameGroup: (name: string) => void; selected?: ReadonlySet<number>; onSelect: (ids: number[], on: boolean) => void; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onToggleNotify: (t: Target) => void; onRun: (t: Target) => void }) {
+  const shown = sections.filter((sec) => isOpen(sec.name)).flatMap((sec) => sec.items);
+  const chosen = selected ? shown.filter((t) => selected.has(t.id)).length : 0;
   return (
     <div className="overflow-x-auto">
       <table className="table num">
         <thead>
           <tr>
+            {selected && (
+              <th className="w-8">
+                <input
+                  type="checkbox"
+                  aria-label="Select every target shown"
+                  checked={shown.length > 0 && chosen === shown.length}
+                  ref={(el) => {
+                    if (el) el.indeterminate = chosen > 0 && chosen < shown.length;
+                  }}
+                  onChange={(e) => onSelect(shown.map((t) => t.id), e.target.checked)}
+                />
+              </th>
+            )}
             <th>Target</th>
             <th>Status</th>
             <th className="text-right">Latency (ms)</th>
@@ -515,9 +672,9 @@ function TargetTable({ sections, isOpen, forced, onToggleGroup, now, onEdit, onC
         <tbody key={sec.name ?? "all"} id={sec.name !== null && isOpen(sec.name) ? groupPanelId(sec.name) : undefined}>
           {sec.name !== null && (
             <tr className="group-row">
-              <td colSpan={TABLE_COLUMNS} className="font-sans">
+              <td colSpan={TABLE_COLUMNS + (selected ? 1 : 0)} className="font-sans">
                 <div className="sticky left-0 w-[min(100%,calc(100vw-4rem))]">
-                  <GroupHeader name={sec.name} items={sec.items} open={isOpen(sec.name)} forced={forced} onToggle={() => onToggleGroup(sec.name!)} />
+                  <GroupHeading name={sec.name} items={sec.items} open={isOpen(sec.name)} forced={forced} onToggle={() => onToggleGroup(sec.name!)} onRename={() => onRenameGroup(sec.name!)} selected={selected} onSelect={onSelect} />
                 </div>
               </td>
             </tr>
@@ -527,6 +684,11 @@ function TargetTable({ sections, isOpen, forced, onToggleGroup, now, onEdit, onC
             const run = t.latest_run;
             return (
               <tr key={t.id}>
+                {selected && (
+                  <td className="w-8">
+                    <input type="checkbox" aria-label={`Select ${t.name}`} checked={selected.has(t.id)} onChange={(e) => onSelect([t.id], e.target.checked)} />
+                  </td>
+                )}
                 <td className="font-sans">
                   <Link to={`/targets/${t.id}`} className="font-semibold hover:text-accent">
                     {t.name}

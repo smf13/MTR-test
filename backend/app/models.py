@@ -474,8 +474,30 @@ class RunDelete(BaseModel):
 
 
 class BulkAction(BaseModel):
-    action: Literal["pause", "resume", "mute", "unmute", "run", "delete"]
+    action: Literal["pause", "resume", "mute", "unmute", "run", "delete", "group"]
     ids: list[int] = Field(min_length=1, max_length=1000)
+    group_name: str | None = Field(default=None, max_length=200, description="for action 'group': the group to move the targets into; empty = ungrouped")
+
+    @model_validator(mode="after")
+    def _check_group(self) -> "BulkAction":
+        if self.action == "group":
+            if self.group_name is None:
+                raise ValueError("action 'group' needs group_name (empty to remove the targets from their group)")
+            self.group_name = _clean_group_value(self.group_name)
+        return self
+
+
+class GroupRename(BaseModel):
+    name: str = Field(min_length=1, max_length=200, description="the group's current name, exactly as stored")
+    new_name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("new_name")
+    @classmethod
+    def _clean_new_name(cls, v: str) -> str:
+        v = _clean_group_value(v)
+        if not v:
+            raise ValueError("the new group name must not be empty")
+        return v
 
 
 class TargetImport(BaseModel):

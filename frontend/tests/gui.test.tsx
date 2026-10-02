@@ -392,6 +392,75 @@ describe("dashboard", () => {
     expect(document.querySelector(".group-header")).toBeNull();
   });
 
+  it("moves selected targets into an existing or a new group", async () => {
+    const user = userEvent.setup();
+    const member = (id: number, name: string, group_name: string): Target => ({ ...target, id, name, group_name });
+    vi.spyOn(api, "targets").mockResolvedValue([member(1, "Branch A", "Branches"), member(2, "Core", "Datacentre"), member(3, "Loose", ""), member(4, "Spare", "")]);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+    const move = vi.spyOn(api, "moveToGroup").mockResolvedValue({ action: "group", affected: [] });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("article", { name: "Loose" });
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    const bar = screen.getByRole("region", { name: "Selected targets" });
+    const menu = within(bar).getByRole("combobox", { name: "Move selected targets to group" }) as HTMLSelectElement;
+    expect(menu.disabled).toBe(true);
+    await user.click(screen.getByRole("checkbox", { name: "Select Loose" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select Spare" }));
+    expect(within(bar).getByTestId("selection-count").textContent).toBe("2 selected");
+    // The Ungrouped heading's box reflects that both of its targets are chosen.
+    expect((screen.getByRole("checkbox", { name: "Select every target in Ungrouped" }) as HTMLInputElement).checked).toBe(true);
+    expect([...menu.options].map((o) => o.textContent)).toEqual(["Move to group…", "Branches", "Datacentre", "Remove from group", "New group…"]);
+    await user.selectOptions(menu, "Branches");
+    expect(move).toHaveBeenCalledWith([3, 4], "Branches");
+    await waitFor(() => expect(within(bar).getByTestId("selection-count").textContent).toBe("0 selected"));
+
+    // A whole group at once, into a group that does not exist yet.
+    await user.click(screen.getByRole("checkbox", { name: "Select every target in Datacentre" }));
+    await user.selectOptions(within(bar).getByRole("combobox", { name: "Move selected targets to group" }), "New group…");
+    await user.type(within(bar).getByRole("textbox", { name: "New group name" }), "  Core   sites ");
+    await user.click(within(bar).getByRole("button", { name: "Save" }));
+    expect(move).toHaveBeenLastCalledWith([2], "Core sites");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("selects targets from the table view too", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("mtr-tracker.view", JSON.stringify("table"));
+    vi.spyOn(api, "targets").mockResolvedValue([{ ...target, id: 1, name: "Branch A", group_name: "Branches" }, { ...target, id: 2, name: "Loose", group_name: "" }]);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+    const move = vi.spyOn(api, "moveToGroup").mockResolvedValue({ action: "group", affected: [] });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("link", { name: "Branch A" });
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select every target shown" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Move selected targets to group" }), "Remove from group");
+    expect(move).toHaveBeenCalledWith([1, 2], "");
+  });
+
+  it("renames a group, warns before merging and keeps it collapsed", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("mtr-tracker.collapsed-groups", JSON.stringify(["branches"]));
+    vi.spyOn(api, "targets").mockResolvedValue([{ ...target, id: 1, name: "Branch A", group_name: "branches" }, { ...target, id: 2, name: "Core", group_name: "Datacentre" }]);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+    const rename = vi.spyOn(api, "renameGroup").mockResolvedValue({ name: "branches", new_name: "Branch offices", renamed: 1, merged: false });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("article", { name: "Core" });
+    expect(screen.queryByRole("button", { name: /Rename group Ungrouped/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Rename group branches" }));
+    const input = screen.getByRole("textbox", { name: "New name" });
+    await user.clear(input);
+    await user.type(input, "Datacentre");
+    expect(screen.getByTestId("rename-group-help").textContent).toMatch(/already exists/);
+    expect(screen.getByRole("button", { name: "Merge groups" })).toBeTruthy();
+    await user.clear(input);
+    await user.type(input, "Branch  offices{Enter}");
+    expect(rename).toHaveBeenCalledWith("branches", "Branch offices");
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "New name" })).toBeNull());
+    expect(JSON.parse(localStorage.getItem("mtr-tracker.collapsed-groups")!)).toEqual(["Branch offices"]);
+  });
+
   it("keeps clone prefill and filtering working with the new card controls", async () => {
     const user = userEvent.setup();
     vi.spyOn(api, "targets").mockResolvedValue([target]);
@@ -407,5 +476,47 @@ describe("dashboard", () => {
     expect(screen.getByText("No matching targets")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Clear filter" }));
     expect(screen.getByRole("article", { name: "Office WAN" })).toBeTruthy();
+  });
+});
+
+describe("target groups on the target page", () => {
+  it("moves the target from the header's Group dropdown", async () => {
+    const user = userEvent.setup();
+    mockDetail({ ...target, group_name: "Branches" });
+    vi.spyOn(api, "groups").mockResolvedValue([{ name: "Branches", count: 2 }, { name: "Datacentre", count: 1 }]);
+    const update = vi.spyOn(api, "updateTarget").mockResolvedValue({ ...target, group_name: "Datacentre" });
+    renderDetail();
+    const menu = (await screen.findByRole("combobox", { name: "Group" })) as HTMLSelectElement;
+    await waitFor(() => expect([...menu.options].map((o) => o.textContent)).toEqual(["No group", "Branches", "Datacentre", "New group…"]));
+    expect(menu.value).toBe("Branches");
+    await user.selectOptions(menu, "Datacentre");
+    expect(update).toHaveBeenCalledWith(1, { group_name: "Datacentre" });
+    expect(menu.value).toBe("Datacentre");
+    await user.selectOptions(menu, "New group…");
+    await user.type(screen.getByRole("textbox", { name: "New group name" }), "Labs{Enter}");
+    expect(update).toHaveBeenLastCalledWith(1, { group_name: "Labs" });
+    // Escape leaves the name field without a write.
+    await user.selectOptions(screen.getByRole("combobox", { name: "Group" }), "New group…");
+    await user.type(screen.getByRole("textbox", { name: "New group name" }), "Nope{Escape}");
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("combobox", { name: "Group" })).toBeTruthy();
+  });
+
+  it("offers the groups in use as a dropdown with a New group option in the form", async () => {
+    const user = userEvent.setup();
+    mockDetail({ ...target, group_name: "Branches" });
+    vi.spyOn(api, "groups").mockResolvedValue([{ name: "Branches", count: 2 }, { name: "Datacentre", count: 1 }]);
+    const update = vi.spyOn(api, "updateTarget").mockResolvedValue(target);
+    renderDetail();
+    await user.click(await screen.findByRole("button", { name: "Actions for Office WAN" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+    const field = screen.getByRole("combobox", { name: "Group (optional)" }) as HTMLSelectElement;
+    expect(field.value).toBe("Branches");
+    expect([...field.options].map((o) => o.textContent)).toEqual(["No group", "Branches", "Datacentre", "New group…"]);
+    await user.selectOptions(field, "New group…");
+    await user.type(screen.getByRole("textbox", { name: "New group name" }), " Edge   sites ");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(update.mock.calls[0][1]).toMatchObject({ group_name: "Edge sites" });
   });
 });

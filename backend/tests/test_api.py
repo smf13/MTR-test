@@ -397,6 +397,40 @@ async def test_target_groups(client: AsyncClient) -> None:
     assert (await client.get(f"/api/targets/{plain['id']}")).json()["group_name"] == "Branches"
 
 
+async def test_group_list_rename_and_bulk_move(client: AsyncClient) -> None:
+    async def make(name: str, group: str) -> int:
+        r = await client.post("/api/targets", json={"name": name, "host": "192.0.2.93", "interval_sec": 60, "enabled": False, "group_name": group})
+        return int(r.json()["id"])
+
+    a, b, c, d = await make("A", "branches"), await make("B", "Branches"), await make("C", "Datacentre"), await make("D", "")
+    assert (await client.get("/api/groups")).json() == [{"name": "Branches", "count": 1}, {"name": "branches", "count": 1}, {"name": "Datacentre", "count": 1}]
+
+    # Bulk move: into a new group, whitespace cleaned; an empty name ungroups.
+    r = await client.post("/api/targets/bulk", json={"action": "group", "ids": [a, d], "group_name": "  Branch   offices "})
+    assert r.status_code == 200, r.text
+    assert sorted(r.json()["affected"]) == sorted([a, d])
+    groups = {t["id"]: t["group_name"] for t in (await client.get("/api/targets")).json()}
+    assert groups[a] == groups[d] == "Branch offices" and groups[b] == "Branches"
+    await client.post("/api/targets/bulk", json={"action": "group", "ids": [d], "group_name": ""})
+    assert (await client.get(f"/api/targets/{d}")).json()["group_name"] == ""
+    assert (await client.post("/api/targets/bulk", json={"action": "group", "ids": [a]})).status_code == 422
+    assert (await client.post("/api/targets/bulk", json={"action": "group", "ids": [999999], "group_name": "X"})).status_code == 404
+
+    # Rename: every member moves, the exact (case-sensitive) name is matched, and a clash merges.
+    r = (await client.post("/api/groups/rename", json={"name": "Branch offices", "new_name": " Offices "})).json()
+    assert r == {"name": "Branch offices", "new_name": "Offices", "renamed": 1, "merged": False}
+    assert (await client.get(f"/api/targets/{a}")).json()["group_name"] == "Offices"
+    r = (await client.post("/api/groups/rename", json={"name": "Datacentre", "new_name": "Offices"})).json()
+    assert r["merged"] is True and r["renamed"] == 1
+    assert (await client.get("/api/groups")).json() == [{"name": "Branches", "count": 1}, {"name": "Offices", "count": 2}]
+    assert (await client.get(f"/api/targets/{b}")).json()["group_name"] == "Branches"
+    same = (await client.post("/api/groups/rename", json={"name": "Offices", "new_name": "Offices"})).json()
+    assert same["renamed"] == 2 and same["merged"] is False
+    assert (await client.post("/api/groups/rename", json={"name": "Nowhere", "new_name": "X"})).status_code == 404
+    assert (await client.post("/api/groups/rename", json={"name": "Offices", "new_name": "   "})).status_code == 422
+    assert (await client.get(f"/api/targets/{c}")).json()["group_name"] == "Offices"
+
+
 async def test_group_column_is_added_to_an_existing_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async with app_client(tmp_path, monkeypatch) as c:
         tid = (await c.post("/api/targets", json={"name": "Old", "host": "192.0.2.92", "interval_sec": 60, "enabled": False})).json()["id"]

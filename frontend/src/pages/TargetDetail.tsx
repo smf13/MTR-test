@@ -21,6 +21,7 @@ import { StatusStrip } from "../components/StatusStrip";
 import { Pager } from "../components/Pager";
 import { TypeBadge } from "../components/TypeBadge";
 import { TargetForm } from "../components/TargetForm";
+import { GroupMenu } from "../components/GroupPicker";
 import { ConfirmDialog } from "../components/Modal";
 import { ClearHistoryDialog } from "../components/ClearHistory";
 import { ErrorBanner } from "../components/EmptyState";
@@ -91,9 +92,9 @@ export function TargetDetail() {
   const routes = usePoll(() => api.routes(targetId, range), pollMs, [targetId, range]);
   const hourly = usePoll(() => api.hourly(targetId, range), Math.max(pollMs, 60000), [targetId, range]);
   const geo = usePoll(() => api.geo(targetId), pollMs, [targetId]);
-  // The other targets' group names, for the Group field's suggestions; fetched only while the form is open.
-  const others = usePoll(() => api.targets(), 60000, [], editing || cloning);
-  const groupNames = useMemo(() => [...new Set((others.data ?? []).map((o) => o.group_name ?? "").filter(Boolean))].sort((a, b) => a.localeCompare(b)), [others.data]);
+  // The groups in use, for the header's Group dropdown and the form's Group field.
+  const groups = usePoll(() => api.groups(), 60000, []);
+  const groupNames = useMemo(() => (groups.data ?? []).map((g) => g.name), [groups.data]);
 
   useEffect(() => setRunPage(0), [range, runFilter]);
   useEffect(() => setSelectedRuns(new Set()), [targetId, range, runFilter, runPage]);
@@ -109,7 +110,8 @@ export function TargetDetail() {
     void routes.refresh();
     void hourly.refresh();
     void geo.refresh();
-  }, [target, series, latest, history, summary, runs, events, routes, hourly, geo]);
+    void groups.refresh();
+  }, [target, series, latest, history, summary, runs, events, routes, hourly, geo, groups]);
 
   const t: Target | null = target.data;
   const stats = t?.stats;
@@ -164,6 +166,21 @@ export function TargetDetail() {
       void target.refresh();
     } catch (e) {
       report(e);
+    }
+  };
+
+  /** The header's Group dropdown: move this target at once. */
+  const moveToGroup = async (group: string) => {
+    if (!t) return false;
+    try {
+      await api.updateTarget(t.id, { group_name: group });
+      toast(group ? `Moved to ${group}` : "Removed from its group", "info");
+      void target.refresh();
+      void groups.refresh();
+      return true;
+    } catch (e) {
+      report(e);
+      return false;
     }
   };
 
@@ -248,7 +265,7 @@ export function TargetDetail() {
             {!t.notify && <MutedBadge />}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
-            {t.group_name && <span className="inline-flex items-center gap-1" title="Group"><Folder size={12} /> {t.group_name}</span>}
+            <span className="inline-flex items-center gap-1" title="Group"><Folder size={12} aria-hidden /><GroupMenu label="Group" groups={groupNames} current={t.group_name ?? ""} onPick={moveToGroup} /></span>
             <TypeBadge type={t.type} />
             <span className="font-mono break-all">{t.type === "http" ? t.host : hostLabel(t.host)}</span>
             {run?.dst_ip && run.dst_ip !== t.host && t.type !== "http" && <span className="font-mono text-faint">→ {run.dst_ip}</span>}

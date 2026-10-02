@@ -19,7 +19,7 @@ from fastapi.responses import PlainTextResponse
 from . import __version__, geoip, ipapi
 from .config import config
 from .db import Database, rows_to_dicts
-from .models import BulkAction, NotificationTest, ProbeRequest, RunDelete, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, upgrade_http_options, validate_options
+from .models import BulkAction, GroupRename, NotificationTest, ProbeRequest, RunDelete, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, upgrade_http_options, validate_options
 from .mtr import min_probe_interval, mtr_version, routes_equivalent, run_mtr
 from .notify import NotifyError, format_pushover_text, send_pushover, send_webhook, target_url
 from .resolver import resolve_host, reverse_lookup_many
@@ -443,6 +443,32 @@ async def list_tags(request: Request) -> list[dict[str, Any]]:
     return [{"name": tag, "count": counts[tag], "color": colors.get(tag)} for tag in sort_tags(list(counts))]
 
 
+@router.get("/groups")
+async def list_groups(request: Request) -> list[dict[str, Any]]:
+    """Every group in use, in the dashboard's order, with how many targets it holds. Ungrouped targets are not listed."""
+    rows = await _db(request).fetchall(
+        "SELECT group_name AS name, COUNT(*) AS n FROM targets WHERE group_name <> '' GROUP BY group_name ORDER BY lower(group_name), group_name COLLATE \"C\""
+    )
+    return [{"name": r["name"], "count": int(r["n"])} for r in rows]
+
+
+@router.post("/groups/rename")
+async def rename_group(request: Request, body: GroupRename) -> dict[str, Any]:
+    """Give every target of a group a new group name. Renaming onto a group that already exists merges the two."""
+    db = _db(request)
+    if body.new_name == body.name:
+        count = await db.fetchval("SELECT COUNT(*) FROM targets WHERE group_name = ?", (body.name,))
+        if not count:
+            raise HTTPException(404, "no target is in that group")
+        return {"name": body.name, "new_name": body.new_name, "renamed": int(count), "merged": False}
+    async with db.transaction() as tx:
+        merged = bool(await tx.fetchval("SELECT COUNT(*) FROM targets WHERE group_name = ?", (body.new_name,)))
+        renamed = await tx.execute("UPDATE targets SET group_name = ?, updated_at = ? WHERE group_name = ?", (body.new_name, time.time(), body.name))
+    if not renamed:
+        raise HTTPException(404, "no target is in that group")
+    return {"name": body.name, "new_name": body.new_name, "renamed": renamed, "merged": merged}
+
+
 async def _insert_target(db: Database, data: dict[str, Any]) -> int:
     now = time.time()
     return int(await db.fetchval(
@@ -521,6 +547,8 @@ async def bulk_targets(request: Request, body: BulkAction) -> dict[str, Any]:
         await db.execute(f"UPDATE targets SET enabled = 1, last_status = 'pending', next_run_at = ?, updated_at = ? WHERE id IN ({ph})", [time.time(), time.time(), *ids])
     elif body.action in ("mute", "unmute"):
         await db.execute(f"UPDATE targets SET notify = ?, updated_at = ? WHERE id IN ({ph})", [int(body.action == "unmute"), time.time(), *ids])
+    elif body.action == "group":
+        await db.execute(f"UPDATE targets SET group_name = ?, updated_at = ? WHERE id IN ({ph})", [body.group_name, time.time(), *ids])
     elif body.action == "run":
         for tid in ids:
             await _sched(request).run_now(tid)

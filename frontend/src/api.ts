@@ -684,6 +684,20 @@ export interface PathGeo {
   destination: GeoDestination | null;
 }
 
+/** A dashboard group in use (`GET /api/groups`); ungrouped targets are not listed. */
+export interface GroupInfo {
+  name: string;
+  count: number;
+}
+
+export interface GroupRenamed {
+  name: string;
+  new_name: string;
+  renamed: number;
+  /** The new name already existed, so the two groups are now one. */
+  merged: boolean;
+}
+
 export interface TagInfo {
   name: string;
   count: number;
@@ -800,6 +814,10 @@ export const api = {
 
   targets: () => request<Target[]>("/api/targets"),
   tags: () => request<TagInfo[]>("/api/tags"),
+  groups: () => request<GroupInfo[]>("/api/groups"),
+  /** Give every target of group `name` the group `newName`; an existing `newName` merges the two. */
+  renameGroup: (name: string, newName: string) =>
+    request<GroupRenamed>("/api/groups/rename", { method: "POST", body: JSON.stringify({ name, new_name: newName }) }),
   target: (id: number, range: string) => request<Target>(`/api/targets/${id}?range=${encodeURIComponent(range)}`),
   createTarget: (body: TargetInput) => request<Target>("/api/targets", { method: "POST", body: JSON.stringify(body) }),
   updateTarget: (id: number, patch: Partial<TargetInput>) =>
@@ -810,6 +828,9 @@ export const api = {
     request<{ created: number; updated: number; total: number }>("/api/targets/import", { method: "POST", body: JSON.stringify({ targets, mode }) }),
   bulk: (action: "pause" | "resume" | "mute" | "unmute" | "run" | "delete", ids: number[]) =>
     request<{ action: string; affected: number[] }>("/api/targets/bulk", { method: "POST", body: JSON.stringify({ action, ids }) }),
+  /** Move targets into group `group` ("" removes them from their group). */
+  moveToGroup: (ids: number[], group: string) =>
+    request<{ action: string; affected: number[] }>("/api/targets/bulk", { method: "POST", body: JSON.stringify({ action: "group", ids, group_name: group }) }),
   /** Delete a target's whole history (runs and events), or only its failed runs and their events. */
   clearRuns: (id: number, scope: "all" | "failed") => request<HistoryDeleted>(`/api/targets/${id}/runs?status=${scope}`, { method: "DELETE" }),
   /** Delete chosen runs of a target and the events that point at them. */
