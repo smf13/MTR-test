@@ -23,7 +23,7 @@ const target = {
   probe_interval: 1, protocol: "icmp", port: null, packet_size: 64, ip_version: "auto", max_hops: 30, enabled: true, notify: true,
   alert_loss_pct: 0, alert_latency_ms: 0, created_at: timestamp, updated_at: timestamp, next_run_at: timestamp, last_run_at: timestamp,
   last_status: "up", latest_run: run, running: false,
-  stats_24h: { runs: 1, availability_pct: 100, avg_ms: 12, loss_pct: 0, route_changes: 0 },
+  stats_24h: { runs: 1, availability_pct: 100, avg_ms: 12, median_ms: 11, loss_pct: 0, route_changes: 0 },
   sparkline: [], timeline: { bucket_sec: 1800, since: timestamp, buckets: [] },
 } as unknown as Target;
 

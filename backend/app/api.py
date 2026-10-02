@@ -364,7 +364,8 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]], timelin
 
     stat_rows = await db.fetchall(
         f"SELECT target_id, COUNT(*) AS n, SUM(CASE WHEN status='ok' AND reached=1 THEN 1 ELSE 0 END) AS ok_n, "
-        f"AVG(CASE WHEN reached=1 THEN avg_ms END) AS avg_ms, AVG(loss_pct) AS loss_pct, "
+        f"AVG(CASE WHEN reached=1 THEN avg_ms END) AS avg_ms, "
+        f"percentile_cont(0.5) WITHIN GROUP (ORDER BY CASE WHEN reached=1 THEN avg_ms END) AS median_ms, AVG(loss_pct) AS loss_pct, "
         f"SUM(route_changed) AS route_changes FROM runs WHERE started_at >= ? AND target_id IN ({placeholders}) GROUP BY target_id",
         [since, *ids],
     )
@@ -408,6 +409,7 @@ async def _attach_summaries(db: Database, targets: list[dict[str, Any]], timelin
             "runs": n,
             "availability_pct": round(100.0 * ok_n / n, 2) if n else None,
             "avg_ms": round(st["avg_ms"], 2) if st.get("avg_ms") is not None else None,
+            "median_ms": round(st["median_ms"], 2) if st.get("median_ms") is not None else None,
             "loss_pct": round(st["loss_pct"], 2) if st.get("loss_pct") is not None else None,
             "route_changes": int(st.get("route_changes") or 0),
         }

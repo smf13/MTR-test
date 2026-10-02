@@ -345,6 +345,8 @@ export interface Target {
     runs: number;
     availability_pct: number | null;
     avg_ms: number | null;
+    /** Median of the reached runs' average latency over 24 hours. */
+    median_ms: number | null;
     loss_pct: number | null;
     route_changes: number;
   };

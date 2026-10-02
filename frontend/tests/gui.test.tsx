@@ -32,7 +32,7 @@ const target: Target = {
   tags: ["wan"], group_name: "", interval_sec: 60, count: 10, probe_interval: 1, protocol: "icmp", port: null,
   packet_size: 64, ip_version: "auto", max_hops: 30, enabled: true, notify: true, alert_loss_pct: 5,
   alert_latency_ms: 200, created_at: timestamp, updated_at: timestamp, next_run_at: null,
-  last_status: "up", latest_run: run, stats_24h: { runs: 1, availability_pct: 100, avg_ms: 12, loss_pct: 0, route_changes: 0 },
+  last_status: "up", latest_run: run, stats_24h: { runs: 1, availability_pct: 100, avg_ms: 12, median_ms: 11, loss_pct: 0, route_changes: 0 },
   sparkline: [{ t: timestamp, avg: 12, loss: 0, reached: true }],
   timeline: { bucket_sec: 1800, since: timestamp, buckets: [{ s: "up", n: 1, avg: 12 }] },
 };
@@ -133,6 +133,20 @@ describe("route-change markers", () => {
     expect(thinRouteChanges(sparse, [start, start + day], 600).map((r) => r.t)).toEqual(sparse.filter((r) => r.routeChanged).map((r) => r.t));
     // A zero-width plot (before the ResizeObserver reports) still returns a marker rather than throwing.
     expect(thinRouteChanges(rows, [start, start + day], 0).length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("range statistics", () => {
+  it("shows the median as its own tile next to the average", async () => {
+    mockDetail({ ...target, stats: { range_sec: 86400, runs: 10, ok_runs: 10, failed_runs: 0, availability_pct: 100, avg_ms: 18.4, p50_ms: 12.1, p95_ms: 40, p99_ms: 55, best_ms: 9, worst_ms: 70, loss_pct: 0, max_loss_pct: 0, jitter_ms: 2, route_changes: 0, hop_count_min: 1, hop_count_max: 1, events: 0 } });
+    renderDetail();
+    const median = await screen.findByText("Median · 24h");
+    expect(median.parentElement?.parentElement?.textContent).toContain("12.1 ms");
+    expect(median.parentElement?.parentElement?.textContent).toContain("p95 40.0 · p99 55.0");
+    const avg = median.parentElement?.parentElement?.previousElementSibling;
+    expect(avg?.textContent).toContain("Avg · 24h");
+    expect(avg?.textContent).toContain("18.4 ms");
+    expect(avg?.textContent).toContain("best 9.0 · worst 70.0");
   });
 });
 
@@ -320,6 +334,14 @@ describe("dashboard", () => {
     await screen.findByRole("article", { name: "Target 1" });
     expect(screen.getByText("Mean latency").parentElement?.parentElement?.textContent).toContain("44.0 ms");
     expect(screen.getByText("Median latency").parentElement?.parentElement?.textContent).toContain("20.0 ms");
+  });
+
+  it("shows each card's 24-hour average and median latency", async () => {
+    vi.spyOn(api, "targets").mockResolvedValue([{ ...target, stats_24h: { ...target.stats_24h, avg_ms: 18.4, median_ms: 12.1 } }]);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    const card = await screen.findByRole("article", { name: "Office WAN" });
+    expect(within(card).getByTestId("card-latency-24h").textContent).toBe("24h avg 18.4 ms24h median 12.1 ms");
   });
 
   it("puts grouped targets in collapsible sections that remember their state", async () => {

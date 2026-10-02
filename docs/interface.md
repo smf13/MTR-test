@@ -12,7 +12,7 @@ Below the chart, search by name, host, description, group or tag. Choose **Cards
 
 **Groups.** Once a target has a **Group** (set in the target form; the field suggests the names already in use), the cards and the table are split into one collapsible section per group, in alphabetical order, with targets without a group last under **Ungrouped**. Each heading is a button showing the group's name, how many targets it holds and how many of them are down, degraded, pending, up or paused, with a dot in the colour of the worst state, so a collapsed group still tells you whether it needs attention. Select it (or press Enter or Space on it) to collapse or expand the group; **Collapse all** / **Expand all** next to **Cards** and **Table** does every group at once. Which groups are collapsed is remembered in this browser. While the search field holds text, matching targets are shown even inside collapsed groups. Sorting applies within each group. Without any group the dashboard shows one plain list as before. The target page shows the group next to the probe type.
 
-Cards emphasize the latest measurement and a sparkline that fills the available width. They also show 24-hour availability, a status timeline, the probe schedule and tags. HTTP, TCP and DNS targets show pass/fail and use **Response**, **Connect** or **Lookup** for the main timing metric. Packet-based probes show loss.
+Cards emphasize the latest measurement and a sparkline that fills the available width. Under the latest measurement, two small lines give the **24h avg** and **24h median** of the runs that reached the destination over the last 24 hours; the median is the typical value, so a few slow runs move the average but not the median. Cards also show 24-hour availability, a status timeline, the probe schedule and tags. HTTP, TCP and DNS targets show pass/fail and use **Response**, **Connect** or **Lookup** for the main timing metric. Packet-based probes show loss.
 
 ## Target actions
 
@@ -68,7 +68,7 @@ Saving a target closes the form as soon as the change is stored; the dashboard l
 
 The time-range selector offers **1h**, **6h**, **24h**, **7d** and **30d**. It controls historical statistics, charts, runs and events. The latest measurement/current path always comes from the newest run. The status strip under the statistics follows the selected range too (**Status · 7d**): 48 cells, each coloured by the worst run in it, with the cell width under the heading and the date in each cell's tooltip once the range is longer than a day. The dashboard cards keep a 24-hour strip.
 
-Statistics and charts stay together on one page: current and range statistics (the **Avg · [range]** tile lists the median, p95 and p99 beneath the mean), the 24-hour status strip, latency/loss charts, latency distribution and the hour-by-day heatmap. Packet probes also show jitter. Path probes show a route timeline and **Path profile**; other probes show **Latest check** details.
+Statistics and charts stay together on one page: current and range statistics (the **Avg · [range]** tile lists the best and worst run beneath the mean, and the **Median · [range]** tile next to it lists p95 and p99 beneath the median; on wide screens the tiles take two rows of four), the 24-hour status strip, latency/loss charts, latency distribution and the hour-by-day heatmap. Packet probes also show jitter. Path probes show a route timeline and **Path profile**; other probes show **Latest check** details.
 
 The data tabs sit below the charts. Switching between them keeps the charts visible above.
 

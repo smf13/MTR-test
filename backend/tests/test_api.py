@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
 
-from helpers import app_client, wait_for_runs as _wait_for_runs, wait_until
+from helpers import app_client, app_of, wait_for_runs as _wait_for_runs, wait_until
 
 
 async def test_target_lifecycle_and_run(client: AsyncClient) -> None:
@@ -452,3 +453,20 @@ async def test_status_history_rebuilds_periods_from_status_events(client: AsyncC
     t = (await client.get(f"/api/targets/{tid}?range=7d")).json()
     assert t["timeline"]["bucket_sec"] == 7 * 86400 // 48 and len(t["timeline"]["buckets"]) == 48
     assert (await client.get(f"/api/targets/{tid}")).json()["timeline"]["bucket_sec"] == 1800
+
+
+async def test_dashboard_reports_24h_average_and_median_latency(client: AsyncClient) -> None:
+    t = (await client.post("/api/targets", json={"name": "Median", "host": "192.0.2.91", "interval_sec": 60, "enabled": False})).json()
+    db = app_of(client).state.db
+    now = time.time()
+    # Three reached runs and an unreached one whose latency must not count; one run older than 24 hours.
+    for started, avg, reached in [(now - 300, 10.0, 1), (now - 200, 20.0, 1), (now - 100, 90.0, 1), (now - 50, 500.0, 0), (now - 90000, 1000.0, 1)]:
+        await db.execute(
+            "INSERT INTO runs(target_id, started_at, finished_at, duration_ms, status, reached, hop_count, sent, loss_pct, avg_ms) "
+            "VALUES (?, ?, ?, 1000, 'ok', ?, 0, 1, 0, ?)",
+            (t["id"], started, started + 1, reached, avg),
+        )
+    listed = next(x for x in (await client.get("/api/targets")).json() if x["id"] == t["id"])
+    assert listed["stats_24h"]["avg_ms"] == 40.0 and listed["stats_24h"]["median_ms"] == 20.0
+    detail = (await client.get(f"/api/targets/{t['id']}?range=24h")).json()
+    assert detail["stats"]["avg_ms"] == 40.0 and detail["stats"]["p50_ms"] == 20.0

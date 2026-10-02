@@ -12,7 +12,7 @@ See the [interface guide](docs/interface.md) for the current navigation, target 
 
 All captures show the current interface running in simulation mode with a week of seeded history.
 
-**Dashboard**: health summary, the latency comparison chart and target cards with sparkline, 24-hour status timeline, schedule and tags.
+**Dashboard**: health summary, the latency comparison chart and target cards with the latest latency, the 24-hour average and median, sparkline, 24-hour status timeline, schedule and tags.
 
 ![Dashboard with health summary, latency comparison chart and target cards](docs/dashboard.png)
 
@@ -316,7 +316,7 @@ Interactive API documentation is available at `/api/docs`, with the OpenAPI sche
 | --- | --- | --- |
 | `GET` | `/api/status` | Engine status, counters, mtr version, `db_size_bytes` (the database on disk, catalogs included), `environment` (the startup variables as applied, defaults filled in; the token only as `(set)`, the database URL and data directory only with the token) and, with the token, `database` (the connection URL without its password) |
 | `GET` / `PUT` | `/api/settings` | Global settings |
-| `GET` / `POST` | `/api/targets` | List (with 24h stats, sparkline and status timeline; sorted by name, case-insensitively) / create |
+| `GET` / `POST` | `/api/targets` | List (with 24h stats including the average and median latency, sparkline and status timeline; sorted by name, case-insensitively) / create |
 | `GET` | `/api/tags` | Tags in use with target counts and configured colours (`settings.tag_colors`) |
 | `GET` | `/api/targets/export` | Portable target definitions (no runs), sorted by name, case-insensitively |
 | `POST` | `/api/targets/import` | Bulk create/update: `{ "mode": "upsert" \| "create" \| "replace", "targets": [...] }` |

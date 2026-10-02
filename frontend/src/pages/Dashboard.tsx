@@ -394,6 +394,10 @@ function TargetCard({ t, now, onEdit, onClone, onDelete, onToggle, onToggleNotif
         <div>
           <div className="text-xs font-medium text-muted">{latencyLabel(t.type, t.options)}</div>
           <div className="num mt-1 text-3xl font-semibold tracking-tight">{run?.reached ? fmtNum(run.avg_ms) : "–"}{run?.reached && <span className="ml-1 text-sm font-normal text-muted">ms</span>}</div>
+          <div className="num mt-1 text-xs leading-snug text-muted" data-testid="card-latency-24h" title="Average and median of the reached runs over the last 24 hours">
+            <div className="truncate">24h avg <span className="font-medium text-text">{fmtNum(t.stats_24h.avg_ms)}</span>{t.stats_24h.avg_ms !== null && " ms"}</div>
+            <div className="truncate">24h median <span className="font-medium text-text">{fmtNum(t.stats_24h.median_ms)}</span>{t.stats_24h.median_ms !== null && " ms"}</div>
+          </div>
         </div>
         <Link to={`/targets/${t.id}`} className="block min-w-0" aria-label={`View latency for ${t.name}`}>
           <Sparkline points={t.sparkline} width={300} height={48} fluid />
