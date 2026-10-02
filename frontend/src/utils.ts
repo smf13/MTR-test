@@ -78,8 +78,8 @@ export function timeTicks(domain: [number, number], plotWidth: number): number[]
   const [start, end] = domain;
   const span = end - start;
   if (!(span > 0)) return [start];
-  // n labels need n - 1 gaps of about 64 px ("12:00 PM" at 12 px plus air).
-  const maxTicks = Math.max(2, Math.floor(plotWidth / 64) + 1);
+  // n labels need n - 1 gaps of about 80 px ("12:00 PM" at 12 px is about 56 px, plus air between labels).
+  const maxTicks = Math.max(2, Math.floor(plotWidth / 80) + 1);
   const stepMin = TICK_STEPS_MIN.find((s) => span / (s * 60_000) <= maxTicks) ?? Math.ceil(span / 60_000 / maxTicks / 10080) * 10080;
   const step = stepMin * 60_000;
   // Align to the browser's local clock, so ticks land on 14:00 or midnight rather than on UTC boundaries.

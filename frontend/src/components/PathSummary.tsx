@@ -55,7 +55,7 @@ function Row({ hop, entry, alt, altCount, silentRuns, expanded, onToggle, maxAvg
       <td className="font-sans">
         <div className="flex items-center gap-1.5">
           {!alt && altCount > 0 ? (
-            <button className="text-faint hover:text-text" onClick={onToggle} title={`${altCount} alternate address${altCount > 1 ? "es" : ""} seen at this hop`}>
+            <button className="text-faint hover:text-text" onClick={onToggle} aria-expanded={expanded} title={`${altCount} alternate address${altCount > 1 ? "es" : ""} seen at this hop`}>
               {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </button>
           ) : (

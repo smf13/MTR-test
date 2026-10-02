@@ -270,7 +270,7 @@ export const LatencyHistogram = memo(function LatencyHistogram({ points, height 
           return (
           <ComposedChart width={width} height={height} data={rows} margin={{ top: 6 + rowCount * HIST_LABEL_ROW_H, right: HIST_MARGIN_RIGHT, bottom: 0, left: 0 }}>
             <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
-            <XAxis dataKey="x" type="number" domain={edges} tickFormatter={(v: number) => fmtNum(v, 0)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} unit=" ms" />
+            <XAxis dataKey="x" type="number" domain={edges} tickFormatter={(v: number) => fmtNum(v, edges[1] - edges[0] < 10 ? 1 : 0)} tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} unit=" ms" />
             <YAxis tick={{ fontSize: 12, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} width={HIST_Y_AXIS_W} allowDecimals={false} />
             <Tooltip
               isAnimationActive={false}

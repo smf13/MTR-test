@@ -16,7 +16,11 @@ All captures show the current interface running in simulation mode with a week o
 
 ![Dashboard with health summary, latency comparison chart and target cards](docs/dashboard.png)
 
-**Target page**: current and range statistics, the status strip, round-trip time with a route-change marker, the route timeline, packet loss and jitter.
+**Groups**: each group collapses to one heading that still counts its targets per state.
+
+![Dashboard with one group open and three collapsed](docs/dashboard-groups.png)
+
+**Target page**: current and range statistics, the status strip for the selected range, round-trip time with route-change markers, the route timeline, packet loss and jitter.
 
 ![Target page with statistics, latency chart, route timeline, loss and jitter](docs/target.png)
 

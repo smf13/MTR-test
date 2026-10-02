@@ -263,7 +263,10 @@ describe("detail navigation", () => {
     expect(within(within(table).getAllByRole("row")[1]).getByText("3 silent")).toBeTruthy();
     // The ASN cell names the organisation under the number, as the hop table does.
     expect(within(within(table).getAllByRole("row")[1]).getAllByRole("cell")[2].textContent).toBe("AS64500Example Transit GmbH");
-    await user.click(screen.getByRole("button", { name: "1 alternate address seen at this hop" }));
+    const toggle = screen.getByRole("button", { name: "1 alternate address seen at this hop" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     const rows = within(table).getAllByRole("row");
     expect(rows).toHaveLength(3);
     expect(within(rows[2]).getByText("alternate.example")).toBeTruthy();

@@ -1,26 +1,30 @@
 # Interface screenshots
 
-These captures show the current MTR Tracker interface. They were taken with headless Chromium against the application running in simulation mode (`MTR_TRACKER_SIMULATE=1`) with a week of seeded history: ten targets covering every probe type, scripted outages, loss and latency incidents and route changes. Use the [interface guide](interface.md) for navigation and controls, or return to the [README](../README.md).
+These captures show the current MTR Tracker interface. They were taken with headless Chromium against the application running in simulation mode (`MTR_TRACKER_SIMULATE=1`) with a week of seeded history: ten targets covering every probe type, in three groups plus one ungrouped target, with scripted outages, loss and latency incidents and route changes. Use the [interface guide](interface.md) for navigation and controls, or return to the [README](../README.md).
 
 Desktop captures use a 1440 px wide viewport and the dark theme unless stated otherwise; phone captures use a 390 px wide viewport.
 
 ## Dashboard
 
-Health summary, the **Latency across targets** comparison chart, filters and target cards.
+Health summary, the **Latency across targets** comparison chart, filters and target cards, here in the first group (**Branch offices**).
 
 ![Dashboard with health summary, latency comparison chart and target cards](dashboard.png)
 
-The **Table** view of the same targets.
+Groups collapse to one heading each. A collapsed group still counts its targets per state, and its dot takes the colour of the worst one: **DNS** holds a degraded target.
+
+![Dashboard with Branch offices open and the DNS, Web services and Ungrouped groups collapsed](dashboard-groups.png)
+
+The **Table** view of the same targets, with a heading row per group.
 
 ![Dashboard table view](dashboard-table.png)
 
 ## Target page
 
-Header, range selector, current and range statistics, the 24-hour status strip and the time-series charts. The dashed line on the latency chart marks a route change; the route timeline below it shows which path was in use when.
+Header (with the target's group), range selector, current and range statistics, the status strip for the selected range and the time-series charts. The dashed lines on the latency chart mark route changes; the route timeline below it shows which path was in use when.
 
 ![Target page with statistics, latency chart, route timeline, loss and jitter](target.png)
 
-Path profile, latency distribution with percentile markers and the hour-by-day heatmap.
+Path profile, latency distribution with percentile markers and the hour-by-day heatmap, over seven days for a Globalping MTR target. Hop 5 answers no probe, which the profile shows as a loss bar.
 
 ![Path profile, latency distribution and hourly heatmap](target-visuals.png)
 
@@ -37,6 +41,10 @@ Path profile, latency distribution with percentile markers and the hour-by-day h
 **Path summary**: per-hop statistics over the range with an alternate address expanded at hop 4.
 
 ![Path summary with an alternate address expanded](path-summary.png)
+
+**Status history**: the up, degraded and down periods of the range (seven days here), with the time spent in each status, the alert that began each period and its run.
+
+![Status history tab](status-history.png)
 
 **Runs**: paginated run history with result filters. The two most recent runs of this target failed to reach the destination.
 
@@ -55,6 +63,8 @@ A Globalping HTTP measurement from three remote probes, each listed with its res
 ## Events and target form
 
 ![Events page](events.png)
+
+The add form with the new **Group** field, which suggests the groups already in use.
 
 ![Add target form](target-form.png)
 
@@ -75,6 +85,6 @@ Light theme on a target page and the OLED (true black) theme on the dashboard.
 ## Regenerating these captures
 
 1. Build the frontend (`npm run build` in `frontend/`) and start the backend in simulation mode with an empty data directory, using IP-literal or fictional hosts, reverse DNS disabled and notification channels disabled.
-2. Seed history rather than waiting for it: call `Scheduler._execute` for each target at backdated timestamps (patch `time.time`), so the rows are exactly what the scheduler writes. Park `next_run_at` in the future afterwards so the live scheduler does not add runs while capturing.
+2. Seed history rather than waiting for it: call `Scheduler._execute` for each target at backdated timestamps (patch `time.time`, and make the simulator's `asyncio.sleep` return at once), so the rows are exactly what the scheduler writes. The simulators' own dice add a random route flip, incident or failed check every few runs, far noisier than a real week; give `mtr`, `probes` and `globalping` a `random.Random` subclass whose direct rolls from a `_simulate*` function never fall below 0.05, and script the incidents instead (`mtr._SIM_STATE[dst]`: `incident`, `incident_hop`, `incident_kind`, or a hop's `ip` for a reroute). A loss threshold of 20% keeps the simulator's rate-limited hops from flagging every run. The fast clock leaves every run with a near-zero duration, so set `duration_ms` and `finished_at` to realistic values per probe type afterwards. Park `next_run_at` in the future so the live scheduler does not add runs while capturing.
 3. Capture with headless Chromium (Playwright) at 1440 px wide, clipping each section to its card, and again at 390 px wide for the phone layout. Move the pointer away from charts before capturing so no tooltip is open.
-4. Include the dashboard, a target page with the full Current path table, Path history, Path summary with alternate addresses expanded, Runs, a non-path probe, the events page and all three themes. Check each image against the current interface before replacing the files.
+4. The theme preference (`mtr-tracker.theme`) is stored as plain text, every other preference as JSON. Include the dashboard (cards with groups open and collapsed, and the table), a target page with the full Current path table, Path history, Path summary with alternate addresses expanded, Status history, Runs, a non-path probe, the events page and all three themes. Check each image against the current interface before replacing the files.
