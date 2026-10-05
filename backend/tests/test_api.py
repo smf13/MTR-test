@@ -431,6 +431,64 @@ async def test_group_list_rename_and_bulk_move(client: AsyncClient) -> None:
     assert (await client.get(f"/api/targets/{c}")).json()["group_name"] == "Offices"
 
 
+async def test_bulk_tag_and_untag(client: AsyncClient) -> None:
+    async def make(name: str, tags: list[str]) -> int:
+        r = await client.post("/api/targets", json={"name": name, "host": "192.0.2.94", "interval_sec": 60, "enabled": False, "tags": tags})
+        return int(r.json()["id"])
+
+    async def tags_of(tid: int) -> list[str]:
+        return (await client.get(f"/api/targets/{tid}")).json()["tags"]
+
+    a, b, c = await make("A", ["wan"]), await make("B", ["core", "wan"]), await make("C", [])
+
+    # Adding keeps each target's other tags, cleans and sorts the names, and reports only the targets that changed.
+    r = await client.post("/api/targets/bulk", json={"action": "tag", "ids": [a, b, c], "tags": ["  wan ", "Critical", "wan"]})
+    assert r.status_code == 200, r.text
+    assert sorted(r.json()["affected"]) == sorted([a, b, c])
+    assert sorted(r.json()["changed"]) == sorted([a, b, c])
+    assert await tags_of(a) == ["Critical", "wan"]
+    assert await tags_of(b) == ["core", "Critical", "wan"]
+    assert await tags_of(c) == ["Critical", "wan"]
+    again = (await client.post("/api/targets/bulk", json={"action": "tag", "ids": [a, b], "tags": ["wan"]})).json()
+    assert again["changed"] == []
+    assert (await client.get("/api/tags")).json() == [
+        {"name": "core", "count": 1, "color": None},
+        {"name": "Critical", "count": 3, "color": None},
+        {"name": "wan", "count": 3, "color": None},
+    ]
+
+    # Removing takes only the named tags; a target without the tag is left alone.
+    r = await client.post("/api/targets/bulk", json={"action": "untag", "ids": [b, c], "tags": ["core", "Critical"]})
+    assert sorted(r.json()["changed"]) == sorted([b, c])
+    assert await tags_of(b) == ["wan"]
+    assert await tags_of(c) == ["wan"]
+    assert await tags_of(a) == ["Critical", "wan"]
+    assert (await client.post("/api/targets/bulk", json={"action": "untag", "ids": [c], "tags": ["core"]})).json()["changed"] == []
+
+    # Both actions need a tag (an all-blank list counts as none), and unknown targets are a 404.
+    assert (await client.post("/api/targets/bulk", json={"action": "tag", "ids": [a]})).status_code == 422
+    assert (await client.post("/api/targets/bulk", json={"action": "untag", "ids": [a], "tags": ["  "]})).status_code == 422
+    assert (await client.post("/api/targets/bulk", json={"action": "tag", "ids": [999999], "tags": ["x"]})).status_code == 404
+
+
+async def test_bulk_tag_limit_is_all_or_nothing(client: AsyncClient) -> None:
+    full = [f"t{i:02d}" for i in range(20)]
+    r = await client.post("/api/targets", json={"name": "Full", "host": "192.0.2.95", "interval_sec": 60, "enabled": False, "tags": full})
+    full_id = int(r.json()["id"])
+    r = await client.post("/api/targets", json={"name": "Roomy", "host": "192.0.2.96", "interval_sec": 60, "enabled": False})
+    roomy_id = int(r.json()["id"])
+
+    r = await client.post("/api/targets/bulk", json={"action": "tag", "ids": [roomy_id, full_id], "tags": ["extra"]})
+    assert r.status_code == 422
+    assert "Full" in r.json()["detail"] and "20" in r.json()["detail"]
+    # Neither target changed, including the one that had room.
+    assert (await client.get(f"/api/targets/{roomy_id}")).json()["tags"] == []
+    assert (await client.get(f"/api/targets/{full_id}")).json()["tags"] == full
+    # A tag the full target already carries is no addition at all.
+    assert (await client.post("/api/targets/bulk", json={"action": "tag", "ids": [roomy_id, full_id], "tags": ["t00"]})).status_code == 200
+    assert (await client.get(f"/api/targets/{roomy_id}")).json()["tags"] == ["t00"]
+
+
 async def test_group_column_is_added_to_an_existing_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     async with app_client(tmp_path, monkeypatch) as c:
         tid = (await c.post("/api/targets", json={"name": "Old", "host": "192.0.2.92", "interval_sec": 60, "enabled": False})).json()["id"]

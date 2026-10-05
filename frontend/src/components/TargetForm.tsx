@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, DEFAULT_OPTIONS, DNS_TRANSPORT_LABEL, JSON_OPERATOR_LABEL, LATENCY_ALERT_DEFAULT, NUMERIC_JSON_OPERATORS, PROBE_TYPE_LABEL, targetInput, type DnsRecordType, type DnsTransport, type GlobalpingHttpMethod, type GlobalpingHttpProtocol, type GlobalpingMeasurement, type HttpMethod, type IpVersion, type JsonOperator, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
 import { Modal } from "./Modal";
 import { NumberInput } from "./NumberInput";
 import { Segmented } from "./RangePicker";
 import { TagColorPicker, useTagColors } from "./Tags";
+import { TagSelect } from "./TagPicker";
 import { GroupSelect, cleanGroupName } from "./GroupPicker";
 import { useToast } from "./Toast";
 import { classNames, latencyLabel, sortTags } from "../utils";
@@ -57,16 +58,6 @@ function hostFromUrl(value: string): string {
   return m ? m[1] : value;
 }
 
-/** Comma-separated text -> trimmed, de-duplicated tags (order as typed; sorted where displayed and stored). */
-function parseTags(text: string): string[] {
-  const out: string[] = [];
-  for (const raw of text.split(",")) {
-    const t = raw.trim();
-    if (t && !out.includes(t)) out.push(t);
-  }
-  return out;
-}
-
 const INTERVAL_PRESETS: { label: string; value: number }[] = [
   { label: "30s", value: 30 },
   { label: "1 min", value: 60 },
@@ -113,15 +104,14 @@ export function TargetForm({
   submitting: boolean;
 }) {
   const [form, setForm] = useState<TargetInput>(DEFAULTS);
-  const [tagText, setTagText] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
   const [advanced, setAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [headersText, setHeadersText] = useState("");
   const toast = useToast();
-  const { colors: tagColors, refresh: refreshTagColors } = useTagColors();
+  const { colors: tagColors, known: knownTags, refresh: refreshTagColors } = useTagColors();
   // Colour choices made in this form: tag -> hex, or null for "back to automatic". Saved once the target is saved.
   const [colorDraft, setColorDraft] = useState<Record<string, string | null>>({});
-  const parsedTags = useMemo(() => sortTags(parseTags(tagText)), [tagText]);
 
   // Initialise the fields when the form opens or when a different target is edited. The deps deliberately use
   // the target's id rather than the object: the target page re-fetches its target every few seconds and hands
@@ -134,7 +124,7 @@ export function TargetForm({
     const base: TargetInput = initial ? targetInput(initial) : { ...DEFAULTS, ...(prefill ?? {}) };
     const type = base.type || "mtr";
     setForm({ ...base, type, options: { ...DEFAULT_OPTIONS[type], ...(base.options || {}) } });
-    setTagText(base.tags.join(", "));
+    setTags(sortTags(base.tags));
     setAdvanced(base.protocol !== "icmp" || base.packet_size !== 64 || base.max_hops !== 30 || base.ip_version !== "auto" || base.probe_interval !== 1);
     setHeadersText(Object.entries(base.options?.headers || {}).map(([k, v]) => `${k}: ${v}`).join("\n"));
     setError(null);
@@ -205,7 +195,6 @@ export function TargetForm({
     if (!form.name.trim()) return setError("Name is required.");
     if (!form.host.trim()) return setError("Host is required.");
     if (durationWarn) return setError(`A run takes about ${runDuration}s (probes × probe interval, plus mtr's final wait), which does not fit the ${form.interval_sec}s schedule. Increase the interval or lower the probe count.`);
-    const tags = parsedTags;
     if (isTcp && !form.port) return setError("TCP probes need a port.");
     if (isHttp && (form.options.json_query ?? "").trim()) {
       const expected = (form.options.json_expected ?? "").trim();
@@ -224,12 +213,14 @@ export function TargetForm({
       options.headers = headers;
     }
     try {
-      await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), group_name: cleanGroupName(form.group_name), tags, options, port: isMtr && form.protocol === "icmp" ? null : form.port });
+      await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), group_name: cleanGroupName(form.group_name), tags: sortTags(tags), options, port: isMtr && form.protocol === "icmp" ? null : form.port });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       return;
     }
     await saveTagColors(tags);
+    // The new target may carry tags no other form has seen yet.
+    void refreshTagColors();
   };
 
   return (
@@ -561,16 +552,17 @@ export function TargetForm({
           <div className="help">Targets in the same group share a collapsible section on the dashboard. Pick <em>New group…</em> to start one.</div>
         </div>
         <div className="sm:col-span-2">
-          <label className="label">Tags (comma separated)</label>
-          <input className="input" value={tagText} onChange={(e) => setTagText(e.target.value)} placeholder="wan, isp-a, critical" />
-          {parsedTags.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              {parsedTags.map((tag) => (
-                <TagColorPicker key={tag} tag={tag} value={colorDraft[tag] !== undefined ? colorDraft[tag] : (tagColors[tag] ?? null)} onChange={(hex) => setColorDraft((d) => ({ ...d, [tag]: hex }))} />
-              ))}
-              <span className="text-[11px] text-faint">Sorted alphabetically. Click a tag to pick its colour; it applies wherever the tag is used.</span>
-            </div>
-          )}
+          <label className="label" htmlFor="target-tags">Tags (optional)</label>
+          <TagSelect
+            id="target-tags"
+            value={tags}
+            known={knownTags}
+            onChange={setTags}
+            note={tags.length > 0 ? "Click a tag to pick its colour; it applies wherever the tag is used." : undefined}
+            renderTag={(tag) => (
+              <TagColorPicker tag={tag} value={colorDraft[tag] !== undefined ? colorDraft[tag] : (tagColors[tag] ?? null)} onChange={(hex) => setColorDraft((d) => ({ ...d, [tag]: hex }))} />
+            )}
+          />
         </div>
 
         <div>

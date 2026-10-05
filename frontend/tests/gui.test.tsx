@@ -11,6 +11,10 @@ import { Sparkline } from "../src/components/Sparkline";
 import { HeatLegend } from "../src/components/HopHeatmap";
 import { TargetDetail } from "../src/pages/TargetDetail";
 import { Dashboard } from "../src/pages/Dashboard";
+import { TagColorsProvider } from "../src/components/Tags";
+import { ToastProvider } from "../src/components/Toast";
+import { TagSelect, parseTagNames } from "../src/components/TagPicker";
+import { matchesTags } from "../src/utils";
 
 const timestamp = "2026-09-17T12:00:00Z";
 const hop: Hop = {
@@ -542,6 +546,272 @@ describe("target groups on the target page", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalled());
     expect(update.mock.calls[0][1]).toMatchObject({ group_name: "Edge sites" });
+  });
+});
+
+describe("tags on the dashboard", () => {
+  const member = (id: number, name: string, tags: string[], group_name = ""): Target => ({ ...target, id, name, tags, group_name });
+  const fleet = () => [member(1, "Alpha", ["core", "wan"]), member(2, "Bravo", ["wan"]), member(3, "Charlie", ["lab"]), member(4, "Delta", [])];
+  const mockFleet = (targets: Target[] = fleet()) => {
+    vi.spyOn(api, "targets").mockResolvedValue(targets);
+    vi.spyOn(api, "overview").mockResolvedValue({ targets: [], bucket_sec: 600, range_sec: 86400 });
+  };
+  const shown = () => screen.queryAllByRole("article").map((a) => a.getAttribute("aria-label"));
+
+  it("filters by one or several tags, matching any or all of them", async () => {
+    const user = userEvent.setup();
+    mockFleet();
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("article", { name: "Alpha" });
+    const menu = screen.getByRole("combobox", { name: "Filter by tag" }) as HTMLSelectElement;
+    expect([...menu.options].map((o) => o.textContent)).toEqual(["Filter by tag…", "core (1)", "lab (1)", "wan (2)"]);
+    expect(screen.queryByRole("group", { name: "Active tag filter" })).toBeNull();
+
+    await user.selectOptions(menu, "wan");
+    expect(shown()).toEqual(["Alpha", "Bravo"]);
+    const active = screen.getByRole("group", { name: "Active tag filter" });
+    expect(within(active).getByRole("button", { name: "Remove tag wan" })).toBeTruthy();
+    // A tag already in the filter is no longer offered; Any/All only appears with two or more.
+    expect([...menu.options].map((o) => o.textContent)).toEqual(["Filter by tag…", "core (1)", "lab (1)"]);
+    expect(within(active).queryByRole("button", { name: "All tags" })).toBeNull();
+
+    // Any tag (the default): Charlie joins; All tags: only the target with both.
+    await user.selectOptions(menu, "lab");
+    expect(shown()).toEqual(["Alpha", "Bravo", "Charlie"]);
+    await user.click(within(active).getByRole("button", { name: "All tags" }));
+    expect(shown()).toEqual([]);
+    await user.click(within(active).getByRole("button", { name: "Remove tag lab" }));
+    await user.selectOptions(menu, "core");
+    expect(shown()).toEqual(["Alpha"]);
+    expect(within(active).getByRole("button", { name: "All tags" }).getAttribute("aria-pressed")).toBe("true");
+
+    // Combines with the text filter, and Clear tags empties the filter.
+    await user.type(screen.getByRole("textbox", { name: "Filter targets" }), "bravo");
+    expect(shown()).toEqual([]);
+    expect(screen.getByText("No matching targets")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Clear filter" }));
+    expect(shown()).toEqual(["Alpha", "Bravo", "Charlie", "Delta"]);
+    expect(screen.queryByRole("group", { name: "Active tag filter" })).toBeNull();
+  });
+
+  it("filters when a tag chip on a card or table row is clicked, and again to undo it", async () => {
+    const user = userEvent.setup();
+    mockFleet();
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    const card = await screen.findByRole("article", { name: "Charlie" });
+    const chip = within(card).getByRole("button", { name: "lab" });
+    expect(chip.getAttribute("aria-pressed")).toBe("false");
+    await user.click(chip);
+    expect(shown()).toEqual(["Charlie"]);
+    expect(within(screen.getByRole("article", { name: "Charlie" })).getByRole("button", { name: "lab" }).getAttribute("aria-pressed")).toBe("true");
+    await user.click(within(screen.getByRole("article", { name: "Charlie" })).getByRole("button", { name: "lab" }));
+    expect(shown()).toEqual(["Alpha", "Bravo", "Charlie", "Delta"]);
+  });
+
+  it("shows the tags in the table view and filters from them", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("mtr-tracker.view", JSON.stringify("table"));
+    mockFleet();
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("link", { name: "Alpha" });
+    const row = screen.getByRole("link", { name: "Alpha" }).closest("tr")!;
+    expect(within(row).getAllByRole("button").filter((b) => ["core", "wan"].includes(b.textContent ?? "")).map((b) => b.textContent)).toEqual(["core", "wan"]);
+    await user.click(within(row).getByRole("button", { name: "wan" }));
+    expect(screen.queryByRole("link", { name: "Charlie" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Bravo" })).toBeTruthy();
+  });
+
+  it("shows matches of a tag filter inside collapsed groups", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("mtr-tracker.collapsed-groups", JSON.stringify(["Branches"]));
+    mockFleet([member(1, "Alpha", ["wan"], "Branches"), member(2, "Bravo", [], "Branches"), member(3, "Charlie", ["wan"], "")]);
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("article", { name: "Charlie" });
+    expect(shown()).toEqual(["Charlie"]);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by tag" }), "wan");
+    expect(shown()).toEqual(["Alpha", "Charlie"]);
+  });
+
+  it("offers no tag filter while no target has a tag", async () => {
+    mockFleet([member(1, "Alpha", []), member(2, "Bravo", [])]);
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("article", { name: "Alpha" });
+    expect(screen.queryByRole("combobox", { name: "Filter by tag" })).toBeNull();
+  });
+
+  it("adds a tag to, and removes a tag from, the selected targets after confirming", async () => {
+    const user = userEvent.setup();
+    mockFleet([member(1, "Alpha", ["core", "wan"]), member(2, "Bravo", ["wan"]), member(3, "Charlie", [])]);
+    const bulk = vi.spyOn(api, "bulkTags").mockResolvedValue({ action: "tag", affected: [], changed: [] });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("article", { name: "Charlie" });
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    const bar = screen.getByRole("region", { name: "Selected targets" });
+    const add = within(bar).getByRole("combobox", { name: "Add tag to selected targets" }) as HTMLSelectElement;
+    const remove = within(bar).getByRole("combobox", { name: "Remove tag from selected targets" }) as HTMLSelectElement;
+    expect(add.disabled).toBe(true);
+    expect(remove.disabled).toBe(true);
+
+    await user.click(screen.getByRole("checkbox", { name: "Select Bravo" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select Charlie" }));
+    // Adding offers every tag in use with how many of the selection have it; removing only the tags the selection carries.
+    expect([...add.options].map((o) => o.textContent)).toEqual(["Add tag…", "core", "wan (1 of 2 have it)", "New tag…"]);
+    expect([...remove.options].map((o) => o.textContent)).toEqual(["Remove tag…", "wan (on 1 of 2)"]);
+
+    // Nothing is written before the confirmation.
+    await user.selectOptions(add, "wan");
+    expect(screen.getByRole("heading", { name: "Add tag wan to 2 targets?" })).toBeTruthy();
+    expect(screen.getByTestId("tag-targets").textContent).toBe("Bravo, Charlie");
+    expect(screen.getByText(/They get the tag/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(bulk).not.toHaveBeenCalled();
+    await user.selectOptions(add, "wan");
+    await user.click(screen.getByRole("button", { name: "Add tag" }));
+    expect(bulk).toHaveBeenCalledWith("tag", [2, 3], ["wan"]);
+    // The selection stays, so another tag can follow.
+    await waitFor(() => expect(within(bar).getByTestId("selection-count").textContent).toBe("2 selected"));
+
+    // A tag that exists nowhere yet, typed with a second one.
+    await user.selectOptions(add, "New tag…");
+    await user.type(within(bar).getByRole("textbox", { name: "New tag name" }), "edge,  Core ring ");
+    await user.click(within(bar).getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("heading", { name: "Add tags edge, Core ring to 2 targets?" })).toBeTruthy();
+    expect(screen.getByText(/This creates the new tags/).textContent).toContain("edge, Core ring");
+    await user.click(screen.getByRole("button", { name: "Add tags" }));
+    expect(bulk).toHaveBeenLastCalledWith("tag", [2, 3], ["edge", "Core ring"]);
+
+    await user.selectOptions(remove, "wan");
+    expect(screen.getByRole("heading", { name: "Remove tag wan from 2 targets?" })).toBeTruthy();
+    expect(screen.getByText(/They lose the tag/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Remove tag" }));
+    expect(bulk).toHaveBeenLastCalledWith("untag", [2, 3], ["wan"]);
+  });
+
+  it("does not call a tag the whole selection already has a new tag", async () => {
+    const user = userEvent.setup();
+    mockFleet([member(1, "Alpha", ["wan"]), member(2, "Bravo", ["wan"])]);
+    vi.spyOn(api, "bulkTags").mockResolvedValue({ action: "tag", affected: [], changed: [] });
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await screen.findByRole("article", { name: "Alpha" });
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByRole("button", { name: "Select all shown" }));
+    const add = screen.getByRole("combobox", { name: "Add tag to selected targets" });
+    // Not offered, since both carry it, but typing it is no creation.
+    expect([...(add as HTMLSelectElement).options].map((o) => o.textContent)).toEqual(["Add tag…", "New tag…"]);
+    await user.selectOptions(add, "New tag…");
+    await user.type(screen.getByRole("textbox", { name: "New tag name" }), "wan{Enter}");
+    expect(screen.getByRole("heading", { name: "Add tag wan to 2 targets?" })).toBeTruthy();
+    expect(screen.queryByText(/This creates the new tag/)).toBeNull();
+  });
+
+  it("explains a refused bulk change", async () => {
+    const user = userEvent.setup();
+    mockFleet([member(1, "Alpha", [])]);
+    vi.spyOn(api, "bulkTags").mockRejectedValue(new Error("a target can carry at most 20 tags"));
+    render(<MemoryRouter><ToastProvider><Dashboard /></ToastProvider></MemoryRouter>);
+    await screen.findByRole("article", { name: "Alpha" });
+    await user.click(screen.getByRole("button", { name: "Select" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select Alpha" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Add tag to selected targets" }), "New tag…");
+    await user.type(screen.getByRole("textbox", { name: "New tag name" }), "x{Enter}");
+    await user.click(screen.getByRole("button", { name: "Add tag" }));
+    expect(await screen.findByText("a target can carry at most 20 tags")).toBeTruthy();
+  });
+});
+
+describe("tags on the target page", () => {
+  const known = [{ name: "core", count: 2, color: null }, { name: "lab", count: 1, color: null }, { name: "wan", count: 3, color: null }];
+  const renderWithTags = () => {
+    vi.spyOn(api, "tags").mockResolvedValue(known);
+    return render(<MemoryRouter initialEntries={["/targets/1"]}><ToastProvider><TagColorsProvider><Routes><Route path="/targets/:id" element={<TargetDetail />} /></Routes></TagColorsProvider></ToastProvider></MemoryRouter>);
+  };
+
+  it("adds and removes tags from the header at once", async () => {
+    const user = userEvent.setup();
+    mockDetail({ ...target, tags: ["wan"] });
+    const update = vi.spyOn(api, "updateTarget").mockResolvedValue(target);
+    renderWithTags();
+    const editor = await screen.findByTestId("tag-editor");
+    const menu = within(editor).getByRole("combobox", { name: "Add tag" }) as HTMLSelectElement;
+    await waitFor(() => expect([...menu.options].map((o) => o.textContent)).toEqual(["Add tag…", "core", "lab", "New tag…"]));
+
+    await user.selectOptions(menu, "core");
+    expect(update).toHaveBeenLastCalledWith(1, { tags: ["core", "wan"] });
+    // The new list shows before the refreshed target arrives, and builds on the previous change.
+    await waitFor(() => expect(within(editor).getByRole("button", { name: "Remove tag core" })).toBeTruthy());
+    await user.selectOptions(within(editor).getByRole("combobox", { name: "Add tag" }), "New tag…");
+    await user.type(within(editor).getByRole("textbox", { name: "New tag name" }), "edge{Enter}");
+    expect(update).toHaveBeenLastCalledWith(1, { tags: ["core", "edge", "wan"] });
+    await waitFor(() => expect(within(editor).getByRole("button", { name: "Remove tag edge" })).toBeTruthy());
+
+    await user.click(within(editor).getByRole("button", { name: "Remove tag wan" }));
+    expect(update).toHaveBeenLastCalledWith(1, { tags: ["core", "edge"] });
+    await waitFor(() => expect(within(editor).queryByRole("button", { name: "Remove tag wan" })).toBeNull());
+    expect(update).toHaveBeenCalledTimes(3);
+  });
+
+  it("puts the tag list back when the write fails", async () => {
+    const user = userEvent.setup();
+    mockDetail({ ...target, tags: ["wan"] });
+    vi.spyOn(api, "updateTarget").mockRejectedValue(new Error("boom"));
+    renderWithTags();
+    const editor = await screen.findByTestId("tag-editor");
+    await user.click(within(editor).getByRole("button", { name: "Remove tag wan" }));
+    expect(await screen.findByText("boom")).toBeTruthy();
+    await waitFor(() => expect(within(editor).getByRole("button", { name: "Remove tag wan" })).toBeTruthy());
+  });
+
+  it("offers the tags in use in the form, with a New tag option that takes commas and does not submit", async () => {
+    const user = userEvent.setup();
+    mockDetail({ ...target, tags: ["wan"] });
+    const update = vi.spyOn(api, "updateTarget").mockResolvedValue(target);
+    renderWithTags();
+    await user.click(await screen.findByRole("button", { name: "Actions for Office WAN" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog");
+    const field = within(dialog).getByRole("combobox", { name: "Tags (optional)" }) as HTMLSelectElement;
+    // Only the tags in use that this target does not carry yet.
+    await waitFor(() => expect([...field.options].map((o) => o.textContent)).toEqual(["Add a tag…", "core", "lab", "New tag…"]));
+    await user.selectOptions(field, "lab");
+    expect(within(dialog).getByRole("button", { name: "Remove tag lab" })).toBeTruthy();
+    expect([...field.options].map((o) => o.textContent)).toEqual(["Add a tag…", "core", "New tag…"]);
+
+    await user.selectOptions(field, "New tag…");
+    await user.type(within(dialog).getByRole("textbox", { name: "New tag name" }), "edge,  Core ring ,lab{Enter}");
+    // Enter added the tags; it did not save the target.
+    expect(update).not.toHaveBeenCalled();
+    expect(within(dialog).queryByRole("textbox", { name: "New tag name" })).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Remove tag edge" })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Remove tag Core ring" })).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Remove tag wan" }));
+
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalled());
+    expect(update.mock.calls[0][1]).toMatchObject({ tags: ["Core ring", "edge", "lab"] });
+  });
+
+  it("stops offering tags at the limit of 20", () => {
+    const twenty = Array.from({ length: 20 }, (_, i) => `t${String(i).padStart(2, "0")}`);
+    render(<TagSelect value={twenty} known={["extra"]} onChange={vi.fn()} />);
+    const field = screen.getByRole("combobox") as HTMLSelectElement;
+    expect(field.disabled).toBe(true);
+    expect(field.options[0].textContent).toBe("Limit of 20 tags reached");
+  });
+});
+
+describe("tag helpers", () => {
+  it("cleans typed tags the way the backend does", () => {
+    expect(parseTagNames(" wan, isp-a ,, wan ,  Critical  ")).toEqual(["wan", "isp-a", "Critical"]);
+    expect(parseTagNames("x".repeat(60))).toEqual(["x".repeat(40)]);
+    expect(parseTagNames(" , ")).toEqual([]);
+  });
+
+  it("matches any or all of the wanted tags, and everything without a filter", () => {
+    expect(matchesTags(["a", "b"], [], "all")).toBe(true);
+    expect(matchesTags(["a"], ["a", "b"], "any")).toBe(true);
+    expect(matchesTags(["a"], ["a", "b"], "all")).toBe(false);
+    expect(matchesTags([], ["a"], "any")).toBe(false);
+    expect(matchesTags(["a", "b", "c"], ["c", "a"], "all")).toBe(true);
   });
 });
 

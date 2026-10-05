@@ -264,13 +264,17 @@ def _clean_group_value(v: str) -> str:
     return " ".join(v.split())[:60]
 
 
+MAX_TAGS = 20
+MAX_TAG_LENGTH = 40
+
+
 def _clean_tags_value(v: list[str]) -> list[str]:
     cleaned: list[str] = []
     for tag in v:
-        t = tag.strip()[:40]
+        t = tag.strip()[:MAX_TAG_LENGTH]
         if t and t not in cleaned:
             cleaned.append(t)
-    return sort_tags(cleaned[:20])
+    return sort_tags(cleaned[:MAX_TAGS])
 
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-f]{6}$")
@@ -474,16 +478,21 @@ class RunDelete(BaseModel):
 
 
 class BulkAction(BaseModel):
-    action: Literal["pause", "resume", "mute", "unmute", "run", "delete", "group"]
+    action: Literal["pause", "resume", "mute", "unmute", "run", "delete", "group", "tag", "untag"]
     ids: list[int] = Field(min_length=1, max_length=1000)
     group_name: str | None = Field(default=None, max_length=200, description="for action 'group': the group to move the targets into; empty = ungrouped")
+    tags: list[str] | None = Field(default=None, max_length=MAX_TAGS, description="for actions 'tag' and 'untag': the tags to add to, or remove from, every target; the targets' other tags stay")
 
     @model_validator(mode="after")
-    def _check_group(self) -> "BulkAction":
+    def _check_group_and_tags(self) -> "BulkAction":
         if self.action == "group":
             if self.group_name is None:
                 raise ValueError("action 'group' needs group_name (empty to remove the targets from their group)")
             self.group_name = _clean_group_value(self.group_name)
+        if self.action in ("tag", "untag"):
+            self.tags = _clean_tags_value(self.tags or [])
+            if not self.tags:
+                raise ValueError(f"action '{self.action}' needs at least one tag")
         return self
 
 

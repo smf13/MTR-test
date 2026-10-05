@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Play, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays, Trash2, Folder } from "lucide-react";
+import { ArrowLeft, Play, Clock, GitBranch, Activity, Percent, Gauge, Timer, Route, RefreshCw, Download, BarChart3, Waypoints, CalendarDays, Trash2, Folder, Tag } from "lucide-react";
 import { api, cloneInput, type Target, type TargetInput, type Run, type HistoryDeleted, type SeriesPoint } from "../api";
 import { usePoll, useNow, useLocalStorage } from "../hooks";
 import { MutedBadge, TargetActions } from "../components/TargetActions";
@@ -25,7 +25,8 @@ import { GroupMenu, moveConfirm } from "../components/GroupPicker";
 import { ConfirmDialog } from "../components/Modal";
 import { ClearHistoryDialog } from "../components/ClearHistory";
 import { ErrorBanner } from "../components/EmptyState";
-import { TagList, useTagColors } from "../components/Tags";
+import { useTagColors } from "../components/Tags";
+import { TagEditor } from "../components/TagPicker";
 import { useToast } from "../components/Toast";
 import { effectiveStatus, fmtDuration, fmtPct, relTime, fmtDateTime, hostLabel, isPathProbe, isPacketProbe, latencyLabel, fmtMs, fmtMsJoin } from "../utils";
 import { CheckDetails } from "../components/CheckDetails";
@@ -42,7 +43,7 @@ export function TargetDetail() {
   const navigate = useNavigate();
   const toast = useToast();
   const now = useNow();
-  const { colors: tagColors } = useTagColors();
+  const { colors: tagColors, known: knownTags, refresh: refreshTags } = useTagColors();
   const [range, setRange] = useLocalStorage("mtr-tracker.range", "24h");
   const [tab, setTab] = useLocalStorage<Tab>("mtr-tracker.tab", "path");
   const [heatMetric, setHeatMetric] = useState<HeatMetric>("loss");
@@ -184,6 +185,23 @@ export function TargetDetail() {
     }
   };
 
+  /** The header's tag editor: save this target's new list of tags at once. */
+  const saveTags = async (tags: string[]) => {
+    if (!t) return false;
+    try {
+      await api.updateTarget(t.id, { tags });
+      const added = tags.filter((x) => !t.tags.includes(x));
+      const removed = t.tags.filter((x) => !tags.includes(x));
+      toast(added.length ? `Added tag ${added.join(", ")}` : `Removed tag ${removed.join(", ")}`, "info");
+      void target.refresh();
+      void refreshTags();
+      return true;
+    } catch (e) {
+      report(e);
+      return false;
+    }
+  };
+
   const runNow = async () => {
     try {
       const r = await api.runNow(targetId);
@@ -277,7 +295,7 @@ export function TargetDetail() {
             <span className="inline-flex items-center gap-1"><Clock size={12} /> every {fmtDuration(t.interval_sec)}</span>
             {isPacketProbe(t.type, t.options) && <span>{t.count} {t.type === "globalping" ? "packets per probe" : `probes × ${t.probe_interval}s`}</span>}
             {t.ip_version !== "auto" && <span>IPv{t.ip_version}</span>}
-            <TagList tags={t.tags} colors={tagColors} size="xs" />
+            <span className="inline-flex items-center gap-1" title="Tags"><Tag size={12} aria-hidden /><TagEditor tags={t.tags} known={knownTags} colors={tagColors} onChange={saveTags} /></span>
           </div>
           {t.description && <p className="mt-1 max-w-2xl text-sm text-muted">{t.description}</p>}
         </div>

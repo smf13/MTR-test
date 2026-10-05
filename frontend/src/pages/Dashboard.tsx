@@ -16,12 +16,14 @@ import { Segmented } from "../components/RangePicker";
 import { StatusStrip } from "../components/StatusStrip";
 import { TypeBadge } from "../components/TypeBadge";
 import { TagList, useTagColors } from "../components/Tags";
+import { TagMenu, tagConfirm } from "../components/TagPicker";
+import { ActiveTagFilter, TagFilterSelect, type TagCount, type TagMatch } from "../components/TagFilter";
 import { useToast } from "../components/Toast";
 
 // Recharts only loads when the overview chart is actually shown.
 const OverviewChart = lazy(() => import("../components/Visuals").then((m) => ({ default: m.OverviewChart })));
 import type { Status } from "../api";
-import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe, isPacketProbe, latencyLabel, percentile, fmtMs, fmtMsCell, msParts } from "../utils";
+import { effectiveStatus, fmtDuration, fmtNum, fmtPct, relTime, classNames, lossColor, statusColor, hostLabel, isPathProbe, isPacketProbe, latencyLabel, matchesTags, percentile, sortTags, fmtMs, fmtMsCell, msParts } from "../utils";
 
 type SortKey = "name" | "status" | "latency" | "loss" | "hops";
 type View = "cards" | "table";
@@ -35,6 +37,10 @@ export function Dashboard() {
   const now = useNow();
   const toast = useToast();
   const [query, setQuery] = useState("");
+  // The tag filter: targets carrying any (or every) one of these tags; empty = no tag filter.
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [tagMode, setTagMode] = useState<TagMatch>("any");
+  const { colors: tagColors, refresh: refreshTags } = useTagColors();
   const [sort, setSort] = useLocalStorage<SortKey>("mtr-tracker.sort", "status");
   const [view, setView] = useLocalStorage<View>("mtr-tracker.view", "cards");
   const [formOpen, setFormOpen] = useState(false);
@@ -65,6 +71,7 @@ export function Dashboard() {
     const q = query.trim().toLowerCase();
     let items = targets.data ?? [];
     if (q) items = items.filter((t) => [t.name, t.host, t.description, t.group_name ?? "", ...t.tags].some((s) => s.toLowerCase().includes(q)));
+    if (tagFilter.length) items = items.filter((t) => matchesTags(t.tags, tagFilter, tagMode));
     const sorted = [...items];
     sorted.sort((a, b) => {
       switch (sort) {
@@ -81,7 +88,16 @@ export function Dashboard() {
       }
     });
     return sorted;
-  }, [targets.data, query, sort]);
+  }, [targets.data, query, sort, tagFilter, tagMode]);
+
+  // Every tag in use with its number of targets (over all targets, not only those the filters leave).
+  const tagCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    (targets.data ?? []).forEach((t) => t.tags.forEach((tag) => counts.set(tag, (counts.get(tag) ?? 0) + 1)));
+    return counts;
+  }, [targets.data]);
+  const tagOptions = useMemo<TagCount[]>(() => sortTags([...tagCounts.keys()]).map((name) => ({ name, count: tagCounts.get(name) ?? 0 })), [tagCounts]);
+  const toggleTag = (tag: string) => setTagFilter((f) => (f.includes(tag) ? f.filter((x) => x !== tag) : [...f, tag]));
 
   // Groups: one collapsible section per group name (case-insensitive order), ungrouped targets last. Without any
   // group the dashboard shows the plain list as before.
@@ -95,13 +111,24 @@ export function Dashboard() {
     return [...groupNames, ""].map((name) => ({ name, items: list.filter((t) => (t.group_name ?? "") === name) })).filter((sec) => sec.items.length > 0);
   }, [groupNames, list]);
   // A filter shows its matches even inside collapsed groups.
-  const filtering = query.trim() !== "";
+  const filtering = query.trim() !== "" || tagFilter.length > 0;
   const isOpen = (name: string | null) => name === null || filtering || !collapsed.includes(name);
   const toggleGroup = (name: string) => setCollapsed(collapsed.includes(name) ? collapsed.filter((n) => n !== name) : [...collapsed, name]);
   const allCollapsed = groupNames.length > 0 && [...groupNames, ""].every((n) => collapsed.includes(n));
 
   // Targets deleted meanwhile drop out of the selection.
-  const selectedIds = useMemo(() => (targets.data ?? []).filter((t) => selected.has(t.id)).map((t) => t.id), [targets.data, selected]);
+  const selectedTargets = useMemo(() => (targets.data ?? []).filter((t) => selected.has(t.id)), [targets.data, selected]);
+  const selectedIds = useMemo(() => selectedTargets.map((t) => t.id), [selectedTargets]);
+  // The bulk tag menus: tags the whole selection already carries are not offered for adding, and only tags some of it carries for removing.
+  const bulkTagChoices = useMemo(() => {
+    const carried = new Map<string, number>();
+    selectedTargets.forEach((t) => t.tags.forEach((tag) => carried.set(tag, (carried.get(tag) ?? 0) + 1)));
+    const n = selectedTargets.length;
+    return {
+      add: tagOptions.filter((t) => (carried.get(t.name) ?? 0) < n).map((t) => ({ name: t.name, note: carried.get(t.name) ? `${carried.get(t.name)} of ${n} have it` : undefined })),
+      remove: sortTags([...carried.keys()]).map((name) => ({ name, note: `on ${carried.get(name)} of ${n}` })),
+    };
+  }, [selectedTargets, tagOptions]);
   const shownIds = sections.filter((sec) => isOpen(sec.name)).flatMap((sec) => sec.items.map((t) => t.id));
   const select = (ids: number[], on: boolean) =>
     setSelected((prev) => {
@@ -125,6 +152,25 @@ export function Dashboard() {
       // Show where they went.
       if (collapsed.includes(group)) setCollapsed(collapsed.filter((n) => n !== group));
       void targets.refresh();
+      return true;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+      return false;
+    }
+  };
+
+  /** Add tags to, or remove them from, the selected targets. The selection stays, so several tags can follow one another. */
+  const tagSelected = async (action: "tag" | "untag", tags: string[]) => {
+    const ids = selectedIds;
+    if (!ids.length) return false;
+    const list = tags.join(", ");
+    try {
+      const r = await api.bulkTags(action, ids, tags);
+      const what = `${r.changed.length} target${r.changed.length === 1 ? "" : "s"}`;
+      if (!r.changed.length) toast(action === "tag" ? `Every selected target already has ${list}` : `None of the selected targets has ${list}`, "info");
+      else toast(action === "tag" ? `Added ${list} to ${what}` : `Removed ${list} from ${what}`, "success");
+      void targets.refresh();
+      void refreshTags();
       return true;
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), "error");
@@ -300,9 +346,10 @@ export function Dashboard() {
             <option value="status">Status</option><option value="name">Name</option><option value="latency">Latency</option><option value="loss">Loss</option><option value="hops">Hops</option>
           </select>
         </label>
+        <TagFilterSelect tags={tagOptions} selected={tagFilter} onAdd={(tag) => setTagFilter((f) => (f.includes(tag) ? f : [...f, tag]))} />
         <div className="flex items-center gap-2 sm:ml-auto">
         {total > 0 && (
-          <button className={classNames("btn btn-sm", selecting && "btn-primary")} aria-pressed={selecting} onClick={() => (selecting ? stopSelecting() : setSelecting(true))} title={selecting ? "Leave selection mode" : "Select targets to move them into a group"}>
+          <button className={classNames("btn btn-sm", selecting && "btn-primary")} aria-pressed={selecting} onClick={() => (selecting ? stopSelecting() : setSelecting(true))} title={selecting ? "Leave selection mode" : "Select targets to move them into a group or edit their tags"}>
             <ListChecks size={14} /> {selecting ? "Done" : "Select"}
           </button>
         )}
@@ -322,14 +369,18 @@ export function Dashboard() {
         </div>
       </div>
 
+      <ActiveTagFilter selected={tagFilter} colors={tagColors} mode={tagMode} onMode={setTagMode} onRemove={(tag) => setTagFilter((f) => f.filter((x) => x !== tag))} onClear={() => setTagFilter([])} />
+
       {selecting && total > 0 && (
         <div className="card sticky top-16 z-20 flex flex-wrap items-center gap-2 px-4 py-2.5 shadow-lg lg:top-2" role="region" aria-label="Selected targets">
           <span className="text-sm font-medium" data-testid="selection-count">{selectedIds.length} selected</span>
           <button className="btn btn-ghost btn-sm" onClick={() => select(shownIds, true)} disabled={!shownIds.length || shownIds.every((id) => selected.has(id))}>Select all shown</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setSelected(new Set())} disabled={!selectedIds.length}>Clear</button>
           <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-            {selectedIds.length === 0 && <span className="text-xs text-faint">Tick targets, then pick a group</span>}
-            <GroupMenu label="Move selected targets to group" groups={groupNames} disabled={!selectedIds.length} onPick={moveSelected} confirm={(group, isNew) => moveConfirm((targets.data ?? []).filter((t) => selected.has(t.id)).map((t) => t.name), group, isNew)} />
+            {selectedIds.length === 0 && <span className="text-xs text-faint">Tick targets, then pick a group or tag</span>}
+            <GroupMenu label="Move selected targets to group" groups={groupNames} disabled={!selectedIds.length} onPick={moveSelected} confirm={(group, isNew) => moveConfirm(selectedTargets.map((t) => t.name), group, isNew)} />
+            <TagMenu label="Add tag to selected targets" placeholder="Add tag…" choices={bulkTagChoices.add} allowNew disabled={!selectedIds.length} onPick={(tags) => tagSelected("tag", tags)} confirm={(tags) => tagConfirm(selectedTargets.map((t) => t.name), tags, true, tags.filter((t) => !tagCounts.has(t)))} />
+            <TagMenu label="Remove tag from selected targets" placeholder="Remove tag…" choices={bulkTagChoices.remove} disabled={!selectedIds.length} onPick={(tags) => tagSelected("untag", tags)} confirm={(tags) => tagConfirm(selectedTargets.map((t) => t.name), tags, false)} />
           </div>
         </div>
       )}
@@ -349,7 +400,7 @@ export function Dashboard() {
         </div>
       )}
 
-      {total > 0 && !list.length && <div className="card"><EmptyState title="No matching targets" body="Try a different name, host, or tag." action={<button className="btn" onClick={() => setQuery("")}>Clear filter</button>} /></div>}
+      {total > 0 && !list.length && <div className="card"><EmptyState title="No matching targets" body="Try a different name, host, or tag." action={<button className="btn" onClick={() => { setQuery(""); setTagFilter([]); }}>Clear filter</button>} /></div>}
 
       {view === "cards" ? (
         <div className="space-y-5">
@@ -357,7 +408,7 @@ export function Dashboard() {
             const grid = (
               <div id={sec.name !== null ? groupPanelId(sec.name) : undefined} className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
                 {sec.items.map((t) => (
-                  <TargetCard key={t.id} t={t} now={now} selected={selecting ? selected.has(t.id) : undefined} onSelect={(on) => select([t.id], on)} onEdit={() => { setEditing(t); setFormOpen(true); }} onClone={() => clone(t)} onDelete={() => setDeleting(t)} onToggle={() => toggle(t)} onToggleNotify={() => toggleNotify(t)} onRun={() => runNow(t)} />
+                  <TargetCard key={t.id} t={t} now={now} activeTags={tagFilter} onTag={toggleTag} selected={selecting ? selected.has(t.id) : undefined} onSelect={(on) => select([t.id], on)} onEdit={() => { setEditing(t); setFormOpen(true); }} onClone={() => clone(t)} onDelete={() => setDeleting(t)} onToggle={() => toggle(t)} onToggleNotify={() => toggleNotify(t)} onRun={() => runNow(t)} />
                 ))}
               </div>
             );
@@ -373,7 +424,7 @@ export function Dashboard() {
         </div>
       ) : (
         <div className="card overflow-hidden">
-          <TargetTable sections={sections} isOpen={isOpen} forced={filtering} onToggleGroup={toggleGroup} onRenameGroup={setRenaming} selected={selecting ? selected : undefined} onSelect={select} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onToggleNotify={toggleNotify} onRun={runNow} />
+          <TargetTable sections={sections} isOpen={isOpen} forced={filtering} activeTags={tagFilter} onTag={toggleTag} onToggleGroup={toggleGroup} onRenameGroup={setRenaming} selected={selecting ? selected : undefined} onSelect={select} now={now} onEdit={(t) => { setEditing(t); setFormOpen(true); }} onClone={clone} onDelete={setDeleting} onToggle={toggle} onToggleNotify={toggleNotify} onRun={runNow} />
         </div>
       )}
 
@@ -513,7 +564,7 @@ function RenameGroupDialog({ name, groups, onClose, onDone }: { name: string | n
   );
 }
 
-function TargetCard({ t, now, selected, onSelect, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { t: Target; now: number; selected?: boolean; onSelect: (on: boolean) => void; onEdit: () => void; onClone: () => void; onDelete: () => void; onToggle: () => void; onToggleNotify: () => void; onRun: () => void }) {
+function TargetCard({ t, now, activeTags, onTag, selected, onSelect, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { t: Target; now: number; activeTags: readonly string[]; onTag: (tag: string) => void; selected?: boolean; onSelect: (on: boolean) => void; onEdit: () => void; onClone: () => void; onDelete: () => void; onToggle: () => void; onToggleNotify: () => void; onRun: () => void }) {
   const status = effectiveStatus(t);
   const run = t.latest_run;
   const loss = run?.loss_pct ?? null;
@@ -570,7 +621,7 @@ function TargetCard({ t, now, selected, onSelect, onEdit, onClone, onDelete, onT
           {t.type === "globalping" && <span>{String(t.options.measurement ?? "ping")} · {String(t.options.location ?? "world")}</span>}
         </div>
         <div className="mt-2 flex items-center justify-between gap-2">
-          <div className="min-w-0"><TagList tags={t.tags} colors={tagColors} max={2} size="xs" /></div>
+          <div className="min-w-0"><TagList tags={t.tags} colors={tagColors} max={2} size="xs" onTagClick={onTag} active={activeTags} /></div>
           <div className="flex shrink-0 items-center gap-1">
             <button className="btn btn-ghost btn-sm" disabled={t.running} onClick={onRun}><Play size={14} />{t.running ? "Probing…" : "Run now"}</button>
             <TargetActions name={t.name} enabled={t.enabled} notify={t.notify} onEdit={onEdit} onClone={onClone} onDelete={onDelete} onToggle={onToggle} onToggleNotify={onToggleNotify} />
@@ -631,9 +682,10 @@ export function IconBtn({ title, onClick, children, danger }: { title: string; o
 
 const TABLE_COLUMNS = 14;
 
-function TargetTable({ sections, isOpen, forced, onToggleGroup, onRenameGroup, selected, onSelect, now, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { sections: Section[]; isOpen: (name: string | null) => boolean; forced: boolean; onToggleGroup: (name: string) => void; onRenameGroup: (name: string) => void; selected?: ReadonlySet<number>; onSelect: (ids: number[], on: boolean) => void; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onToggleNotify: (t: Target) => void; onRun: (t: Target) => void }) {
+function TargetTable({ sections, isOpen, forced, activeTags, onTag, onToggleGroup, onRenameGroup, selected, onSelect, now, onEdit, onClone, onDelete, onToggle, onToggleNotify, onRun }: { sections: Section[]; isOpen: (name: string | null) => boolean; forced: boolean; activeTags: readonly string[]; onTag: (tag: string) => void; onToggleGroup: (name: string) => void; onRenameGroup: (name: string) => void; selected?: ReadonlySet<number>; onSelect: (ids: number[], on: boolean) => void; now: number; onEdit: (t: Target) => void; onClone: (t: Target) => void; onDelete: (t: Target) => void; onToggle: (t: Target) => void; onToggleNotify: (t: Target) => void; onRun: (t: Target) => void }) {
   const shown = sections.filter((sec) => isOpen(sec.name)).flatMap((sec) => sec.items);
   const chosen = selected ? shown.filter((t) => selected.has(t.id)).length : 0;
+  const { colors: tagColors } = useTagColors();
   return (
     <div className="overflow-x-auto">
       <table className="table num">
@@ -694,6 +746,7 @@ function TargetTable({ sections, isOpen, forced, onToggleGroup, onRenameGroup, s
                     {t.name}
                   </Link>
                   <div className="flex items-center gap-1.5 font-mono text-xs text-faint"><TypeBadge type={t.type} /><span className="truncate max-w-[220px]" title={t.host}>{hostLabel(t.host)}</span></div>
+                  {t.tags.length > 0 && <div className="mt-1"><TagList tags={t.tags} colors={tagColors} max={3} size="xs" onTagClick={onTag} active={activeTags} /></div>}
                 </td>
                 <td><div className="flex items-center gap-1.5"><StatusBadge status={status} running={t.running} />{!t.notify && <MutedBadge />}</div></td>
                 <td className="text-right font-semibold">{run?.reached ? fmtMsCell(run.avg_ms) : "–"}</td>

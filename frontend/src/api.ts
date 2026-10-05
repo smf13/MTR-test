@@ -831,6 +831,9 @@ export const api = {
   /** Move targets into group `group` ("" removes them from their group). */
   moveToGroup: (ids: number[], group: string) =>
     request<{ action: string; affected: number[] }>("/api/targets/bulk", { method: "POST", body: JSON.stringify({ action: "group", ids, group_name: group }) }),
+  /** Add `tags` to (`tag`) or remove them from (`untag`) every target in `ids`; their other tags stay. `changed` lists the targets that were not already as asked. */
+  bulkTags: (action: "tag" | "untag", ids: number[], tags: string[]) =>
+    request<{ action: string; affected: number[]; changed: number[] }>("/api/targets/bulk", { method: "POST", body: JSON.stringify({ action, ids, tags }) }),
   /** Delete a target's whole history (runs and events), or only its failed runs and their events. */
   clearRuns: (id: number, scope: "all" | "failed") => request<HistoryDeleted>(`/api/targets/${id}/runs?status=${scope}`, { method: "DELETE" }),
   /** Delete chosen runs of a target and the events that point at them. */

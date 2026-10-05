@@ -19,7 +19,7 @@ from fastapi.responses import PlainTextResponse
 from . import __version__, geoip, ipapi
 from .config import config
 from .db import Database, rows_to_dicts
-from .models import BulkAction, GroupRename, NotificationTest, ProbeRequest, RunDelete, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, upgrade_http_options, validate_options
+from .models import MAX_TAGS, BulkAction, GroupRename, NotificationTest, ProbeRequest, RunDelete, SettingsUpdate, TargetCreate, TargetImport, TargetUpdate, sort_tags, upgrade_http_options, validate_options
 from .mtr import min_probe_interval, mtr_version, routes_equivalent, run_mtr
 from .notify import NotifyError, format_pushover_text, send_pushover, send_webhook, target_url
 from .resolver import resolve_host, reverse_lookup_many
@@ -549,11 +549,47 @@ async def bulk_targets(request: Request, body: BulkAction) -> dict[str, Any]:
         await db.execute(f"UPDATE targets SET notify = ?, updated_at = ? WHERE id IN ({ph})", [int(body.action == "unmute"), time.time(), *ids])
     elif body.action == "group":
         await db.execute(f"UPDATE targets SET group_name = ?, updated_at = ? WHERE id IN ({ph})", [body.group_name, time.time(), *ids])
+    elif body.action in ("tag", "untag"):
+        changed = await _bulk_tags(db, ids, add=body.action == "tag", tags=body.tags or [])
+        _sched(request).wake()
+        return {"action": body.action, "affected": ids, "changed": changed}
     elif body.action == "run":
         for tid in ids:
             await _sched(request).run_now(tid)
     _sched(request).wake()
     return {"action": body.action, "affected": ids}
+
+
+async def _bulk_tags(db: Database, ids: list[int], *, add: bool, tags: list[str]) -> list[int]:
+    """Add `tags` to, or remove them from, every target in `ids`; their other tags stay. Returns the ids that changed.
+
+    All or nothing: when an addition would give any target more than `MAX_TAGS` tags nothing is written and the answer
+    is a 422 that names the targets, so the dashboard never ends up with half a selection tagged.
+    """
+    ph = ",".join("?" for _ in ids)
+    updates: list[tuple[int, list[str]]] = []
+    over: list[str] = []
+    async with db.transaction() as tx:
+        # Locked, so a tag edit made meanwhile on the target page is not overwritten with an older list.
+        for row in await tx.fetchall(f"SELECT id, name, tags FROM targets WHERE id IN ({ph}) ORDER BY id FOR UPDATE", ids):
+            try:
+                current = [str(t) for t in json.loads(row["tags"] or "[]")]
+            except (json.JSONDecodeError, TypeError):
+                current = []
+            wanted = set(tags)
+            result = sort_tags(list(dict.fromkeys([*current, *tags]))) if add else [t for t in current if t not in wanted]
+            if set(result) == set(current):
+                continue
+            if len(result) > MAX_TAGS:
+                over.append(str(row["name"]))
+            updates.append((int(row["id"]), sort_tags(result)))
+        if over:
+            shown = ", ".join(over[:3]) + (f" and {len(over) - 3} more" if len(over) > 3 else "")
+            raise HTTPException(422, f"a target can carry at most {MAX_TAGS} tags; adding would exceed that for {shown}")
+        now = time.time()
+        for target_id, result in updates:
+            await tx.execute("UPDATE targets SET tags = ?, updated_at = ? WHERE id = ?", (json.dumps(result), now, target_id))
+    return [target_id for target_id, _ in updates]
 
 
 async def _load_target(request: Request, target_id: int, range_sec: int = 86400) -> dict[str, Any]:

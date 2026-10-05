@@ -35,12 +35,13 @@ export function useTagColors(): TagColorsState {
   return useContext(Ctx);
 }
 
-export function TagChip({ tag, color, size = "sm", count, title, onClick, className }: { tag: string; color?: string | null; size?: "xs" | "sm"; count?: number; title?: string; onClick?: () => void; className?: string }) {
+export function TagChip({ tag, color, size = "sm", count, title, onClick, pressed, className }: { tag: string; color?: string | null; size?: "xs" | "sm"; count?: number; title?: string; onClick?: () => void; pressed?: boolean; className?: string }) {
   const hex = color || autoTagColor(tag);
   const cls = classNames(
     "inline-flex max-w-full items-center gap-1 rounded border font-medium leading-none",
     size === "xs" ? "px-1.5 py-[3px] text-xs" : "px-2 py-1 text-xs",
     onClick && "cursor-pointer transition-[filter] hover:brightness-110",
+    pressed && "ring-2 ring-accent",
     className,
   );
   const body = (
@@ -52,7 +53,7 @@ export function TagChip({ tag, color, size = "sm", count, title, onClick, classN
   );
   if (onClick) {
     return (
-      <button type="button" className={cls} style={tagChipStyle(hex)} title={title} onClick={onClick}>
+      <button type="button" className={cls} style={tagChipStyle(hex)} title={title} aria-pressed={pressed} onClick={onClick}>
         {body}
       </button>
     );
@@ -64,8 +65,11 @@ export function TagChip({ tag, color, size = "sm", count, title, onClick, classN
   );
 }
 
-/** Sorted, coloured chips for a target; shows "+N" when there are more than `max`. */
-export function TagList({ tags, colors, max, size = "sm", className }: { tags: string[]; colors?: Record<string, string>; max?: number; size?: "xs" | "sm"; className?: string }) {
+/**
+ * Sorted, coloured chips for a target; shows "+N" when there are more than `max`. With `onTagClick` the chips are
+ * buttons (the dashboard filters by the clicked tag); `active` marks the ones the filter already uses.
+ */
+export function TagList({ tags, colors, max, size = "sm", className, onTagClick, active }: { tags: string[]; colors?: Record<string, string>; max?: number; size?: "xs" | "sm"; className?: string; onTagClick?: (tag: string) => void; active?: readonly string[] }) {
   const sorted = sortTags(tags);
   if (!sorted.length) return null;
   const shown = max ? sorted.slice(0, max) : sorted;
@@ -73,7 +77,15 @@ export function TagList({ tags, colors, max, size = "sm", className }: { tags: s
   return (
     <span className={classNames("inline-flex flex-wrap items-center gap-1", className)}>
       {shown.map((tag) => (
-        <TagChip key={tag} tag={tag} color={colors?.[tag]} size={size} />
+        <TagChip
+          key={tag}
+          tag={tag}
+          color={colors?.[tag]}
+          size={size}
+          onClick={onTagClick && (() => onTagClick(tag))}
+          pressed={onTagClick ? !!active?.includes(tag) : undefined}
+          title={onTagClick ? (active?.includes(tag) ? `Stop filtering by ${tag}` : `Show only targets tagged ${tag}`) : undefined}
+        />
       ))}
       {rest > 0 && (
         <span className="text-xs text-faint" title={sorted.slice(shown.length).join(", ")}>

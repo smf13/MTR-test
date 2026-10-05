@@ -281,6 +281,12 @@ export function sortTags(tags: string[]): string[] {
   });
 }
 
+/** Whether a target's tags satisfy the dashboard's tag filter: any of `wanted`, or every one of them. No filter matches all. */
+export function matchesTags(tags: readonly string[], wanted: readonly string[], mode: "any" | "all"): boolean {
+  if (!wanted.length) return true;
+  return mode === "all" ? wanted.every((t) => tags.includes(t)) : wanted.some((t) => tags.includes(t));
+}
+
 /** Deterministic preset for tags without a configured colour, so a tag looks the same on every page. */
 export function autoTagColor(tag: string): string {
   let h = 0;
