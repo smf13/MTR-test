@@ -242,13 +242,16 @@ export function TagMenu({
 }
 
 /**
- * The target page's tags: coloured chips that can be removed, and an "Add tag…" dropdown (existing tags, **New tag…**).
- * Each change is written at once through `onChange`, which resolves false when the write failed; the picked list shows
- * until the refreshed target takes over, and the controls wait for the write.
+ * The target page's tags (`name` is the target's): coloured chips that can be removed, and an "Add tag…" dropdown
+ * (existing tags, **New tag…**). Each change is written through `onChange`, which resolves false when the write
+ * failed; adding happens at once, removing first asks for confirmation (Cancel or Escape keeps the tag). The picked
+ * list shows until the refreshed target takes over, and the controls wait for the write.
  */
-export function TagEditor({ tags, known, colors, onChange }: { tags: string[]; known: string[]; colors?: Record<string, string>; onChange: (tags: string[]) => Promise<boolean> }) {
+export function TagEditor({ name, tags, known, colors, onChange }: { name: string; tags: string[]; known: string[]; colors?: Record<string, string>; onChange: (tags: string[]) => Promise<boolean> }) {
   const [pending, setPending] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
+  // The tag waiting for its removal to be confirmed.
+  const [removing, setRemoving] = useState<string | null>(null);
   const key = tags.join("\u0000");
   useEffect(() => setPending(null), [key]);
   const shown = pending ?? tags;
@@ -274,11 +277,12 @@ export function TagEditor({ tags, known, colors, onChange }: { tags: string[]; k
     const next = [...shown, ...names.filter((n) => !shown.includes(n))].slice(0, MAX_TAGS);
     return next.length === shown.length || write(next);
   };
+  const question = removing !== null ? tagConfirm([name], [removing], false) : null;
 
   return (
     <span className="inline-flex flex-wrap items-center gap-1" data-testid="tag-editor">
       {sortTags(shown).map((tag) => (
-        <RemovableTag key={tag} tag={tag} disabled={busy} onRemove={() => void write(shown.filter((t) => t !== tag))}>
+        <RemovableTag key={tag} tag={tag} disabled={busy} onRemove={() => setRemoving(tag)}>
           <TagChip tag={tag} color={colors?.[tag]} size="xs" />
         </RemovableTag>
       ))}
@@ -287,6 +291,18 @@ export function TagEditor({ tags, known, colors, onChange }: { tags: string[]; k
       ) : (
         <span className="text-xs text-faint">Limit of {MAX_TAGS} tags</span>
       )}
+      <ConfirmDialog
+        open={question !== null}
+        title={question?.title ?? ""}
+        message={question?.message ?? ""}
+        confirmLabel={question?.confirmLabel}
+        onConfirm={() => {
+          const tag = removing;
+          setRemoving(null);
+          if (tag !== null) void write(shown.filter((t) => t !== tag));
+        }}
+        onCancel={() => setRemoving(null)}
+      />
     </span>
   );
 }

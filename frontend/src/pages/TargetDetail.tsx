@@ -295,7 +295,7 @@ export function TargetDetail() {
             <span className="inline-flex items-center gap-1"><Clock size={12} /> every {fmtDuration(t.interval_sec)}</span>
             {isPacketProbe(t.type, t.options) && <span>{t.count} {t.type === "globalping" ? "packets per probe" : `probes × ${t.probe_interval}s`}</span>}
             {t.ip_version !== "auto" && <span>IPv{t.ip_version}</span>}
-            <span className="inline-flex items-center gap-1" title="Tags"><Tag size={12} aria-hidden /><TagEditor tags={t.tags} known={knownTags} colors={tagColors} onChange={saveTags} /></span>
+            <span className="inline-flex items-center gap-1" title="Tags"><Tag size={12} aria-hidden /><TagEditor name={t.name} tags={t.tags} known={knownTags} colors={tagColors} onChange={saveTags} /></span>
           </div>
           {t.description && <p className="mt-1 max-w-2xl text-sm text-muted">{t.description}</p>}
         </div>

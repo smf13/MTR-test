@@ -726,7 +726,7 @@ describe("tags on the target page", () => {
     return render(<MemoryRouter initialEntries={["/targets/1"]}><ToastProvider><TagColorsProvider><Routes><Route path="/targets/:id" element={<TargetDetail />} /></Routes></TagColorsProvider></ToastProvider></MemoryRouter>);
   };
 
-  it("adds and removes tags from the header at once", async () => {
+  it("adds tags from the header at once and removes them after confirming", async () => {
     const user = userEvent.setup();
     mockDetail({ ...target, tags: ["wan"] });
     const update = vi.spyOn(api, "updateTarget").mockResolvedValue(target);
@@ -744,7 +744,20 @@ describe("tags on the target page", () => {
     expect(update).toHaveBeenLastCalledWith(1, { tags: ["core", "edge", "wan"] });
     await waitFor(() => expect(within(editor).getByRole("button", { name: "Remove tag edge" })).toBeTruthy());
 
+    // Removing asks first: Cancel and Escape keep the tag and write nothing.
     await user.click(within(editor).getByRole("button", { name: "Remove tag wan" }));
+    expect(screen.getByRole("heading", { name: "Remove tag wan from Office WAN?" })).toBeTruthy();
+    expect(screen.getByText(/It loses the tag/).textContent).toContain("Its other tags stay");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("heading", { name: /^Remove tag/ })).toBeNull();
+    await user.click(within(editor).getByRole("button", { name: "Remove tag wan" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("heading", { name: /^Remove tag/ })).toBeNull();
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(within(editor).getByRole("button", { name: "Remove tag wan" })).toBeTruthy();
+
+    await user.click(within(editor).getByRole("button", { name: "Remove tag wan" }));
+    await user.click(screen.getByRole("button", { name: "Remove tag" }));
     expect(update).toHaveBeenLastCalledWith(1, { tags: ["core", "edge"] });
     await waitFor(() => expect(within(editor).queryByRole("button", { name: "Remove tag wan" })).toBeNull());
     expect(update).toHaveBeenCalledTimes(3);
@@ -757,6 +770,7 @@ describe("tags on the target page", () => {
     renderWithTags();
     const editor = await screen.findByTestId("tag-editor");
     await user.click(within(editor).getByRole("button", { name: "Remove tag wan" }));
+    await user.click(screen.getByRole("button", { name: "Remove tag" }));
     expect(await screen.findByText("boom")).toBeTruthy();
     await waitFor(() => expect(within(editor).getByRole("button", { name: "Remove tag wan" })).toBeTruthy());
   });
