@@ -6,6 +6,7 @@ import { api, type RunDetail, type Target, type TargetInput } from "../src/api";
 import { TargetDetail } from "../src/pages/TargetDetail";
 import { TargetForm } from "../src/components/TargetForm";
 import { CheckDetails } from "../src/components/CheckDetails";
+import { USER_AGENT_GROUPS, USER_AGENT_PRESETS } from "../src/components/HeaderEditor";
 import { RangePicker } from "../src/components/RangePicker";
 import { fmtDuration, timeTicks } from "../src/utils";
 
@@ -225,6 +226,21 @@ describe("HTTP request headers and cache buster", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].options.headers).toEqual({ "User-Agent": "curl/8.15.0 extra", Accept: "application/json", "X-Team": "noc" });
     expect(onSubmit.mock.calls[0][0].options.cache_buster).toBe(false);
+  });
+
+  it("groups the User-Agent presets and fills any of them", async () => {
+    expect(new Set(USER_AGENT_PRESETS.map((p) => p.value)).size).toBe(USER_AGENT_PRESETS.length);  // the dropdown is keyed on the value
+    expect(new Set(USER_AGENT_PRESETS.map((p) => p.label)).size).toBe(USER_AGENT_PRESETS.length);
+    const onSubmit = vi.fn(async (_values: TargetInput) => undefined);
+    const user = await openHttpForm(onSubmit);
+    const select = screen.getByRole("combobox", { name: "User-Agent preset" });
+    expect([...select.querySelectorAll("optgroup")].map((g) => g.label)).toEqual([...USER_AGENT_GROUPS]);
+    for (const group of USER_AGENT_GROUPS) expect(USER_AGENT_PRESETS.some((p) => p.group === group)).toBe(true);
+    await user.selectOptions(select, "User-Agent: Googlebot");
+    expect((screen.getByRole("textbox", { name: "Header 1 value" }) as HTMLInputElement).value).toBe("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)");
+    await user.selectOptions(select, "User-Agent: Chrome on Android");
+    expect((select as HTMLSelectElement).value).toMatch(/Android 10; K.*Mobile Safari/);
+    expect(screen.queryByRole("textbox", { name: "Header 2 value" })).toBeNull();  // replaced, not a second row
   });
 
   it("refuses invalid and duplicate header names", async () => {

@@ -19,13 +19,41 @@ export interface HeaderRow {
 let nextRowId = 1;
 const row = (name = "", value = ""): HeaderRow => ({ id: nextRowId++, name, value });
 
-/** Browser identities offered for the User-Agent header. They are ordinary current strings, not tied to this machine. */
-export const USER_AGENT_PRESETS: { label: string; value: string }[] = [
-  { label: "Chrome on Windows", value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36" },
-  { label: "Firefox on Linux", value: "Mozilla/5.0 (X11; Linux x86_64; rv:143.0) Gecko/20100101 Firefox/143.0" },
-  { label: "Safari on macOS", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15" },
-  { label: "Safari on iPhone", value: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1" },
-  { label: "curl", value: "curl/8.15.0" },
+/** Groups of the User-Agent preset dropdown, in display order. */
+export const USER_AGENT_GROUPS = ["Desktop browsers", "Mobile browsers", "Command-line tools and libraries", "Monitoring services", "Search engine crawlers"] as const;
+export type UserAgentGroup = (typeof USER_AGENT_GROUPS)[number];
+
+/**
+ * Identities offered for the User-Agent header. They are ordinary current strings, not tied to this machine; each value
+ * must be unique because the dropdown is keyed on it, and a stored value that matches one shows that preset as chosen.
+ */
+export const USER_AGENT_PRESETS: { label: string; value: string; group: UserAgentGroup }[] = [
+  { group: "Desktop browsers", label: "Chrome on Windows", value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36" },
+  { group: "Desktop browsers", label: "Chrome on macOS", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36" },
+  { group: "Desktop browsers", label: "Chrome on Linux", value: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36" },
+  { group: "Desktop browsers", label: "Edge on Windows", value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0" },
+  { group: "Desktop browsers", label: "Firefox on Windows", value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0" },
+  { group: "Desktop browsers", label: "Firefox on macOS", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:143.0) Gecko/20100101 Firefox/143.0" },
+  { group: "Desktop browsers", label: "Firefox on Linux", value: "Mozilla/5.0 (X11; Linux x86_64; rv:143.0) Gecko/20100101 Firefox/143.0" },
+  { group: "Desktop browsers", label: "Safari on macOS", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15" },
+  { group: "Desktop browsers", label: "Opera on Windows", value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 OPR/124.0.0.0" },
+  { group: "Mobile browsers", label: "Safari on iPhone", value: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1" },
+  { group: "Mobile browsers", label: "Safari on iPad", value: "Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1" },
+  { group: "Mobile browsers", label: "Chrome on Android", value: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36" },
+  { group: "Mobile browsers", label: "Samsung Internet on Android", value: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/28.0 Chrome/130.0.0.0 Mobile Safari/537.36" },
+  { group: "Mobile browsers", label: "Firefox on Android", value: "Mozilla/5.0 (Android 15; Mobile; rv:143.0) Gecko/143.0 Firefox/143.0" },
+  { group: "Command-line tools and libraries", label: "curl", value: "curl/8.15.0" },
+  { group: "Command-line tools and libraries", label: "Wget", value: "Wget/1.25.0" },
+  { group: "Command-line tools and libraries", label: "PowerShell", value: "Mozilla/5.0 (Windows NT 10.0; Microsoft Windows 10.0.26100; en-US) PowerShell/7.5.3" },
+  { group: "Command-line tools and libraries", label: "Python requests", value: "python-requests/2.32.5" },
+  { group: "Command-line tools and libraries", label: "Go HTTP client", value: "Go-http-client/2.0" },
+  { group: "Command-line tools and libraries", label: "Postman", value: "PostmanRuntime/7.48.0" },
+  { group: "Monitoring services", label: "Uptime Kuma", value: "Uptime-Kuma/2.0.0" },
+  { group: "Monitoring services", label: "UptimeRobot", value: "Mozilla/5.0+(compatible; UptimeRobot/2.0; http://www.uptimerobot.com/)" },
+  { group: "Monitoring services", label: "Pingdom", value: "Pingdom.com_bot_version_1.4_(http://www.pingdom.com/)" },
+  { group: "Search engine crawlers", label: "Googlebot", value: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" },
+  { group: "Search engine crawlers", label: "Googlebot (smartphone)", value: "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" },
+  { group: "Search engine crawlers", label: "Bingbot", value: "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)" },
 ];
 
 /** One-click additions; a header that is already listed gets the value instead of a second row. */
@@ -103,6 +131,7 @@ export function HeaderEditor({ rows, onChange }: { rows: HeaderRow[]; onChange: 
         <span id="http-headers-label" className="label mb-0">Request headers (optional)</span>
         <HelpTip label="request headers">
           <p>Headers are name/value pairs sent with the request, before any body. Servers use them to decide what to answer: <code>User-Agent</code> names the client, <code>Accept</code> asks for a format such as JSON, <code>Authorization</code> carries a token, <code>Host</code> picks a virtual host on a shared address.</p>
+          <p className="mt-2">The <b>User-Agent preset</b> dropdown offers common identities in groups. <b>Desktop</b> and <b>mobile browsers</b> get past sites that block or redirect unknown clients and show the page a visitor on that device gets. <b>Command-line tools</b> reproduce what a script or API client is served. <b>Monitoring services</b> match firewall or WAF rules that already allow those checkers. <b>Search engine crawlers</b> show what a site serves to bots, but many sites and CDNs verify real crawlers by their address, so a check posing as Googlebot or Bingbot may be blocked or challenged. The strings are recent versions written into the app; edit the value for an exact one.</p>
           <p className="mt-2">Every header listed here is sent on every run of this check, and on each redirect it follows (httpx drops <code>Authorization</code> when a redirect leads to another host). Names ignore case. A header you add replaces the built-in one of the same name, so a <code>User-Agent</code> row replaces <code>{DEFAULT_USER_AGENT}</code>; <code>Content-Length</code> and <code>Transfer-Encoding</code> are always computed from the request and cannot be set.</p>
           <p className="mt-2">Each run records the headers it sent under <b>Request headers</b> in its details, with the values of <code>Authorization</code>, <code>Cookie</code> and API-key headers masked. The values are stored with the target in plain text, so anyone who can read this target's settings can read them.</p>
         </HelpTip>
@@ -130,7 +159,11 @@ export function HeaderEditor({ rows, onChange }: { rows: HeaderRow[]; onChange: 
         </button>
         <select className="input w-auto py-1 text-xs" aria-label="User-Agent preset" value={uaPreset} onChange={(e) => pickUserAgent(e.target.value)}>
           <option value="">User-Agent: default ({DEFAULT_USER_AGENT})</option>
-          {USER_AGENT_PRESETS.map((p) => <option key={p.label} value={p.value}>User-Agent: {p.label}</option>)}
+          {USER_AGENT_GROUPS.map((group) => (
+            <optgroup key={group} label={group}>
+              {USER_AGENT_PRESETS.filter((p) => p.group === group).map((p) => <option key={p.label} value={p.value}>User-Agent: {p.label}</option>)}
+            </optgroup>
+          ))}
           {uaPreset === "custom" && <option value="custom">User-Agent: custom</option>}
         </select>
         <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Common headers">
