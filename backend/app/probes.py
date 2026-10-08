@@ -11,6 +11,7 @@ import contextlib
 import json
 import random
 import re
+import secrets
 import shutil
 import ssl
 import statistics
@@ -19,14 +20,14 @@ import string
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import jsonata
 import regex
 
 from .config import config
-from .models import upgrade_http_options
+from .models import CACHE_BUSTER_PARAM, upgrade_http_options
 from .resolver import is_ip, resolve_host
 
 # Bound for one keyword regular expression search over the body.
@@ -390,6 +391,33 @@ async def tls_details(host: str, port: int, timeout: float = 5.0) -> tuple[dict[
             pass
 
 
+DEFAULT_USER_AGENT = "MTR-Tracker/1.0"
+# Header values recorded with a run are readable by anyone who can open it; credentials are masked there.
+SENSITIVE_HEADERS = {"authorization", "proxy-authorization", "cookie", "x-api-key", "x-auth-token", "api-key"}
+
+
+def cache_bust(url: str, token: str | None = None) -> str:
+    """The URL with CACHE_BUSTER_PARAM=<random> appended to its query, so no cache has seen it before."""
+    parts = urlsplit(url)
+    extra = f"{CACHE_BUSTER_PARAM}={token or secrets.token_hex(8)}"
+    return urlunsplit(parts._replace(query=f"{parts.query}&{extra}" if parts.query else extra))
+
+
+def request_headers(raw: Any) -> httpx.Headers:
+    """The default User-Agent plus the configured headers; a configured name replaces a default whatever its case."""
+    headers = httpx.Headers({"User-Agent": DEFAULT_USER_AGENT})
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            headers[str(k)] = str(v)
+    return headers
+
+
+def shown_headers(headers: httpx.Headers) -> dict[str, str]:
+    """The request headers as recorded in details, credentials masked."""
+    pairs = ((k.decode("latin-1"), v.decode("latin-1")) for k, v in headers.raw)  # raw keeps the names' casing
+    return {k: ("********" if k.lower() in SENSITIVE_HEADERS and v else v) for k, v in pairs}
+
+
 async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     started = time.time()
     url = t["host"].strip()
@@ -399,10 +427,12 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     timeout = float(opts.get("timeout_sec") or 10.0)
     verify = bool(opts.get("verify_tls", True))
     follow = bool(opts.get("follow_redirects", True))
-    headers: dict[str, str] = {"User-Agent": "MTR-Tracker/1.0"}
-    raw_headers = opts.get("headers") or {}
-    if isinstance(raw_headers, dict):
-        headers.update({str(k): str(v) for k, v in raw_headers.items()})
+    headers = request_headers(opts.get("headers"))
+    # A fresh random parameter per run: CDNs, proxies and server caches key on the full URL, so they must forward it.
+    request_url = cache_bust(url) if opts.get("cache_buster") else url
+    request = {"request_headers": shown_headers(headers)}
+    if request_url != url:
+        request.update({"cache_buster": True, "request_url": request_url})
     body = opts.get("body") or None
     keyword = (opts.get("keyword") or "").strip()
     keyword_absent = bool(opts.get("keyword_absent", False))
@@ -415,18 +445,18 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     tls_info = bool(opts.get("tls_info", True))
 
     if _sim():
-        return _simulate_http(started, url, keyword, keyword_regex, (jquery, joperator, jexpected), tls_warn_days, tls_info)
+        return _simulate_http(started, url, keyword, keyword_regex, (jquery, joperator, jexpected), tls_warn_days, tls_info, request)
 
     parts = urlsplit(url)
     want_tls = parts.scheme == "https" and verify and (tls_warn_days > 0 or tls_info)
-    details: dict[str, Any] = {"url": url, "method": method}
+    details: dict[str, Any] = {"url": url, "method": method, **request}
     tls: dict[str, Any] | None = None
     try:
         async with httpx.AsyncClient(timeout=timeout, verify=verify, follow_redirects=follow, headers=headers, transport=_HTTP_TRANSPORT) as client:
             t0 = time.perf_counter()
             # Stream the body: a monitored URL may serve something huge, and only the first MAX_HTTP_BODY
             # bytes are needed for the keyword and JSON checks.
-            async with client.stream(method, url, content=body.encode() if isinstance(body, str) and body else None) as resp:
+            async with client.stream(method, request_url, content=body.encode() if isinstance(body, str) and body else None) as resp:
                 if want_tls:
                     tls = tls_from_response(resp)
                 chunks: list[bytes] = []
@@ -529,7 +559,7 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
         if days is not None and tls_warn_days > 0 and days <= tls_warn_days:
             warnings.append(f"TLS certificate expires in {days} day{'s' if days != 1 else ''}")
 
-    o = ProbeOutcome(True, not failures, started, finished, dst_ip=None, sent=1, details=details, warnings=warnings, command=f"{method} {url}")
+    o = ProbeOutcome(True, not failures, started, finished, dst_ip=None, sent=1, details=details, warnings=warnings, command=f"{method} {request_url}")
     o.loss_pct = 0.0 if not failures else 100.0
     _apply_stats(o, [elapsed])
     if failures:
@@ -537,12 +567,14 @@ async def run_http(t: dict[str, Any], opts: dict[str, Any]) -> ProbeOutcome:
     return o
 
 
-def _simulate_http(started: float, url: str, keyword: str, keyword_regex: bool, jcheck: tuple[str, str, str], tls_warn_days: int = 14, tls_info: bool = True) -> ProbeOutcome:
+def _simulate_http(
+    started: float, url: str, keyword: str, keyword_regex: bool, jcheck: tuple[str, str, str], tls_warn_days: int = 14, tls_info: bool = True, request: dict[str, Any] | None = None
+) -> ProbeOutcome:
     rng = random.Random()
     elapsed = max(20.0, rng.gauss(180, 40))
     fail = rng.random() < 0.03
     details: dict[str, Any] = {"url": url, "method": "GET", "status": 503 if fail else 200, "reason": "Service Unavailable" if fail else "OK", "bytes": 15234, "content_type": "text/html; charset=utf-8",
-                               "server": "simulator", "final_url": url, "redirects": 0, "http_version": "HTTP/1.1", "status_ok": not fail, "tls_expires_in_days": 61, "tls_warn_days": tls_warn_days}
+                               "server": "simulator", "final_url": url, "redirects": 0, "http_version": "HTTP/1.1", "status_ok": not fail, "tls_expires_in_days": 61, "tls_warn_days": tls_warn_days, **(request or {})}
     if tls_info and url.lower().startswith("https://"):
         host = urlsplit(url).hostname or "example.test"
         now = datetime.now(timezone.utc)
@@ -558,7 +590,7 @@ def _simulate_http(started: float, url: str, keyword: str, keyword_regex: bool, 
     jquery, joperator, jexpected = jcheck
     if jquery:
         details.update({"json_query": jquery, "json_operator": joperator, "json_expected": jexpected, "json_value": jexpected or True, "json_ok": not fail})
-    o = ProbeOutcome(True, not fail, started, time.time() + 0.01, sent=1, details=details, command=f"[simulated] GET {url}")
+    o = ProbeOutcome(True, not fail, started, time.time() + 0.01, sent=1, details=details, command=f"[simulated] GET {details.get('request_url', url)}")
     o.loss_pct = 100.0 if fail else 0.0
     _apply_stats(o, [elapsed])
     if fail:

@@ -72,6 +72,48 @@ def clean_status_spec(v: str) -> str:
     return v
 
 
+# RFC 9110 field names are tokens; values must stay on one line (no header injection) and be ASCII for httpx.
+HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+MAX_HTTP_HEADERS = 50
+MAX_HEADER_VALUE = 4000
+# httpx computes these from the request itself; a stored value would contradict the body actually sent.
+FORBIDDEN_HEADERS = {"content-length", "transfer-encoding"}
+# The query parameter the cache buster appends, as Uptime Kuma appends uptime_kuma_cachebuster.
+CACHE_BUSTER_PARAM = "mtr_tracker_cachebuster"
+
+
+def clean_headers(v: Any) -> dict[str, str]:
+    """Trimmed request headers; refuses invalid names, duplicates (case-insensitive) and multi-line or non-ASCII values."""
+    if v is None:
+        return {}
+    if not isinstance(v, dict):
+        raise ValueError("headers must be an object of name: value pairs")
+    out: dict[str, str] = {}
+    seen: set[str] = set()
+    for raw_name, raw_value in v.items():
+        name = str(raw_name).strip()
+        value = "" if raw_value is None else str(raw_value).strip()
+        if not name:
+            raise ValueError("a header needs a name")
+        if not HEADER_NAME_RE.match(name):
+            raise ValueError(f"invalid header name '{name}': use letters, digits and - (no spaces or colons)")
+        if name.lower() in FORBIDDEN_HEADERS:
+            raise ValueError(f"the {name} header is set automatically and cannot be overridden")
+        if name.lower() in seen:
+            raise ValueError(f"header '{name}' is listed twice")
+        if any(c in value for c in "\r\n\0"):
+            raise ValueError(f"the value of header '{name}' must be a single line")
+        if not value.isascii():
+            raise ValueError(f"the value of header '{name}' must be plain ASCII text")
+        if len(value) > MAX_HEADER_VALUE:
+            raise ValueError(f"the value of header '{name}' is longer than {MAX_HEADER_VALUE} characters")
+        seen.add(name.lower())
+        out[name] = value
+    if len(out) > MAX_HTTP_HEADERS:
+        raise ValueError(f"at most {MAX_HTTP_HEADERS} headers")
+    return out
+
+
 class HttpOptions(BaseModel):
     method: HttpMethod = "GET"
     expected_status: str = Field(default="200-299", max_length=100, description="e.g. 200, 200-299, 200,301")
@@ -83,7 +125,8 @@ class HttpOptions(BaseModel):
     )
     json_operator: JsonOperator = Field(default="==", description="how the query result is compared with json_expected")
     json_expected: str = Field(default="", max_length=500, description="value the result is compared with; empty = the result must exist and not be false")
-    headers: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict, description="extra request headers, e.g. User-Agent; replace the defaults of the same name")
+    cache_buster: bool = Field(default=False, description=f"append ?{CACHE_BUSTER_PARAM}=<random> to the URL on every run so no cache can answer")
     body: str = Field(default="", max_length=20000)
     timeout_sec: float = Field(default=10.0, ge=1, le=120)
     verify_tls: bool = True
@@ -100,6 +143,11 @@ class HttpOptions(BaseModel):
     @classmethod
     def _status(cls, v: str) -> str:
         return clean_status_spec(v)
+
+    @field_validator("headers", mode="before")
+    @classmethod
+    def _headers(cls, v: Any) -> dict[str, str]:
+        return clean_headers(v)
 
     @model_validator(mode="after")
     def _keyword_pattern(self) -> "HttpOptions":

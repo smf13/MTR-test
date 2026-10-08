@@ -35,7 +35,10 @@ export interface HttpOptions {
   json_operator: JsonOperator;
   /** Compared with the query result; empty with == means the result must exist and not be false. */
   json_expected: string;
+  /** Extra request headers (User-Agent, Accept, Authorization…); a name replaces the default of the same name. */
   headers: Record<string, string>;
+  /** Append ?mtr_tracker_cachebuster=<random> to the URL on every run so no cache can answer (as Uptime Kuma's cache buster). */
+  cache_buster: boolean;
   body: string;
   timeout_sec: number;
   verify_tls: boolean;
@@ -95,7 +98,7 @@ export const PROBE_TYPE_LABEL: Record<ProbeType, string> = { mtr: "MTR", ping: "
 export const DEFAULT_OPTIONS: Record<ProbeType, ProbeOptions> = {
   mtr: {},
   ping: { timeout_sec: 2 },
-  http: { method: "GET", expected_status: "200-299", keyword: "", keyword_absent: false, keyword_regex: false, json_query: "", json_operator: "==", json_expected: "", headers: {}, body: "", timeout_sec: 10, verify_tls: true, follow_redirects: true, tls_warn_days: 14, tls_info: true },
+  http: { method: "GET", expected_status: "200-299", keyword: "", keyword_absent: false, keyword_regex: false, json_query: "", json_operator: "==", json_expected: "", headers: {}, cache_buster: false, body: "", timeout_sec: 10, verify_tls: true, follow_redirects: true, tls_warn_days: 14, tls_info: true },
   tcp: { timeout_sec: 5 },
   dns: { record_type: "A", transport: "udp", resolver: "", resolver_port: null, verify_tls: true, expected: "", timeout_sec: 5, random_prefix: false },
   globalping: { measurement: "ping", location: "world", probes: 1, record_type: "A", resolver: "", expected: "", dns_transport: "udp", path: "/", http_method: "GET", http_protocol: "HTTPS", expected_status: "200-299", keyword: "" },

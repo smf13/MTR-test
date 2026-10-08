@@ -7,6 +7,7 @@ import { TagColorPicker, useTagColors } from "./Tags";
 import { TagSelect } from "./TagPicker";
 import { GroupSelect, cleanGroupName } from "./GroupPicker";
 import { useToast } from "./Toast";
+import { CacheBusterField, HeaderEditor, headerRows, headersFromRows, type HeaderRow } from "./HeaderEditor";
 import { classNames, latencyLabel, sortTags } from "../utils";
 
 // Well-known public resolvers offered as one-click fills for the encrypted transports.
@@ -107,7 +108,7 @@ export function TargetForm({
   const [tags, setTags] = useState<string[]>([]);
   const [advanced, setAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [headersText, setHeadersText] = useState("");
+  const [headers, setHeaders] = useState<HeaderRow[]>(() => headerRows({}));
   const toast = useToast();
   const { colors: tagColors, known: knownTags, refresh: refreshTagColors } = useTagColors();
   // Colour choices made in this form: tag -> hex, or null for "back to automatic". Saved once the target is saved.
@@ -126,7 +127,7 @@ export function TargetForm({
     setForm({ ...base, type, options: { ...DEFAULT_OPTIONS[type], ...(base.options || {}) } });
     setTags(sortTags(base.tags));
     setAdvanced(base.protocol !== "icmp" || base.packet_size !== 64 || base.max_hops !== 30 || base.ip_version !== "auto" || base.probe_interval !== 1);
-    setHeadersText(Object.entries(base.options?.headers || {}).map(([k, v]) => `${k}: ${v}`).join("\n"));
+    setHeaders(headerRows(base.options?.headers));
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialId, prefill]);
@@ -204,13 +205,9 @@ export function TargetForm({
     if (isDns && dnsEncrypted && !(form.options.resolver ?? "").trim()) return setError(`${DNS_TRANSPORT_LABEL[dnsTransport]} needs a resolver: the system resolver speaks plain DNS only.`);
     const options: ProbeOptions = { ...form.options };
     if (isHttp) {
-      const headers: Record<string, string> = {};
-      for (const line of headersText.split("\n")) {
-        const idx = line.indexOf(":");
-        if (idx > 0) headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-        else if (line.trim()) return setError(`Header line "${line.trim()}" must look like Name: value.`);
-      }
-      options.headers = headers;
+      const parsed = headersFromRows(headers);
+      if ("error" in parsed) return setError(parsed.error);
+      options.headers = parsed.headers;
     }
     try {
       await onSubmit({ ...form, name: form.name.trim(), host: form.host.trim(), group_name: cleanGroupName(form.group_name), tags: sortTags(tags), options, port: isMtr && form.protocol === "icmp" ? null : form.port });
@@ -459,10 +456,8 @@ export function TargetForm({
                 <div className="help">Issuer, subject, validity period, alternative names and the negotiated protocol are shown with each run (verified HTTPS connections only).</div>
               </span>
             </label>
-            <div className="sm:col-span-2">
-              <label className="label">Headers (optional, one per line as Name: value)</label>
-              <textarea className="input font-mono" rows={2} value={headersText} onChange={(e) => setHeadersText(e.target.value)} placeholder={"Authorization: Bearer …\nAccept: application/json"} spellCheck={false} />
-            </div>
+            <HeaderEditor rows={headers} onChange={setHeaders} />
+            <CacheBusterField checked={form.options.cache_buster ?? false} host={form.host} onChange={(on) => setOpt("cache_buster", on)} />
             {["POST", "PUT", "PATCH"].includes(form.options.method ?? "GET") && (
               <div className="sm:col-span-2">
                 <label className="label">Request body (optional)</label>

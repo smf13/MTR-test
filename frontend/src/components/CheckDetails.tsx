@@ -33,6 +33,8 @@ export function CheckDetails({ run, type }: { run: Run; type: ProbeType }) {
             <Row k="Server" v={String(d.server ?? "–")} />
             <Row k="Protocol" v={String(d.http_version ?? "–")} />
             {d.redirects !== undefined && Number(d.redirects) > 0 && <Row k="Redirects" v={`${d.redirects} → ${d.final_url}`} mono />}
+            {d.cache_buster === true && typeof d.request_url === "string" && <Row k="Requested URL" v={<span data-testid="request-url">{d.request_url} <span className="font-sans text-faint">(cache buster)</span></span>} mono wide />}
+            {d.request_headers && typeof d.request_headers === "object" && <RequestHeadersRow headers={d.request_headers as Record<string, string>} />}
             {d.keyword !== undefined && <KeywordRow d={d} />}
             {d.json_query !== undefined && <JsonQueryRows d={d} />}
             {d.json_path !== undefined && <Row k={`JSON ${String(d.json_path)}`} v={<span style={{ color: d.json_ok === false ? "var(--down)" : d.json_ok ? "var(--up)" : undefined }}>{JSON.stringify(d.json_value)}</span>} mono />}
@@ -316,6 +318,27 @@ function JsonQueryRows({ d }: { d: Record<string, unknown> }) {
 }
 
 /** The keyword (or regular expression) check of an HTTP run and its outcome. */
+function RequestHeadersRow({ headers }: { headers: Record<string, string> }) {
+  const entries = Object.entries(headers);
+  if (!entries.length) return null;
+  return (
+    <Row
+      k="Request headers"
+      v={
+        <ul data-testid="request-headers">
+          {entries.map(([k, v]) => (
+            <li key={k} className="break-all">
+              <span className="text-muted">{k}:</span> {v}
+            </li>
+          ))}
+        </ul>
+      }
+      mono
+      wide
+    />
+  );
+}
+
 function KeywordRow({ d }: { d: Record<string, unknown> }) {
   const isRegex = d.keyword_regex === true;
   const outcome = d.keyword_error !== undefined ? `failed: ${String(d.keyword_error)}` : d.keyword_found ? (isRegex && d.keyword_match !== undefined ? `matched "${String(d.keyword_match)}"` : "found") : "not found";

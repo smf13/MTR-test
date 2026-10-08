@@ -196,3 +196,81 @@ describe("tap responsiveness", () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith("7d"));
   });
 });
+
+describe("HTTP request headers and cache buster", () => {
+  async function openHttpForm(onSubmit: (v: TargetInput) => Promise<void>, initial?: Target) {
+    const user = userEvent.setup();
+    render(<MemoryRouter><TargetForm open initial={initial} prefill={initial ? undefined : { name: "Shop", host: "shop.example/status?lang=en" }} onClose={() => undefined} onSubmit={onSubmit} submitting={false} /></MemoryRouter>);
+    if (!initial) await user.click(screen.getByRole("radio", { name: "HTTP(S)" }));
+    return user;
+  }
+
+  it("explains headers, offers User-Agent presets and quick additions and submits the rows", async () => {
+    const onSubmit = vi.fn(async (_values: TargetInput) => undefined);
+    const user = await openHttpForm(onSubmit);
+    expect(screen.getByTestId("headers-help").textContent).toMatch(/identifies itself as MTR-Tracker\/1\.0/);
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "User-Agent preset" }), "User-Agent: curl");
+    expect((screen.getByRole("combobox", { name: "Header 1 name" }) as HTMLInputElement).value).toBe("User-Agent");
+    expect((screen.getByRole("textbox", { name: "Header 1 value" }) as HTMLInputElement).value).toBe("curl/8.15.0");
+    await user.click(screen.getByRole("button", { name: "Accept JSON" }));
+    await user.click(screen.getByRole("button", { name: "Add header" }));
+    await user.type(screen.getByRole("combobox", { name: "Header 3 name" }), "X-Team");
+    await user.type(screen.getByRole("textbox", { name: "Header 3 value" }), "noc");
+    // Editing the value by hand turns the preset picker to "custom".
+    await user.type(screen.getByRole("textbox", { name: "Header 1 value" }), " extra");
+    expect((screen.getByRole("combobox", { name: "User-Agent preset" }) as HTMLSelectElement).value).toBe("custom");
+
+    await user.click(screen.getByRole("button", { name: "Add target" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].options.headers).toEqual({ "User-Agent": "curl/8.15.0 extra", Accept: "application/json", "X-Team": "noc" });
+    expect(onSubmit.mock.calls[0][0].options.cache_buster).toBe(false);
+  });
+
+  it("refuses invalid and duplicate header names", async () => {
+    const onSubmit = vi.fn(async (_values: TargetInput) => undefined);
+    const user = await openHttpForm(onSubmit);
+    await user.type(screen.getByRole("combobox", { name: "Header 1 name" }), "User Agent");
+    await user.click(screen.getByRole("button", { name: "Add target" }));
+    expect(await screen.findByText(/"User Agent" is not a valid header name/)).toBeTruthy();
+    await user.clear(screen.getByRole("combobox", { name: "Header 1 name" }));
+    await user.type(screen.getByRole("combobox", { name: "Header 1 name" }), "accept");
+    await user.click(screen.getByRole("button", { name: "Accept JSON" }));
+    await user.click(screen.getByRole("button", { name: "Add header" }));
+    await user.type(screen.getByRole("combobox", { name: "Header 2 name" }), "Accept");
+    await user.click(screen.getByRole("button", { name: "Add target" }));
+    expect(await screen.findByText(/listed twice/)).toBeTruthy();
+    expect(onSubmit).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Remove header 2" }));
+    await user.click(screen.getByRole("button", { name: "Add target" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].options.headers).toEqual({ accept: "application/json" });
+  });
+
+  it("explains the cache buster with the URL a run would request and saves the switch", async () => {
+    const onSubmit = vi.fn(async (_values: TargetInput) => undefined);
+    const user = await openHttpForm(onSubmit);
+    expect(screen.getByTestId("cache-buster-help").textContent).toMatch(/CDNs, proxies and server caches/);
+    expect(screen.getByTestId("cache-buster-example").textContent).toBe("https://shop.example/status?lang=en&mtr_tracker_cachebuster=3f9c2a71b0d4e8a6");
+    await user.click(screen.getByRole("button", { name: "About the cache buster" }));
+    expect(await screen.findByText(/Uptime Kuma's cache buster/)).toBeTruthy();
+    await user.click(screen.getByRole("checkbox", { name: "Cache buster" }));
+    await user.click(screen.getByRole("button", { name: "Add target" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].options).toMatchObject({ cache_buster: true, headers: {} });
+  });
+
+  it("loads the stored headers when editing", async () => {
+    const http = { ...target, type: "http", host: "https://shop.example/", options: { headers: { "User-Agent": "Probe/2", Accept: "text/html" }, cache_buster: true } } as unknown as Target;
+    await openHttpForm(async () => undefined, http);
+    expect((screen.getByRole("textbox", { name: "Header 2 value" }) as HTMLInputElement).value).toBe("text/html");
+    expect((screen.getByRole("checkbox", { name: "Cache buster" }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("shows the requested URL and the headers a run sent", () => {
+    const httpRun = { ...run, target_type: "http", details: { url: "https://shop.example/", request_url: "https://shop.example/?mtr_tracker_cachebuster=ab12", cache_buster: true, request_headers: { "User-Agent": "Probe/2", Authorization: "********" }, status: 200, status_ok: true } } as RunDetail;
+    render(<CheckDetails run={httpRun} type="http" />);
+    expect(screen.getByTestId("request-url").textContent).toMatch(/mtr_tracker_cachebuster=ab12/);
+    expect(screen.getByTestId("request-headers").textContent).toBe("User-Agent: Probe/2Authorization: ********");
+  });
+});

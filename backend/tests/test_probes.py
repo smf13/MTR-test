@@ -215,6 +215,65 @@ async def test_run_http_caps_the_body_it_keeps(live: None, monkeypatch: pytest.M
     assert o.details["truncated"] is True and o.details["bytes"] == len(big)
 
 
+async def test_run_http_sends_custom_headers_and_masks_credentials(live: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, text="ok")
+
+    monkeypatch.setattr(probes, "_HTTP_TRANSPORT", httpx.MockTransport(handler))
+    headers = {"user-agent": "Mozilla/5.0 Test", "Authorization": "Bearer s3cret", "Accept": "application/json"}
+    o = await run_http({"host": "http://svc.test/page", "type": "http"}, {"headers": headers})
+    sent = seen[-1].headers
+    # A configured User-Agent replaces the default one whatever its case: only one is sent.
+    assert sent.get_list("user-agent") == ["Mozilla/5.0 Test"] and sent["authorization"] == "Bearer s3cret" and sent["accept"] == "application/json"
+    assert o.details["request_headers"] == {"user-agent": "Mozilla/5.0 Test", "Authorization": "********", "Accept": "application/json"}
+    assert "cache_buster" not in o.details and str(seen[-1].url) == "http://svc.test/page"
+
+    await run_http({"host": "http://svc.test/page", "type": "http"}, {})
+    assert seen[-1].headers.get_list("user-agent") == [probes.DEFAULT_USER_AGENT]
+
+
+async def test_run_http_cache_buster_appends_a_fresh_parameter(live: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[httpx.URL] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return httpx.Response(200, text="ok")
+
+    monkeypatch.setattr(probes, "_HTTP_TRANSPORT", httpx.MockTransport(handler))
+    target = {"host": "http://svc.test/page?lang=en", "type": "http"}
+    first = await run_http(target, {"cache_buster": True})
+    second = await run_http(target, {"cache_buster": True})
+    a, b = (u.params[probes.CACHE_BUSTER_PARAM] for u in seen)
+    assert a != b and len(a) == 16 and all(u.params["lang"] == "en" and u.path == "/page" for u in seen)
+    assert first.details["cache_buster"] is True and first.details["url"] == "http://svc.test/page?lang=en"
+    assert first.details["request_url"] == str(seen[0]) and first.command == f"GET {seen[0]}" and second.reached
+
+    assert probes.cache_bust("https://a.test/x", "abc") == "https://a.test/x?mtr_tracker_cachebuster=abc"
+    assert probes.cache_bust("https://a.test/x?q=1#top", "abc") == "https://a.test/x?q=1&mtr_tracker_cachebuster=abc#top"
+
+
+def test_http_header_validation() -> None:
+    from app.models import validate_options
+
+    ok = validate_options("http", {"headers": {" User-Agent ": " Mozilla/5.0 ", "X-Empty": ""}, "cache_buster": True})
+    assert ok["headers"] == {"User-Agent": "Mozilla/5.0", "X-Empty": ""} and ok["cache_buster"] is True
+    assert validate_options("http", {})["cache_buster"] is False
+    for bad, why in [
+        ({"Bad Name": "x"}, "invalid header name"),
+        ({"X-A:": "x"}, "invalid header name"),
+        ({"Accept": "a", "accept": "b"}, "listed twice"),
+        ({"X-Inject": "a\r\nHost: evil"}, "single line"),
+        ({"X-Text": "café"}, "ASCII"),
+        ({"Content-Length": "5"}, "set automatically"),
+        ({"": "x"}, "needs a name"),
+    ]:
+        with pytest.raises((ValidationError, ValueError), match=why):
+            validate_options("http", {"headers": bad})
+
+
 async def test_run_dns_random_prefix_measures_uncached_lookups(live: None, monkeypatch: pytest.MonkeyPatch) -> None:
     import dns.asyncresolver
     import dns.resolver
