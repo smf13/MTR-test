@@ -196,6 +196,47 @@ async def test_route_changes_are_not_reported_across_outages(client: AsyncClient
     assert (await client.get(f"/api/targets/{tid}")).json()["last_status"] == "up"
 
 
+async def test_fail_threshold_waits_for_consecutive_failures(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    dst = "192.0.2.98"
+    body = {"name": "Flaky", "host": dst, "interval_sec": 60, "enabled": False, "alert_loss_pct": 0, "alert_latency_ms": 0}
+    assert (await client.post("/api/targets", json={**body, "name": "Default"})).json()["fail_threshold"] == 1
+    assert (await client.post("/api/targets", json={**body, "name": "Zero", "fail_threshold": 0})).status_code == 422
+    tid = (await client.post("/api/targets", json={**body, "fail_threshold": 3})).json()["id"]
+    await client.put("/api/settings", json={"reverse_dns": False})
+    app = app_of(client)
+    sched, db = app.state.scheduler, app.state.db
+    settings = await db.get_settings()
+
+    async def probe(ips: list[str | None]) -> str:
+        async def fake(**kw: Any) -> Any:
+            return _result(dst, ips)
+
+        monkeypatch.setattr(sched_mod, "run_mtr", fake)
+        t = dict(await db.fetchone("SELECT * FROM targets WHERE id = ?", (tid,)))
+        await sched._execute(t, settings)
+        return (await client.get(f"/api/targets/{tid}")).json()["last_status"]
+
+    up, lost = ["10.0.0.1", dst], ["10.0.0.1", None]
+    assert await probe(up) == "up"
+    assert [await probe(lost), await probe(lost)] == ["up", "up"]  # two failures: still up
+    assert await probe(up) == "up"                                  # a success resets the streak
+    assert [await probe(lost), await probe(lost), await probe(lost)] == ["up", "up", "down"]
+    assert await probe(lost) == "down"
+    assert await probe(up) == "up"
+    events = list(reversed((await client.get(f"/api/targets/{tid}/events")).json()))
+    assert [e["kind"] for e in events] == ["down", "recovered"]
+    assert "after 3 consecutive failed runs" in events[0]["message"]
+    assert events[0]["details"]["consecutive_failures"] == 3 and events[0]["details"]["fail_threshold"] == 3
+
+    # Editable, exported, and left alone by an import entry that does not name it.
+    assert (await client.put(f"/api/targets/{tid}", json={"fail_threshold": 2})).json()["fail_threshold"] == 2
+    exported = {t["name"]: t for t in (await client.get("/api/targets/export")).json()}
+    assert exported["Flaky"]["fail_threshold"] == 2
+    entry = {k: v for k, v in exported["Flaky"].items() if k != "fail_threshold"}
+    assert (await client.post("/api/targets/import", json={"mode": "upsert", "targets": [entry]})).status_code == 200
+    assert (await client.get(f"/api/targets/{tid}")).json()["fail_threshold"] == 2
+
+
 async def test_notifications_are_tracked_and_drained_on_stop(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     app = app_of(client)
     sched = app.state.scheduler

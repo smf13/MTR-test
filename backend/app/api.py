@@ -473,20 +473,23 @@ async def _insert_target(db: Database, data: dict[str, Any]) -> int:
     now = time.time()
     return int(await db.fetchval(
         "INSERT INTO targets(name, host, type, options, description, tags, group_name, interval_sec, count, probe_interval, protocol, port, packet_size, "
-        "ip_version, max_hops, enabled, notify, alert_loss_pct, alert_latency_ms, created_at, updated_at, next_run_at, last_status) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id",
+        "ip_version, max_hops, enabled, notify, alert_loss_pct, alert_latency_ms, fail_threshold, created_at, updated_at, next_run_at, last_status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending') RETURNING id",
         (
             data["name"], data["host"], data["type"], json.dumps(data["options"]), data["description"], json.dumps(data["tags"]), data.get("group_name") or "", data["interval_sec"],
             data["count"], data["probe_interval"], data["protocol"], data["port"], data["packet_size"], data["ip_version"], data["max_hops"],
-            int(data["enabled"]), int(data.get("notify", True)), data["alert_loss_pct"], data["alert_latency_ms"], now, now, now,
+            int(data["enabled"]), int(data.get("notify", True)), data["alert_loss_pct"], data["alert_latency_ms"],
+            int(data.get("fail_threshold") or 1), now, now, now,
         ),
     ))
 
 
 EXPORT_FIELDS = (
     "name", "host", "type", "options", "description", "tags", "group_name", "interval_sec", "count", "probe_interval", "protocol", "port", "packet_size",
-    "ip_version", "max_hops", "enabled", "notify", "alert_loss_pct", "alert_latency_ms",
+    "ip_version", "max_hops", "enabled", "notify", "alert_loss_pct", "alert_latency_ms", "fail_threshold",
 )
+# Fields added after the first export format: an import entry without them leaves an existing target's value alone.
+_OPTIONAL_IMPORT_FIELDS = ("group_name", "fail_threshold")
 _BOOL_FIELDS = ("enabled", "notify")
 
 
@@ -517,8 +520,8 @@ async def import_targets(request: Request, body: TargetImport) -> dict[str, Any]
         data = item.model_dump()
         tid = existing.get(data["name"].lower())
         if tid is not None:
-            # A file exported before groups existed carries no group_name; it leaves the target's group alone.
-            cols = [k for k in EXPORT_FIELDS if k != "name" and (k != "group_name" or "group_name" in item.model_fields_set)]
+            # A file exported before groups or the failure threshold existed leaves those values alone.
+            cols = [k for k in EXPORT_FIELDS if k != "name" and (k not in _OPTIONAL_IMPORT_FIELDS or k in item.model_fields_set)]
             values = [json.dumps(data[k]) if k in ("options", "tags") else (int(data[k]) if k in _BOOL_FIELDS else data[k]) for k in cols]
             await db.execute(f"UPDATE targets SET {', '.join(f'{c} = ?' for c in cols)}, updated_at = ?, next_run_at = ? WHERE id = ?", [*values, time.time(), time.time(), tid])
             updated += 1

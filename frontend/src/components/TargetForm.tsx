@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, DEFAULT_OPTIONS, DNS_TRANSPORT_LABEL, JSON_OPERATOR_LABEL, LATENCY_ALERT_DEFAULT, NUMERIC_JSON_OPERATORS, PROBE_TYPE_LABEL, targetInput, type DnsRecordType, type DnsTransport, type GlobalpingHttpMethod, type GlobalpingHttpProtocol, type GlobalpingMeasurement, type HttpMethod, type IpVersion, type JsonOperator, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
+import { api, DEFAULT_OPTIONS, DNS_TRANSPORT_LABEL, JSON_OPERATOR_LABEL, LATENCY_ALERT_DEFAULT, MAX_FAIL_THRESHOLD, NUMERIC_JSON_OPERATORS, PROBE_TYPE_LABEL, targetInput, type DnsRecordType, type DnsTransport, type GlobalpingHttpMethod, type GlobalpingHttpProtocol, type GlobalpingMeasurement, type HttpMethod, type IpVersion, type JsonOperator, type ProbeOptions, type ProbeType, type Protocol, type Target, type TargetInput } from "../api";
 import { Modal } from "./Modal";
 import { NumberInput } from "./NumberInput";
 import { Segmented } from "./RangePicker";
@@ -51,6 +51,7 @@ const DEFAULTS: TargetInput = {
   notify: true,
   alert_loss_pct: 5,
   alert_latency_ms: 200,
+  fail_threshold: 1,
 };
 
 /** "https://host:8443/path" -> "host"; anything that is not a URL is returned as typed. */
@@ -604,6 +605,15 @@ export function TargetForm({
           <label className="label">Alert when {alertWord === "Latency" ? "avg latency" : `${alertWord.toLowerCase()} time`} ≥ (ms)</label>
           <NumberInput className="input num" min={0} step={1} value={form.alert_latency_ms} onChange={(v) => set("alert_latency_ms", v ?? form.alert_latency_ms)} />
           <div className="help">0 disables the latency alert.</div>
+        </div>
+        <div>
+          <label className="label" htmlFor="fail-threshold">Mark down after (failed runs)</label>
+          <NumberInput id="fail-threshold" className="input num" min={1} max={MAX_FAIL_THRESHOLD} step={1} value={form.fail_threshold} onChange={(v) => set("fail_threshold", v == null ? form.fail_threshold : Math.round(v))} />
+          <div className="help" data-testid="fail-threshold-help">
+            {form.fail_threshold > 1
+              ? `The target is marked down only after ${form.fail_threshold} failed runs in a row; until then it keeps its status. Every failed run is still recorded.`
+              : "The first failed run marks the target down. Raise it to ride out single lost runs."}
+          </div>
         </div>
 
         {usesProbes && (

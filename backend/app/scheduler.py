@@ -361,10 +361,20 @@ class Scheduler:
         warnings: list[str] | None = None,
     ) -> None:
         prev = t.get("last_status") or "pending"
+        threshold = max(1, int(t.get("fail_threshold") or 1))
+        failures = 1
+        if status == "down" and prev != "down" and threshold > 1:
+            failures = await self._failure_streak(t["id"], threshold)
+            if failures < threshold:
+                # Not enough consecutive failures yet: the target keeps its status and raises no event.
+                log.info("target %s failed %d of %d consecutive runs before down", t["id"], failures, threshold)
+                return
         await self.db.execute("UPDATE targets SET last_status = ? WHERE id = ?", (status, t["id"]))
         if prev == status:
             return
         details: dict[str, Any] = {"previous": prev, "current": status, "run_id": run_id}
+        if status == "down" and threshold > 1:
+            details.update({"consecutive_failures": failures, "fail_threshold": threshold})
         if summary:
             details.update({k: v for k, v in summary.items() if v is not None})
         if error:
@@ -374,12 +384,29 @@ class Scheduler:
 
         if status == "down":
             reason = error or "destination unreachable"
-            await self._event(t, run_id, "down", "critical", f"{t['name']} is DOWN: {reason}", details, settings)
+            after = f" after {failures} consecutive failed runs" if threshold > 1 else ""
+            await self._event(t, run_id, "down", "critical", f"{t['name']} is DOWN{after}: {reason}", details, settings)
         elif status == "degraded":
             reason = _degraded_reason(t, summary or {}, warnings)
             await self._event(t, run_id, "degraded", "warning", f"{t['name']} is degraded: {reason}", details, settings)
         elif status == "up" and prev in {"down", "degraded"}:
             await self._event(t, run_id, "recovered", "info", f"{t['name']} recovered ({prev} -> up)", details, settings)
+
+    async def _failure_streak(self, target_id: int, limit: int) -> int:
+        """Consecutive failed runs (newest first, the current one included), counted up to `limit`.
+
+        A run fails when `_classify` would call it down: an error, the destination not reached, or every probe lost.
+        """
+        rows = await self.db.fetchall(
+            "SELECT status, reached, loss_pct FROM runs WHERE target_id = ? ORDER BY started_at DESC, id DESC LIMIT ?",
+            (target_id, limit),
+        )
+        streak = 0
+        for r in rows:
+            if r["status"] == "ok" and r["reached"] and (r["loss_pct"] or 0) < 100:
+                break
+            streak += 1
+        return streak
 
     async def _event(
         self,

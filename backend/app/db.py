@@ -31,7 +31,7 @@ log = logging.getLogger("mtr-tracker.db")
 IntegrityError = asyncpg.IntegrityConstraintViolationError
 Row = asyncpg.Record
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Matches the credentials of the bundled docker-compose service; a server elsewhere is named in MTR_TRACKER_DATABASE_URL.
 DEFAULT_DATABASE_URL = "postgresql://mtr:mtr@127.0.0.1:5432/mtr_tracker"
@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS targets (
     notify INTEGER NOT NULL DEFAULT 1,
     alert_loss_pct DOUBLE PRECISION NOT NULL DEFAULT 5.0,
     alert_latency_ms DOUBLE PRECISION NOT NULL DEFAULT 200.0,
+    fail_threshold INTEGER NOT NULL DEFAULT 1,
     created_at DOUBLE PRECISION NOT NULL,
     updated_at DOUBLE PRECISION NOT NULL,
     next_run_at DOUBLE PRECISION,
@@ -158,6 +159,8 @@ INDEXES: dict[str, str] = {
 COLUMN_UPGRADES = (
     # Schema 5: the dashboard group a target belongs to; '' = ungrouped.
     "ALTER TABLE targets ADD COLUMN IF NOT EXISTS group_name TEXT NOT NULL DEFAULT ''",
+    # Schema 6: consecutive failed runs before a target is marked down; 1 = the first failure.
+    "ALTER TABLE targets ADD COLUMN IF NOT EXISTS fail_threshold INTEGER NOT NULL DEFAULT 1",
 )
 
 SCHEMA = TABLES + "\n" + ";\n".join((*COLUMN_UPGRADES, *INDEXES.values())) + ";\n"

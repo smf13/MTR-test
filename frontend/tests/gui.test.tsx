@@ -34,7 +34,7 @@ const run: RunDetail = {
 const target: Target = {
   id: 1, name: "Office WAN", host: "192.0.2.1", type: "mtr", options: {}, description: "",
   tags: ["wan"], group_name: "", interval_sec: 60, count: 10, probe_interval: 1, protocol: "icmp", port: null,
-  packet_size: 64, ip_version: "auto", max_hops: 30, enabled: true, notify: true, alert_loss_pct: 5,
+  packet_size: 64, ip_version: "auto", max_hops: 30, enabled: true, notify: true, alert_loss_pct: 5, fail_threshold: 1,
   alert_latency_ms: 200, created_at: timestamp, updated_at: timestamp, next_run_at: null,
   last_status: "up", latest_run: run, stats_24h: { runs: 1, availability_pct: 100, avg_ms: 12, median_ms: 11, loss_pct: 0, route_changes: 0 },
   sparkline: [{ t: timestamp, avg: 12, loss: 0, reached: true }],

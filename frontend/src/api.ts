@@ -339,6 +339,8 @@ export interface Target {
   notify: boolean;
   alert_loss_pct: number;
   alert_latency_ms: number;
+  /** Consecutive failed runs before the target is marked down (1 = the first failure). */
+  fail_threshold: number;
   created_at: string;
   updated_at: string;
   next_run_at: string | null;
@@ -364,6 +366,9 @@ export type TargetInput = Omit<
   "id" | "created_at" | "updated_at" | "next_run_at" | "last_status" | "latest_run" | "stats_24h" | "sparkline" | "timeline" | "stats" | "running"
 >;
 
+/** Highest "mark down after N failed runs" value; mirrors models.MAX_FAIL_THRESHOLD. */
+export const MAX_FAIL_THRESHOLD = 100;
+
 /** The editable fields of a target, as the API accepts them on create and update. */
 export function targetInput(t: Target): TargetInput {
   return {
@@ -386,6 +391,7 @@ export function targetInput(t: Target): TargetInput {
     notify: t.notify ?? true,
     alert_loss_pct: t.alert_loss_pct,
     alert_latency_ms: t.alert_latency_ms,
+    fail_threshold: t.fail_threshold ?? 1,
   };
 }
 

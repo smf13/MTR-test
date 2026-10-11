@@ -40,6 +40,8 @@ The same controls appear on dashboard cards, table rows and target pages:
 | Three-dot menu → **Clear history…** (target page only) | Open a dialog that deletes **Failed runs only** (runs with an error or a failed check, and the events they raised; the default, for clearing out runs from a target's set-up) or the **Entire history** (every run and event; the configuration stays). Each choice shows how many runs it removes, and the button names the count (**Delete 3 runs**); it is disabled when there is nothing to delete. When the latest run is among the deleted, the status shows pending until the next run. |
 | Three-dot menu → **Delete** | Open a confirmation dialog. Confirming removes the target and its runs, hops and events. |
 
+**Mark down after (failed runs)** in the target form (1 to 100, default 1) sets how many failed runs in a row it takes before the target is marked down. With 1 the first failed run does it; with 3, two failed runs leave the target in its current status and the third marks it down, and any successful run in between starts the count again. The help line under the field restates the rule for the value entered. Failed runs are recorded either way, and the down event names how many consecutive failures led to it. When the value is above 1 the target page's header shows **down after N failed runs**.
+
 Cloning copies configuration, not monitoring history. **Add target** starts a new target from the default settings.
 
 ### DNS check settings

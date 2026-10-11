@@ -314,6 +314,8 @@ def _clean_group_value(v: str) -> str:
 
 MAX_TAGS = 20
 MAX_TAG_LENGTH = 40
+# A target is marked down after this many consecutive failed runs at most (1 = the first failure).
+MAX_FAIL_THRESHOLD = 100
 
 
 def _clean_tags_value(v: list[str]) -> list[str]:
@@ -382,6 +384,7 @@ class TargetBase(_TargetValidators):
     notify: bool = Field(default=True, description="deliver this target's events to the notification channels; events are recorded either way")
     alert_loss_pct: float = Field(default=5.0, ge=0, le=100, description="0 disables")
     alert_latency_ms: float = Field(default=200.0, ge=0, description="0 disables")
+    fail_threshold: int = Field(default=1, ge=1, le=MAX_FAIL_THRESHOLD, description="consecutive failed runs before the target is marked down")
 
 
 LATENCY_ALERT_DEFAULT: dict[str, float] = {"mtr": 200.0, "ping": 200.0, "http": 1500.0, "tcp": 500.0, "dns": 500.0, "globalping": 200.0}
@@ -419,6 +422,7 @@ class TargetUpdate(_TargetValidators):
     notify: bool | None = None
     alert_loss_pct: float | None = Field(default=None, ge=0, le=100)
     alert_latency_ms: float | None = Field(default=None, ge=0)
+    fail_threshold: int | None = Field(default=None, ge=1, le=MAX_FAIL_THRESHOLD)
 
 
 class SettingsUpdate(BaseModel):

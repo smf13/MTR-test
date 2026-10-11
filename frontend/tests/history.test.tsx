@@ -21,7 +21,7 @@ const run: RunDetail = {
 const target = {
   id: 1, name: "Office WAN", host: "192.0.2.1", type: "mtr", options: {}, description: "", tags: [], interval_sec: 60, count: 10,
   probe_interval: 1, protocol: "icmp", port: null, packet_size: 64, ip_version: "auto", max_hops: 30, enabled: true, notify: true,
-  alert_loss_pct: 0, alert_latency_ms: 0, created_at: timestamp, updated_at: timestamp, next_run_at: timestamp, last_run_at: timestamp,
+  alert_loss_pct: 0, alert_latency_ms: 0, fail_threshold: 1, created_at: timestamp, updated_at: timestamp, next_run_at: timestamp, last_run_at: timestamp,
   last_status: "up", latest_run: run, running: false,
   stats_24h: { runs: 1, availability_pct: 100, avg_ms: 12, median_ms: 11, loss_pct: 0, route_changes: 0 },
   sparkline: [], timeline: { bucket_sec: 1800, since: timestamp, buckets: [] },
@@ -126,6 +126,23 @@ describe("keyword regex", () => {
     render(<CheckDetails run={httpRun} type="http" />);
     expect(screen.getByText("Keyword regex")).toBeTruthy();
     expect(screen.getByTestId("keyword-result").textContent).toBe('/version \\d+/i matched "Version 42"');
+  });
+});
+
+describe("failure threshold", () => {
+  it("defaults to the first failure and submits the chosen count", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn(async (_values: TargetInput) => undefined);
+    render(<MemoryRouter><TargetForm open prefill={{ name: "Office", host: "192.0.2.1" }} onClose={() => undefined} onSubmit={onSubmit} submitting={false} /></MemoryRouter>);
+    const field = screen.getByLabelText("Mark down after (failed runs)") as HTMLInputElement;
+    expect(field.value).toBe("1");
+    expect(screen.getByTestId("fail-threshold-help").textContent).toContain("The first failed run marks the target down");
+    await user.clear(field);
+    await user.type(field, "3");
+    expect(screen.getByTestId("fail-threshold-help").textContent).toContain("only after 3 failed runs in a row");
+    await user.click(screen.getByRole("button", { name: "Add target" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].fail_threshold).toBe(3);
   });
 });
 
