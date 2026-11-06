@@ -49,6 +49,8 @@ services:
       MTR_TRACKER_LOG_LEVEL: "info"
       # Set to "1" to generate synthetic data without sending packets (demos, dev machines).
       MTR_TRACKER_SIMULATE: "0"
+      # Time zone for the times printed in Pushover messages (e.g. Europe/Berlin); UTC unless set in the shell or .env.
+      TZ: ${TZ:-UTC}
       # Optional: MTR_TRACKER_MTR_BINARY, MTR_TRACKER_PORT, MTR_TRACKER_API_TOKEN, MTR_TRACKER_AUTO_MIGRATE,
       # MTR_TRACKER_DB_POOL_SIZE, MTR_TRACKER_DB_CONNECT_TIMEOUT.
       # Optional: MTR_TRACKER_RUN_AS_ROOT=1 keeps the process as root, only needed for probe intervals below 1 s.

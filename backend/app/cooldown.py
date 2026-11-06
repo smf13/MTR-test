@@ -60,6 +60,7 @@ class _Window:
     sent_severity: str
     held: dict[str, Any] | None = None
     held_count: int = 0
+    first_held_at: float | None = None  # wall-clock timestamp of the first alert held in this window
     timer: asyncio.Task[None] | None = field(default=None, repr=False)
 
 
@@ -89,6 +90,9 @@ class NotifyGate:
             self._drop(key)
             self._windows[key] = _Window(until=now + cooldown, cooldown=cooldown, sent_kind=kind, sent_severity=severity)
             return True
+        if win.held_count == 0:
+            ts = payload.get("timestamp")
+            win.first_held_at = float(ts) if isinstance(ts, (int, float)) else None
         win.held = payload
         win.held_count += 1
         if win.timer is None:
@@ -126,7 +130,7 @@ class NotifyGate:
         if self._windows.get(key) is not win:
             return
         win.timer = None
-        held, count = win.held, win.held_count
+        held, count, first = win.held, win.held_count, win.first_held_at
         if held is None:
             return
         kind = str(held.get("event"))
@@ -139,14 +143,15 @@ class NotifyGate:
         # The catch-up opens the next window, so a target that keeps flapping sends one alert per period.
         self._windows[key] = _Window(until=self._clock() + win.cooldown, cooldown=win.cooldown, sent_kind=kind, sent_severity=str(held.get("severity") or "info"))
         try:
-            await self._deliver(catch_up(held, count))
+            await self._deliver(catch_up(held, count, first))
         except Exception:  # noqa: BLE001
             log.exception("catch-up notification for target %s failed", key[0])
 
 
-def catch_up(payload: dict[str, Any], held: int) -> dict[str, Any]:
-    """The latest held-back alert, marked as a catch-up with the number of alerts the cooldown held back."""
+def catch_up(payload: dict[str, Any], held: int, first_held_at: float | None = None) -> dict[str, Any]:
+    """The latest held-back alert, marked as a catch-up with the number of alerts the cooldown held back. Its
+    `timestamp` stays the time of that alert; `cooldown.first_held_at` is when the first held-back one happened."""
     out = dict(payload)
-    out["cooldown"] = {"held_back": held}
+    out["cooldown"] = {"held_back": held, "first_held_at": first_held_at}
     out["message"] = f"{payload.get('message')} ({held} alert{'s' if held != 1 else ''} held back by the cooldown)"
     return out

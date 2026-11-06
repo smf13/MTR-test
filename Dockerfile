@@ -27,7 +27,7 @@ ENV HOME=/app \
 # libcap2-bin supplies setcap/getcap. The cap_net_raw file capability lets mtr-packet and ping open raw
 # sockets without the process being root (Debian's packages set it too; repeating it makes it explicit).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends mtr-tiny iputils-ping tini ca-certificates curl libcap2-bin \
+ && apt-get install -y --no-install-recommends mtr-tiny iputils-ping tini ca-certificates curl libcap2-bin tzdata \
  && rm -rf /var/lib/apt/lists/* \
  && (setcap cap_net_raw+ep /usr/bin/mtr-packet && setcap cap_net_raw+ep "$(command -v ping)" \
      || echo "warning: setcap failed; the entrypoint will keep running as root" >&2) \

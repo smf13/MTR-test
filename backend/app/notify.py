@@ -9,6 +9,8 @@ import hashlib
 import hmac
 import logging
 import os
+import time
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -78,7 +80,16 @@ def pushover_priority(settings: dict[str, Any], kind: str) -> int:
         return 0
 
 
-async def send_pushover(settings: dict[str, Any], *, title: str, message: str, kind: str, url: str | None = None, url_title: str | None = None) -> None:
+async def send_pushover(
+    settings: dict[str, Any],
+    *,
+    title: str,
+    message: str,
+    kind: str,
+    url: str | None = None,
+    url_title: str | None = None,
+    timestamp: float | None = None,
+) -> None:
     token = (settings.get("pushover_api_token") or "").strip()
     user = (settings.get("pushover_user_key") or "").strip()
     if not token or not user:
@@ -96,6 +107,10 @@ async def send_pushover(settings: dict[str, Any], *, title: str, message: str, k
     sound = (settings.get("pushover_sound") or "").strip()
     if sound:
         data["sound"] = sound
+    if timestamp:
+        # Pushover shows this time (in the device's own time zone) instead of when the push arrived, which matters
+        # for a catch-up sent at the end of a cooldown. Not one of the encrypted fields.
+        data["timestamp"] = int(timestamp)
     if data["priority"] == 2:
         # Emergency priority requires retry/expire; keep them modest.
         data["retry"] = 60
@@ -134,7 +149,24 @@ def target_url(settings: dict[str, Any], target_id: int | None) -> str | None:
     return f"{base}/targets/{target_id}"
 
 
-def format_pushover_text(payload: dict[str, Any]) -> tuple[str, str]:
+def format_event_time(ts: float) -> str:
+    """An event's wall-clock time in the server's local time zone (TZ), named: "2026-11-06 14:03:12 UTC"."""
+    return datetime.fromtimestamp(ts).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z").strip()
+
+
+def format_delay(seconds: float) -> str:
+    """A short duration: "45 s", "9 min", "1 h 5 min"."""
+    seconds = max(0, round(seconds))
+    if seconds < 60:
+        return f"{seconds} s"
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, rest = divmod(minutes, 60)
+    return f"{hours} h {rest} min" if rest else f"{hours} h"
+
+
+def format_pushover_text(payload: dict[str, Any], now: float | None = None) -> tuple[str, str]:
     """Build (title, message) for a Pushover push from an event payload."""
     target = payload.get("target") or {}
     site = payload.get("source") or "MTR Tracker"
@@ -152,6 +184,17 @@ def format_pushover_text(payload: dict[str, Any]) -> tuple[str, str]:
         lines.append(" · ".join(extras))
     if target.get("host"):
         lines.append(f"host: {target['host']}")
+    ts = payload.get("timestamp")
+    if isinstance(ts, (int, float)) and ts > 0:
+        line = f"at: {format_event_time(ts)}"
+        cooldown = payload.get("cooldown")
+        if isinstance(cooldown, dict):
+            # A catch-up goes out when the cooldown ends, possibly long after the event it reports.
+            line += f" ({format_delay((time.time() if now is None else now) - ts)} before this catch-up)"
+            first = cooldown.get("first_held_at")
+            if isinstance(first, (int, float)) and 0 < first < ts:
+                line += f"\nfirst held back: {format_event_time(first)}"
+        lines.append(line)
     return title, "\n".join(lines)
 
 
@@ -172,7 +215,16 @@ async def dispatch_event(settings: dict[str, Any], payload: dict[str, Any]) -> N
     if settings.get("pushover_enabled") and kind in (settings.get("pushover_events") or []):
         title, message = format_pushover_text(payload)
         link = target_url(settings, (payload.get("target") or {}).get("id"))
-        tasks.append(_guard("pushover", send_pushover(settings, title=title, message=message, kind=kind, url=link, url_title="Open in MTR Tracker")))
+        ts = payload.get("timestamp")
+        tasks.append(
+            _guard(
+                "pushover",
+                send_pushover(
+                    settings, title=title, message=message, kind=kind, url=link, url_title="Open in MTR Tracker",
+                    timestamp=ts if isinstance(ts, (int, float)) else None,
+                ),
+            )
+        )
     if tasks:
         await asyncio.gather(*tasks)
 

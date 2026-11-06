@@ -329,7 +329,7 @@ async def test_notification(request: Request, body: NotificationTest) -> dict[st
             await send_webhook((settings.get("webhook_url") or "").strip(), payload)
         else:
             title, message = format_pushover_text(payload)
-            await send_pushover(settings, title=title, message=message, kind="recovered")
+            await send_pushover(settings, title=title, message=message, kind="recovered", timestamp=payload["timestamp"])
     except NotifyError as exc:
         raise HTTPException(502, str(exc)) from exc
     return {"ok": True, "channel": body.channel}

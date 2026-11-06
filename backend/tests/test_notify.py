@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from urllib.parse import parse_qs
 
 import httpx
@@ -26,6 +27,28 @@ def test_format_text() -> None:
     assert message.splitlines() == ["WAN is DOWN", "loss 100.0%", "host: 203.0.113.1"]
 
 
+def test_format_text_carries_the_event_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    try:
+        ts = 1_793_000_000.0  # 2026-10-26 07:33:20 UTC
+        base = {"source": "NOC", "event": "down", "message": "WAN is DOWN", "target": {"name": "WAN", "host": "203.0.113.1"}, "timestamp": ts}
+        _, message = format_pushover_text(base)
+        assert message.splitlines()[-1] == "at: 2026-10-26 07:33:20 UTC"
+        # A catch-up says how long ago the event happened and when the first held-back alert did.
+        _, message = format_pushover_text(base | {"cooldown": {"held_back": 3, "first_held_at": ts - 120}}, now=ts + 540)
+        assert message.splitlines()[-2:] == ["at: 2026-10-26 07:33:20 UTC (9 min before this catch-up)", "first held back: 2026-10-26 07:31:20 UTC"]
+        _, message = format_pushover_text(base | {"cooldown": {"held_back": 1, "first_held_at": ts}}, now=ts + 30)
+        assert message.splitlines()[-1] == "at: 2026-10-26 07:33:20 UTC (30 s before this catch-up)"
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
+
+
+def test_format_delay() -> None:
+    assert [notify.format_delay(s) for s in (-3, 44.6, 60, 569, 3600, 3900)] == ["0 s", "45 s", "1 min", "9 min", "1 h", "1 h 5 min"]
+
+
 async def test_send_pushover_posts_form(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict = {}
 
@@ -39,6 +62,8 @@ async def test_send_pushover_posts_form(monkeypatch: pytest.MonkeyPatch) -> None
     await send_pushover(settings, title="T", message="M", kind="down", url="http://x/targets/1", url_title="Open")
     assert seen["url"] == notify.PUSHOVER_URL
     assert seen["form"] == {"token": "tok", "user": "usr", "title": "T", "message": "M", "priority": "1", "device": "phone", "url": "http://x/targets/1", "url_title": "Open"}
+    await send_pushover(settings, title="T", message="M", kind="down", timestamp=1_793_000_000.7)
+    assert seen["form"]["timestamp"] == "1793000000"
 
 
 async def test_send_pushover_reports_api_errors(monkeypatch: pytest.MonkeyPatch) -> None:

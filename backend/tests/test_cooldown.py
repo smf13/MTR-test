@@ -64,7 +64,7 @@ async def test_flapping_sends_one_alert_and_a_catch_up_only_when_the_status_move
     await settle()
     # The target ended up (after the DOWN alert that went out), so one catch-up says so and counts what was held.
     assert [p["event"] for p in delivered] == ["recovered"]
-    assert delivered[0]["message"] == "recovered 2 (3 alerts held back by the cooldown)" and delivered[0]["cooldown"] == {"held_back": 3}
+    assert delivered[0]["message"] == "recovered 2 (3 alerts held back by the cooldown)" and delivered[0]["cooldown"] == {"held_back": 3, "first_held_at": None}
     # The catch-up opened a new window: the next flap is held again.
     ft.release.clear()
     assert gate.submit(alert("down", n=3), ON) is False
@@ -144,3 +144,22 @@ async def test_scheduler_holds_back_repeated_alerts(client: Any, monkeypatch: An
     # Deleting the target drops its held alerts.
     assert (await client.delete(f"/api/targets/{t['id']}")).status_code == 204
     assert sched.notify_gate.held(t["id"]) == 0
+
+
+async def test_catch_up_keeps_the_event_time_and_records_the_first_held_alert() -> None:
+    ft, delivered = FakeTime(), []
+
+    async def deliver(p: dict[str, Any]) -> None:
+        delivered.append(p)
+
+    gate = NotifyGate(deliver, clock=ft.clock, sleep=ft.sleep)
+    assert gate.submit(alert("degraded") | {"timestamp": 5000.0}, ON) is True
+    assert gate.submit(alert("down") | {"timestamp": 5060.0}, ON) is True  # escalation: sent at once, new window
+    assert gate.submit(alert("recovered", n=1) | {"timestamp": 5120.0}, ON) is False
+    assert gate.submit(alert("degraded", n=2) | {"timestamp": 5180.0}, ON) is False
+    ft.release.set()
+    await settle()
+    assert len(delivered) == 1
+    assert delivered[0]["timestamp"] == 5180.0  # the held alert's own time, not the delivery time
+    assert delivered[0]["cooldown"] == {"held_back": 2, "first_held_at": 5120.0}
+    await gate.close()
