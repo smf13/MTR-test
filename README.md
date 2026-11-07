@@ -395,7 +395,7 @@ Simulation produces synthetic measurements, but local MTR/ping/TCP hostname reso
 
 - **Backend tests:** `backend/tests`; `conftest.py` provides `client` (open instance), `protected_client` (with an API token) and `static_client` (with a stub frontend build), all built by `helpers.app_client` against a PostgreSQL database that is dropped and recreated per test (`MTR_TRACKER_TEST_DATABASE_URL`). `test_migrate.py` builds legacy SQLite files and checks the automatic import, the CLI and every refusal.
 - **Frontend tests:** `frontend/tests`, using Vitest, jsdom and Testing Library. Coverage includes target action menus, keyboard navigation, tab/probe compatibility, all hop metrics, path-summary alternate addresses, run pagination/filtering, help popovers, heatmap legends, latency units (milliseconds, seconds from 1000 ms), dashboard filtering, the tag filter (any/all, chip clicks), bulk tag editing, the tag pickers in the form and the target page header, group selection, moving and renaming, the group dropdowns, clone prefill, the HTTP request header editor and cache buster, the path map card (marker grouping, unlocated hops, networks per step, the Settings pointer, the ip-api.com wording), the GeoIP lookup page and the ip-api.com and MaxMind settings sections. API calls and browser-only sizing are mocked; these are component tests, not screenshot tests.
-- **CI:** pushes to `main` and pull requests run the backend tests against a `postgres:16-alpine` service container plus the frontend production build and component tests. `docker compose config` and a Docker build run after both jobs pass; CI does not publish the image.
+- **CI:** runs only when started by hand (Actions tab → CI → **Run workflow**; pushes and pull requests do not trigger it). It runs the backend tests against a `postgres:16-alpine` service container plus the frontend production build and component tests. `docker compose config` and a Docker build run after both jobs pass; CI does not publish the image.
 
 ## Project layout
 
@@ -423,7 +423,7 @@ frontend/src/
   index.css      theme tokens and shared controls
 frontend/tests/  Vitest component interactions with Testing Library
 docs/            interface guide and screenshots
-.github/workflows/ci.yml  backend tests (with a PostgreSQL service), frontend build/tests, Compose check, Docker build
+.github/workflows/ci.yml  manual-only (workflow_dispatch): backend tests (with a PostgreSQL service), frontend build/tests, Compose check, Docker build
 Dockerfile       frontend build stage, then python:3.12-slim with mtr, ping and the backend
 docker-compose.yml  the app on host networking plus a postgres:16-alpine service published on 127.0.0.1, one volume each
 docker-compose.bridge.yml  override for the Compose bridge network: the app on its own network, UI published on 8899
